@@ -20,7 +20,11 @@ ENV STATUS_PORT=9110
 
 EXPOSE 9109 9110
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Make sure the script is executable inside /app
+RUN chmod +x /app/entrypoint.sh
+
+# Use the script from /app (since WORKDIR is /app)
+ENTRYPOINT ["./entrypoint.sh"]
 
 # Safe default: dry mode on testnet-style config.
 # You will usually override this with docker-compose `command:`.
