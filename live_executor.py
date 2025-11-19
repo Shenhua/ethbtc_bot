@@ -236,20 +236,22 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config(args.params)
-    risk_mode = getattr(cfg.risk, "risk_mode", "fixed_basis")
-    mark_risk_mode(risk_mode)
-    # client
-    #
-    # If BINANCE_BASE_URL is not set:
-    # - testnet mode → use testnet endpoint
-    # - dry/live     → use mainnet public endpoint
-    if args.mode == "testnet":
-        default_base = "https://testnet.binance.vision"
-    else:
-        # dry + live both read public data from mainnet unless overridden
-        default_base = "https://api.binance.com"
 
-    base_url = os.getenv("BINANCE_BASE_URL", default_base)
+    # --- Robust base_url selection for Binance client -----------------------
+    # Priority:
+    #   1) If BINANCE_BASE_URL is set and non-empty, use it.
+    #   2) Else if mode == "testnet", use Binance spot testnet URL.
+    #   3) Else default to mainnet spot URL.
+    env_base = (os.getenv("BINANCE_BASE_URL") or "").strip()
+
+    if env_base:
+        base_url = env_base
+    elif args.mode == "testnet":
+        base_url = "https://testnet.binance.vision"
+    else:
+        base_url = "https://api.binance.com"
+
+    log.info("Using Binance base_url=%s (mode=%s)", base_url, args.mode)
 
     client = Spot(
         api_key=os.getenv("BINANCE_KEY", ""),
