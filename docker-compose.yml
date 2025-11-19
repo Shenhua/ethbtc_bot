@@ -4,7 +4,7 @@ services:
   ethbtc_bot_v3:
     build:
       context: .
-      dockerfile: Dockerfile.v3
+      dockerfile: Dockerfile
     container_name: ethbtc_bot_v3_a
     environment:
       # --- Binance API ---
