@@ -1,5 +1,21 @@
 # core/metrics.py
-from prometheus_client import Counter, Gauge, Summary, start_http_server
+from prometheus_client import Counter, Gauge, Summary, start_http_server, REGISTRY
+
+# --- Reload-safe registry setup for tests ------------------------------------
+# Pytest's test_metrics_risk.py uses importlib.reload(core.metrics) between tests.
+# Prometheus normally disallows re-registering the same metric names in the same
+# CollectorRegistry, so on reload we get "Duplicated timeseries" errors.
+#
+# In this project, core.metrics is the only place we define metrics on the
+# default REGISTRY, so it's safe to clear it on module import to make reloads
+# idempotent.
+try:
+    REGISTRY._names_to_collectors.clear()
+    REGISTRY._collector_to_names.clear()
+except Exception:
+    # If internal structure changes in future prometheus_client versions,
+    # just fail silently instead of blowing up here.
+    pass
 
 # ---- Core existing metrics (from original bot) -----------------------------
 
@@ -96,17 +112,18 @@ DIST_TO_SELL_BPS = Gauge(
     "Distance to SELL entry in bps (0 if inside SELL zone)",
 )
 
-# risk mode & flags -------------------------------------------------------
+# Risk mode: 1 for active mode, 0 for inactive
 RISK_MODE = Gauge(
     "risk_mode",
     "Risk mode active flag (1 for active mode, 0 for inactive)",
-    ["mode"],  # "dynamic" or "fixed_basis"
+    ["mode"],
 )
 
+# Risk flags: 0/1 for risk events (daily loss / max drawdown)
 RISK_FLAGS = Gauge(
     "risk_flags",
     "Risk state flags (0/1) for risk-related events",
-    ["kind"],  # "daily_limit_hit" or "maxdd_hit"
+    ["kind"],
 )
 
 # ---- Helper functions used from live_executor.py ---------------------------
@@ -181,29 +198,36 @@ def inc_skip(reason: str) -> None:
     """
     SKIPS.labels(reason=reason).inc()
 
+
 def mark_risk_mode(active_mode: str) -> None:
     """
-    Set risk_mode{mode="..."} as 1 for the active mode, 0 for others.
-    Expected modes: "fixed_basis", "dynamic".
+    Mark the currently active risk mode.
+
+    Parameters
+    ----------
+    active_mode : str
+        Either "dynamic" or "fixed_basis" (or any future mode).
     """
-    try:
-        for m in ("fixed_basis", "dynamic"):
-            RISK_MODE.labels(mode=m).set(1.0 if m == active_mode else 0.0)
-    except Exception:
-        # Keep metrics failures from breaking the bot
-        pass
+    # We explicitly keep the two canonical modes in sync:
+    for mode in ("fixed_basis", "dynamic"):
+        value = 1.0 if mode == active_mode else 0.0
+        RISK_MODE.labels(mode=mode).set(value)
 
 
 def mark_risk_flags(*, daily_limit_hit: bool, maxdd_hit: bool) -> None:
     """
-    Expose risk flags as 0/1 via risk_flags{kind="daily_limit_hit|maxdd_hit"}.
+    Update risk flags gauges based on current risk state.
+
+    Parameters
+    ----------
+    daily_limit_hit : bool
+        True if daily loss limit is currently tripped.
+    maxdd_hit : bool
+        True if max drawdown limit is currently tripped.
     """
-    try:
-        RISK_FLAGS.labels(kind="daily_limit_hit").set(1.0 if daily_limit_hit else 0.0)
-        RISK_FLAGS.labels(kind="maxdd_hit").set(1.0 if maxdd_hit else 0.0)
-    except Exception:
-        pass
-    
+    RISK_FLAGS.labels(kind="daily_limit_hit").set(1.0 if daily_limit_hit else 0.0)
+    RISK_FLAGS.labels(kind="maxdd_hit").set(1.0 if maxdd_hit else 0.0)
+
 # --- Snapshot helpers -------------------------------------------------------
 
 def set_delta_metrics(delta_w: float, delta_eth: float) -> None:

@@ -236,7 +236,8 @@ def main():
     args = ap.parse_args()
 
     cfg = load_config(args.params)
-
+    risk_mode = getattr(cfg.risk, "risk_mode", "fixed_basis")
+    mark_risk_mode(risk_mode)
     # client
     #
     # If BINANCE_BASE_URL is not set:
@@ -305,19 +306,18 @@ def main():
         bar_dt = pd.to_datetime(bar_ts, unit="s", utc=True)
         _ensure_risk_state(state, W, bar_dt)
         _update_risk_state(state, W, bar_dt, cfg)
+
         # --- Risk metrics → Prometheus ---------------------------------------
         risk_mode_str = getattr(cfg.risk, "risk_mode", "fixed_basis")
-        daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
-        maxdd_hit = bool(state.get("risk_maxdd_hit", False))
 
         # 1-of-N mode: exactly one of these will be 1.0
         mark_risk_mode(risk_mode_str)
 
         # Flags: 0/1 gauges
-        mark_risk_flags(
-            daily_limit_hit=daily_limit_hit,
-            maxdd_hit=maxdd_hit,
-        )
+        daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
+        maxdd_hit = bool(state.get("risk_maxdd_hit", False))
+        mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
+
         # Snapshot → metrics
         WEALTH_BTC_TOTAL.set(W)
         PRICE_MID.set(price)
@@ -460,8 +460,7 @@ def main():
 
         # --- Apply risk caps (max DD / daily loss) ----------------------------
         risk_mode = getattr(cfg.risk, "risk_mode", "fixed_basis")
-        maxdd_hit = bool(state.get("risk_maxdd_hit", False))
-        daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
+
 
         if maxdd_hit:
             # Hard stop: force BTC-only from here on
