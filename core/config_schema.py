@@ -29,6 +29,7 @@ class Strategy(BaseModel):
     rebalance_threshold_w: float = Field(0.0, ge=0.0, le=1.0)
     vol_scaled_step: bool = False
     profit_lock_dd: float = Field(0.0, ge=0.0, le=1.0)
+    long_only: bool = True
 
 class Execution(BaseModel):
     interval: Interval = "15m"
@@ -70,7 +71,7 @@ class AppConfig(BaseModel):
         fees_keys = {"maker_fee","taker_fee","slippage_bps","bnb_discount","pay_fees_in_bnb"}
         strat_keys = {"trend_kind","trend_lookback","flip_band_entry","flip_band_exit","vol_window","vol_adapt_k",
                       "target_vol","min_mult","max_mult","cooldown_minutes","step_allocation","max_position",
-                      "gate_window_days","gate_roc_threshold","rebalance_threshold_w","vol_scaled_step","profit_lock_dd"}
+                      "gate_window_days","gate_roc_threshold","rebalance_threshold_w","vol_scaled_step","profit_lock_dd","long_only"}
         exec_keys = {"interval","poll_sec","ttl_sec","taker_fallback","max_taker_btc","max_spread_bps_for_taker",
                      "min_trade_frac","min_trade_floor_btc","min_trade_cap_btc","min_trade_btc"}
         risk_keys = {

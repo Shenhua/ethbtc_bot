@@ -375,6 +375,7 @@ def main():
                     min_trade_btc=getattr(cfg.strategy, "min_trade_btc", 0.0),
                     gate_window_days=cfg.strategy.gate_window_days,
                     gate_roc_threshold=cfg.strategy.gate_roc_threshold,
+                    long_only=getattr(cfg.strategy, "long_only", True),
                 )
                 strat = EthBtcStrategy(sp)
                 plan = strat.generate_positions(ser_close)

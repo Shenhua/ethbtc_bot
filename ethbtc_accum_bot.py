@@ -14,16 +14,46 @@ import numpy as np
 __version__ = "3.0.0-rich-cli-guards-daterange"
 
 # ------------------ Loaders ------------------
+# -------------- Loaders ------------------
 def load_json_config(path: Optional[str]) -> Dict:
+    """
+    Load config JSON and flatten nested blocks so the backtester can accept:
+
+    - Legacy style:
+        {
+          "params": { ... },
+          "fees": { ... }
+        }
+
+    - New AppConfig style:
+        {
+          "fees": { ... },
+          "strategy": { ... },
+          "execution": { ... },
+          "risk": { ... }
+        }
+
+    The returned dict is a flat dict with keys like trend_lookback, maker_fee,
+    basis_btc, long_only, etc.
+    """
     if not path:
         return {}
+
     with open(path, "r") as f:
         data = json.load(f)
-    flat = dict(data)
-    if isinstance(data.get("params"), dict): flat.update(data["params"])
-    if isinstance(data.get("fees"), dict):   flat.update(data["fees"])
-    # Make risk.* fields available at top-level (basis_btc, max_dd_btc, etc.)
-    if isinstance(data.get("risk"), dict):   flat.update(data["risk"])
+
+    if not isinstance(data, dict):
+        return {}
+
+    # Start with top-level keys (basis_btc, etc.)
+    flat: Dict[str, Any] = dict(data)
+
+    # Flatten any nested blocks we care about
+    for block in ("params", "fees", "strategy", "execution", "risk"):
+        block_dict = data.get(block)
+        if isinstance(block_dict, dict):
+            flat.update(block_dict)
+
     return flat
 
 def load_vision_csv(path: str) -> pd.DataFrame:
