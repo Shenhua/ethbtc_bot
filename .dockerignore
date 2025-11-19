@@ -1,0 +1,14 @@
+.git
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.envrc
+*.log
+dist/
+build/
+**/.pytest_cache
+# Keep .env out of the image; we mount/compose it at runtime
+.env

@@ -1,0 +1,46 @@
+version: "3.9"
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile # Ensure capital D on Linux
+    image: ethbtc-bot-2:latest
+    environment:
+      MODE: ${MODE:-testnet} # dry | testnet | live
+      SYMBOL: ${SYMBOL:-ETHBTC}
+      BINANCE_KEY: ${BINANCE_KEY}
+      BINANCE_SECRET: ${BINANCE_SECRET}
+      BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://testnet.binance.vision}
+      INTERVAL: ${INTERVAL:-15m}
+      STATE_FILE: /data/state.json
+      TRADES_CSV: /data/trades_log.csv
+      METRICS_PORT: 9109
+      STATUS_PORT: 9110
+      LOGLEVEL: ${LOGLEVEL:-INFO}
+    command:
+      [
+        "python",
+        "live_executor.py",
+        "--params",
+        "configs/selected_params_15m_final.json",
+        "--mode",
+        "${MODE:-testnet}",
+        "--symbol",
+        "${SYMBOL:-ETHBTC}",
+      ]
+    volumes:
+      - ./run_state:/data:rw
+    ports:
+      - "9109:9109"
+      - "9110:9110"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "5"
