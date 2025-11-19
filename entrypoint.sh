@@ -1,16 +1,16 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -e
 
-# If first arg is an option, run the bot directly
-if [[ "${1:-}" = -* ]]; then
-  exec python live_executor.py "$@"
-fi
+# Allow overriding API keys etc via environment
+export BINANCE_KEY="${BINANCE_KEY:-}"
+export BINANCE_SECRET="${BINANCE_SECRET:-}"
+export BINANCE_BASE_URL="${BINANCE_BASE_URL:-}"
 
-# Convenience: `run` behaves like "python live_executor.py ..."
-if [[ "${1:-}" = "run" ]]; then
-  shift
-  exec python live_executor.py "$@"
-fi
+# Optional: metrics/status ports (9109, 9110 default in live_executor)
+export METRICS_PORT="${METRICS_PORT:-9109}"
+export STATUS_PORT="${STATUS_PORT:-9110}"
 
-# Otherwise, execute whatever the user passed (e.g., bash)
+# Ensure /data exists for state/trades if mounted
+mkdir -p /data
+
 exec "$@"

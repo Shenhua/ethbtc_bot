@@ -1,46 +1,51 @@
-version: "3.9"
+version: "3.8"
+
 services:
-  bot:
+  ethbtc_bot_v3:
     build:
       context: .
-      dockerfile: Dockerfile # Ensure capital D on Linux
-    image: ethbtc-bot-2:latest
+      dockerfile: Dockerfile.v3
+    container_name: ethbtc_bot_v3_a
     environment:
-      MODE: ${MODE:-testnet} # dry | testnet | live
-      SYMBOL: ${SYMBOL:-ETHBTC}
-      BINANCE_KEY: ${BINANCE_KEY}
-      BINANCE_SECRET: ${BINANCE_SECRET}
-      BINANCE_BASE_URL: ${BINANCE_BASE_URL:-https://testnet.binance.vision}
-      INTERVAL: ${INTERVAL:-15m}
-      STATE_FILE: /data/state.json
-      TRADES_CSV: /data/trades_log.csv
-      METRICS_PORT: 9109
-      STATUS_PORT: 9110
-      LOGLEVEL: ${LOGLEVEL:-INFO}
+      # --- Binance API ---
+      BINANCE_KEY: "${BINANCE_KEY:-}"
+      BINANCE_SECRET: "${BINANCE_SECRET:-}"
+      # For spot testnet, uncomment the next line:
+      # BINANCE_BASE_URL: "https://testnet.binance.vision"
+
+      # --- Metrics / status ports inside the container ---
+      METRICS_PORT: "9109"
+      STATUS_PORT: "9110"
+
+      # --- State file path used by live_executor (inside container) ---
+      STATE_FILE: "/data/state.json"
+
+    # live_executor uses the new v3-style config (no top-level `params`)
     command:
-      [
-        "python",
-        "live_executor.py",
-        "--params",
-        "configs/selected_params_15m_final.json",
-        "--mode",
-        "${MODE:-testnet}",
-        "--symbol",
-        "${SYMBOL:-ETHBTC}",
-      ]
+      - python
+      - /app/live_executor.py
+      - --params
+      - configs/prod_dynamic_15m_016btc.json
+      - --mode
+      - dry
+      - --symbol
+      - ETHBTC
+
+    # Persist state (risk tracking, session start wealth, etc.)
     volumes:
-      - ./run_state:/data:rw
+      - ./run_state_v3:/data
+      # Optional: if you keep configs outside the image, mount them read-only:
+      # - ./configs:/app/configs:ro
+
+    # Expose metrics and status to the host (Prometheus & manual inspection)
     ports:
-      - "9109:9109"
-      - "9110:9110"
+      - "9109:9109" # Prometheus metrics
+      - "9110:9110" # /status JSON
+
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python", "scripts/healthcheck.py"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+
     logging:
       driver: json-file
       options:
-        max-size: "100m"
+        max-size: "10m"
         max-file: "5"
