@@ -33,7 +33,7 @@ services:
 
     # Persist state (risk tracking, session start wealth, etc.)
     volumes:
-      - ./run_state_v3:/data
+      - ./run_state:/data
       # Optional: if you keep configs outside the image, mount them read-only:
       # - ./configs:/app/configs:ro
 
