@@ -23,35 +23,59 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
       "panels": [],
       "title": "Summary & Decisions",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "description": "Active zone from signal_zone (buy_band / neutral / sell_band). Uses topk(1, signal_zone) so that the label of the active zone is shown.",
       "fieldConfig": {
         "defaults": {
           "displayName": "${__field.labels.signal_zone}",
           "mappings": [
             {
-              "options": { "match": "null", "result": { "text": "No data" } },
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No data"
+                }
+              },
               "type": "special"
             }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "red", "value": 80 }
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 5, "x": 0, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 0,
+        "y": 1
+      },
       "id": 2,
       "options": {
         "colorMode": "value",
@@ -70,40 +94,67 @@
       },
       "pluginVersion": "12.2.1",
       "targets": [
-        { "expr": "topk(1, signal_zone)", "instant": true, "refId": "A" }
+        {
+          "expr": "topk(1, signal_zone)",
+          "instant": true,
+          "refId": "A"
+        }
       ],
       "title": "Zone (current)",
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "description": "OPEN = trading allowed; CLOSED = hard block.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
             {
               "options": {
-                "0": { "text": "CLOSED" },
-                "1": { "text": "OPEN" }
+                "0": {
+                  "text": "CLOSED"
+                },
+                "1": {
+                  "text": "OPEN"
+                }
               },
               "type": "value"
             },
             {
-              "options": { "match": "null", "result": { "text": "No data" } },
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No data"
+                }
+              },
               "type": "special"
             }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "red", "value": 0 },
-              { "color": "green", "value": 1 }
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 3, "x": 5, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 5,
+        "y": 1
+      },
       "id": 3,
       "options": {
         "colorMode": "value",
@@ -122,13 +173,20 @@
       },
       "pluginVersion": "12.2.1",
       "targets": [
-        { "expr": "gate_state{gate_state=\"open\"}", "instant": true, "refId": "A" }
+        {
+          "expr": "gate_state{gate_state=\"open\"}",
+          "instant": true,
+          "refId": "A"
+        }
       ],
       "title": "Gate",
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "description": "Sign of (SELL distance − BUY distance): negative → BUY closer; positive → SELL closer.",
       "fieldConfig": {
         "defaults": {
@@ -137,7 +195,9 @@
             {
               "options": {
                 "from": -1000000000,
-                "result": { "text": "BUY next" },
+                "result": {
+                  "text": "BUY next"
+                },
                 "to": -1e-7
               },
               "type": "range"
@@ -145,31 +205,53 @@
             {
               "options": {
                 "from": 1e-7,
-                "result": { "text": "SELL next" },
+                "result": {
+                  "text": "SELL next"
+                },
                 "to": 1000000000
               },
               "type": "range"
             },
             {
-              "options": { "0": { "text": "Either" } },
+              "options": {
+                "0": {
+                  "text": "Either"
+                }
+              },
               "type": "value"
             },
             {
-              "options": { "match": "null", "result": { "text": "No data" } },
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No data"
+                }
+              },
               "type": "special"
             }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "red", "value": 80 }
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 5, "x": 8, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 8,
+        "y": 1
+      },
       "id": 4,
       "options": {
         "colorMode": "value",
@@ -188,13 +270,20 @@
       },
       "pluginVersion": "12.2.1",
       "targets": [
-        { "expr": "(dist_to_sell_bps - dist_to_buy_bps)", "instant": true, "refId": "A" }
+        {
+          "expr": "(dist_to_sell_bps - dist_to_buy_bps)",
+          "instant": true,
+          "refId": "A"
+        }
       ],
       "title": "Nearest side",
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "description": "Minimum of (distance to BUY, distance to SELL). Goes to 0 when a band is entered.",
       "fieldConfig": {
         "defaults": {
@@ -203,15 +292,26 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "red", "value": 80 }
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
             ]
           },
           "unit": "bps"
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 5, "x": 13, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 13,
+        "y": 1
+      },
       "id": 5,
       "options": {
         "colorMode": "value",
@@ -230,41 +330,70 @@
       },
       "pluginVersion": "12.2.1",
       "targets": [
-        { "expr": "min(dist_to_buy_bps, dist_to_sell_bps)", "instant": true, "refId": "A" }
+        {
+          "expr": "scalar((dist_to_buy_bps <= dist_to_sell_bps) * dist_to_buy_bps + (dist_to_sell_bps < dist_to_buy_bps) * dist_to_sell_bps)",
+          "instant": true,
+          "refId": "A"
+        }
       ],
       "title": "Distance to next action (bps)",
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "description": "Net decision this bar: -1 SELL, 0 HOLD/SKIP, +1 BUY.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
             {
               "options": {
-                "0": { "text": "HOLD / SKIP" },
-                "1": { "text": "EXEC BUY" },
-                "-1": { "text": "EXEC SELL" }
+                "0": {
+                  "text": "HOLD / SKIP"
+                },
+                "1": {
+                  "text": "EXEC BUY"
+                },
+                "-1": {
+                  "text": "EXEC SELL"
+                }
               },
               "type": "value"
             },
             {
-              "options": { "match": "null", "result": { "text": "No data" } },
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No data"
+                }
+              },
               "type": "special"
             }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "red", "value": 80 }
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
       "id": 6,
       "options": {
         "colorMode": "value",
@@ -293,40 +422,75 @@
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "description": "First applicable skip reason (if any). If trading is quiet but this says 'None', it means we're simply not in a band or below threshold.",
       "fieldConfig": {
         "defaults": {
           "mappings": [
             {
               "options": {
-                "0": { "text": "None" },
-                "1": { "text": "threshold" },
-                "2": { "text": "balance" },
-                "3": { "text": "min_notional" },
-                "4": { "text": "cooldown" },
-                "5": { "text": "gate_closed" },
-                "6": { "text": "delta_zero" },
-                "7": { "text": "order_error" }
+                "0": {
+                  "text": "None"
+                },
+                "1": {
+                  "text": "threshold"
+                },
+                "2": {
+                  "text": "balance"
+                },
+                "3": {
+                  "text": "min_notional"
+                },
+                "4": {
+                  "text": "cooldown"
+                },
+                "5": {
+                  "text": "gate_closed"
+                },
+                "6": {
+                  "text": "delta_zero"
+                },
+                "7": {
+                  "text": "order_error"
+                }
               },
               "type": "value"
             },
             {
-              "options": { "match": "null", "result": { "text": "No data" } },
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No data"
+                }
+              },
               "type": "special"
             }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "red", "value": 80 }
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 5 },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
       "id": 7,
       "options": {
         "colorMode": "value",
@@ -354,33 +518,30 @@
       "title": "Blocker (if any)",
       "type": "stat"
     },
-
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
       "id": 28,
       "panels": [],
       "title": "Signal & Distances",
       "type": "row"
     },
-
-    /* ... all the middle panels unchanged except where noted ... */
-
     {
-      "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
-      "id": 21,
-      "panels": [],
-      "title": "USD Prices & Valuation",
-      "type": "row"
-    },
-
-    {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "USD value of free balances using USD price metrics.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Signal vs static band boundaries, mimicking the ASCII bar logic. Horizontal lines show BUY/SELL entry & exit levels. Background uses thresholds to color bands.",
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": false,
@@ -392,24 +553,1195 @@
             "drawStyle": "line",
             "fillOpacity": 0,
             "gradientMode": "none",
-            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 3,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "area"
+            }
+          },
+          "decimals": 4,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": -0.016
+              },
+              {
+                "color": "green",
+                "value": -0.0091
+              },
+              {
+                "color": "gray",
+                "value": 0.0091
+              },
+              {
+                "color": "orange",
+                "value": 0.016
+              },
+              {
+                "color": "red",
+                "value": 0.05
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
+      "id": 29,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "signal_ratio",
+          "legendFormat": "signal",
+          "refId": "A"
+        },
+        {
+          "expr": "signal_ratio * 0 + -0.016",
+          "legendFormat": "buy_entry (-0.016)",
+          "refId": "B"
+        },
+        {
+          "expr": "signal_ratio * 0 + -0.0091",
+          "legendFormat": "buy_exit (-0.0091)",
+          "refId": "C"
+        },
+        {
+          "expr": "signal_ratio * 0 + 0.0091",
+          "legendFormat": "sell_exit (+0.0091)",
+          "refId": "D"
+        },
+        {
+          "expr": "signal_ratio * 0 + 0.016",
+          "legendFormat": "sell_entry (+0.016)",
+          "refId": "E"
+        }
+      ],
+      "title": "Signal vs bands (ascii-style view)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "How far we are from entering BUY or SELL band; 0 → inside band.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 3,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "dist_to_buy_bps",
+          "legendFormat": "dist_to_buy_bps",
+          "refId": "A"
+        },
+        {
+          "expr": "dist_to_sell_bps",
+          "legendFormat": "dist_to_sell_bps",
+          "refId": "B"
+        }
+      ],
+      "title": "Distances to BUY/SELL bands (bps)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
+      "id": 8,
+      "panels": [],
+      "title": "Deltas, Exposure & Wealth",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Weight delta (W) and equivalent ΔETH planned each bar.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
             "insertNulls": false,
             "lineInterpolation": "linear",
             "lineWidth": 1,
             "pointSize": 5,
-            "scaleDistribution": { "type": "linear" },
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "auto",
             "showValues": false,
             "spanNulls": false,
-            "stacking": { "group": "A", "mode": "none" },
-            "thresholdsStyle": { "mode": "off" }
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
+          "decimals": 6,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "delta_w"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "delta_w",
+          "refId": "A"
+        },
+        {
+          "expr": "delta_eth",
+          "refId": "B"
+        }
+      ],
+      "title": "Planned deltas (per bar)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "ETH weight vs target.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 4,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "exposure_eth_weight{kind=\"current\"}",
+          "refId": "A"
+        },
+        {
+          "expr": "exposure_eth_weight{kind=\"target\"}",
+          "refId": "B"
+        }
+      ],
+      "title": "Exposure weights (current vs target)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Total wealth in BTC and session PnL (BTC).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 8,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 27
+      },
+      "id": 11,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "wealth_btc_total",
+          "refId": "A"
+        },
+        {
+          "expr": "pnl_btc",
+          "refId": "B"
+        }
+      ],
+      "title": "Wealth (BTC) & PnL (BTC)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Submission rate and rejections by reason.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 27
+      },
+      "id": 12,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "rate(orders_submitted_total[5m])",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (reason) (rate(rejections_total[5m]))",
+          "refId": "B"
+        }
+      ],
+      "title": "Orders / Rejections (rate, 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Latency to process a closed bar (5m moving average).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 4,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 35
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "sum(rate(bar_latency_seconds_sum[5m])) / sum(rate(bar_latency_seconds_count[5m]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Bar processing latency (avg over 5m)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Why we skipped (threshold, balance, min_notional, cooldown, gate_closed, delta_zero).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 35
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(skips_total[5m]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Skips by reason (5m rate)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 43
+      },
+      "id": 15,
+      "panels": [],
+      "title": "Market (derived from bot metrics)",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Mid price used by the bot.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 8,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 44
+      },
+      "id": 16,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "price_mid",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Mid Price (ETHBTC)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Derived: mid × (1 − spread/2).",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 8,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 44
+      },
+      "id": 17,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "price_mid * (1 - (spread_bps / 20000))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Approx. Best Bid",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Derived: mid × (1 + spread/2).",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 8,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 44
+      },
+      "id": 18,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "price_mid * (1 + (spread_bps / 20000))",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Approx. Best Ask",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Top-of-book spread proxy.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 1,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 44
+      },
+      "id": 19,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "spread_bps",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Spread (bps)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Price mid and derived bid/ask (last 2h).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 8,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 48
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "price_mid",
+          "legendFormat": "mid",
+          "refId": "A"
+        },
+        {
+          "expr": "price_mid * (1 - (spread_bps / 20000))",
+          "legendFormat": "approx_bid",
+          "refId": "B"
+        },
+        {
+          "expr": "price_mid * (1 + (spread_bps / 20000))",
+          "legendFormat": "approx_ask",
+          "refId": "C"
+        }
+      ],
+      "title": "Mid, Approx Bid/Ask (last 2h)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 56
+      },
+      "id": 21,
+      "panels": [],
+      "title": "USD Prices & Valuation",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Requires bot/exporter to emit price_btc_usd.",
+      "fieldConfig": {
+        "defaults": {
           "decimals": 2,
           "mappings": [
             {
               "options": {
-                "match": "nan",
-                "result": { "text": "N/A (emit USD prices)" }
+                "match": "null",
+                "result": {
+                  "text": "N/A (export price_btc_usd)"
+                }
               },
               "type": "special"
             }
@@ -417,14 +1749,443 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "red", "value": 80 }
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 61 },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 57
+      },
+      "id": 22,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "price_btc_usd",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "BTC Price (USD)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Requires bot/exporter to emit price_eth_usd.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "mappings": [
+            {
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "N/A (export price_eth_usd)"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 57
+      },
+      "id": 23,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "price_eth_usd",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "ETH Price (USD)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Shows after 24h of data is stored.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "mappings": [
+            {
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "N/A (need 24h history)"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 57
+      },
+      "id": 24,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "100 * (price_btc_usd - price_btc_usd offset 24h) / (price_btc_usd offset 24h)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "BTC 24h Change (%)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Shows after 24h of data is stored.",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "mappings": [
+            {
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "N/A (need 24h history)"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 57
+      },
+      "id": 25,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "100 * (price_eth_usd - price_eth_usd offset 24h) / (price_eth_usd offset 24h)",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "ETH 24h Change (%)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "BTC & ETH USD prices over last 24h.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 61
+      },
+      "id": 26,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "price_btc_usd",
+          "legendFormat": "BTC",
+          "refId": "A"
+        },
+        {
+          "expr": "price_eth_usd",
+          "legendFormat": "ETH",
+          "refId": "B"
+        }
+      ],
+      "title": "USD Prices (last 24h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "USD value of free balances using USD price metrics.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [
+            {
+              "options": {
+                "match": "nan",
+                "result": {
+                  "text": "N/A (emit USD prices)"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
       "id": 27,
       "options": {
         "legend": {
@@ -455,18 +2216,25 @@
       "title": "Balances (USD value)",
       "type": "timeseries"
     },
-
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 69 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 69
+      },
       "id": 31,
       "panels": [],
-      "title": "Risk & Limits",
+      "title": "Risk state",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "Current risk mode as exported by the bot (fixed_basis / dynamic).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Active risk mode from risk_mode{mode=\"fixed_basis\"|\"dynamic\"}. Uses last non-null sample.",
       "fieldConfig": {
         "defaults": {
           "displayName": "${__field.labels.mode}",
@@ -474,7 +2242,9 @@
             {
               "options": {
                 "match": "null",
-                "result": { "text": "No data (risk_mode metric missing)" }
+                "result": {
+                  "text": "No data"
+                }
               },
               "type": "special"
             }
@@ -482,14 +2252,25 @@
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "red", "value": 80 }
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 70 },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 0,
+        "y": 70
+      },
       "id": 32,
       "options": {
         "colorMode": "value",
@@ -508,46 +2289,57 @@
       },
       "pluginVersion": "12.2.1",
       "targets": [
-        { "expr": "topk(1, risk_mode)", "instant": true, "refId": "A" }
+        {
+          "expr": "topk(1, risk_mode)",
+          "instant": true,
+          "refId": "A"
+        }
       ],
-      "title": "Risk mode",
+      "title": "Risk mode (current)",
       "type": "stat"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "Prometheus" },
-      "description": "Whether daily-loss / max-drawdown limits are hit. 0=OK, 1=Daily, 2=MaxDD, 3=Both.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "Risk flags from risk_flags{kind=\"daily_limit_hit\"|\"maxdd_hit\"}. Shows the first active flag (if any).",
       "fieldConfig": {
         "defaults": {
+          "displayName": "${__field.labels.kind}",
           "mappings": [
             {
-              "type": "value",
-              "options": {
-                "0": { "text": "OK" },
-                "1": { "text": "Daily loss hit" },
-                "2": { "text": "Max DD hit" },
-                "3": { "text": "Max DD & Daily loss hit" }
-              }
-            },
-            {
-              "type": "special",
               "options": {
                 "match": "null",
-                "result": { "text": "No data (risk_flags metric missing)" }
-              }
+                "result": {
+                  "text": "None (no flags)"
+                }
+              },
+              "type": "special"
             }
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
-              { "color": "green", "value": 0 },
-              { "color": "orange", "value": 1 },
-              { "color": "red", "value": 2 }
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
             ]
           }
         },
         "overrides": []
       },
-      "gridPos": { "h": 4, "w": 8, "x": 6, "y": 70 },
+      "gridPos": {
+        "h": 4,
+        "w": 12,
+        "x": 12,
+        "y": 70
+      },
       "id": 33,
       "options": {
         "colorMode": "value",
@@ -561,18 +2353,18 @@
           "values": false
         },
         "showPercentChange": false,
-        "textMode": "value",
+        "textMode": "name",
         "wideLayout": true
       },
       "pluginVersion": "12.2.1",
       "targets": [
         {
-          "expr": "scalar(risk_flags{kind=\"daily_limit_hit\"} * 1 + risk_flags{kind=\"maxdd_hit\"} * 2)",
+          "expr": "topk(1, risk_flags)",
           "instant": true,
           "refId": "A"
         }
       ],
-      "title": "Risk limits status",
+      "title": "Risk flags (if any)",
       "type": "stat"
     }
   ],
@@ -580,8 +2372,13 @@
   "refresh": "10s",
   "schemaVersion": 42,
   "tags": ["ethbtc", "bot", "live"],
-  "templating": { "list": [] },
-  "time": { "from": "now-7d", "to": "now" },
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
   "timepicker": {
     "refresh_intervals": ["5s", "10s", "30s", "1m"]
   },

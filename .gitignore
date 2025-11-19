@@ -1,0 +1,61 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual Environments
+# (Excludes common virtual environment directory names)
+venv/
+.venv/
+env/
+.env/
+
+# Distribution / Packaging
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+nosetests.xml
+coverage.xml
+*.cover
+
+# IDEs and Editors
+# VS Code
+.vscode/
+
+# PyCharm
+.idea/
+*.iws
+*.iml
+*.ipr
+
+# Jupyter Notebook Files
+# Checkpoints are often large or auto-generated
+.ipynb_checkpoints
+
+# Logs and databases
+*.log
+*.sqlite3
+/instance/
+
+# Environment Variables / Sensitive Data
+# Use .env for configuration variables (like API keys)
+.env
