@@ -58,4 +58,5 @@ coverage.xml
 
 # Environment Variables / Sensitive Data
 # Use .env for configuration variables (like API keys)
-.env
+#.env
+run_state/state.json
