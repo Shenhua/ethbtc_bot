@@ -27,9 +27,9 @@ services:
       - --params
       - configs/prod_dynamic_15m_016btc.json
       - --mode
-      - dry
+      - ${MODE:-testnet}
       - --symbol
-      - ETHBTC
+      - ${SYMBOL:-ETHBTC}
 
     # Persist state (risk tracking, session start wealth, etc.)
     volumes:

@@ -520,12 +520,13 @@ def main():
             snapshot_wealth_balances(W, price, btc, eth)
 
             # ---- Spread probe (optional but used by Grafana panels)
+# ---- Spread probe (Fixed)
             try:
                 book = adapter.get_book(args.symbol)
-                sp_bps = 1e4 * (book["best_ask"] - book["best_bid"]) / max(price, 1e-12)
+                # FIX: Use .best_ask instead of ["best_ask"]
+                sp_bps = 1e4 * (book.best_ask - book.best_bid) / max(price, 1e-12)
                 SPREAD_BPS.set(sp_bps)
             except Exception as e:
-                # Change debug to warning so you can see it in the logs
                 log.warning("Spread probe failed. Reason: %s", e)
             action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
             zone = ('BUY' if dist_to_buy_bps == 0 else 'SELL' if dist_to_sell_bps == 0 else 'NEUTRAL')
