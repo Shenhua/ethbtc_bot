@@ -28,4 +28,4 @@ ENTRYPOINT ["./entrypoint.sh"]
 
 # Safe default: dry mode on testnet-style config.
 # You will usually override this with docker-compose `command:`.
-CMD ["python", "/app/live_executor.py", "--params", "configs/prod_dynamic_15m_016btc.json", "--symbol", "ETHBTC", "--mode", "dry"]
+CMD ["python", "/app/live_executor.py", "--params", "configs/prod_dynamic_15m_016btc.json", "--symbol", "ETHBTC", "--mode", "testnet"]
