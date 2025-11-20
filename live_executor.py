@@ -521,11 +521,12 @@ def main():
 
             # ---- Spread probe (optional but used by Grafana panels)
             try:
-                book = adapter.get_book(args.symbol)  # must return {"best_bid","best_ask"}
+                book = adapter.get_book(args.symbol)
                 sp_bps = 1e4 * (book["best_ask"] - book["best_bid"]) / max(price, 1e-12)
                 SPREAD_BPS.set(sp_bps)
             except Exception as e:
-                log.debug("Spread probe failed: %s", e)
+                # Change debug to warning so you can see it in the logs
+                log.warning("Spread probe failed. Reason: %s", e)
             action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
             zone = ('BUY' if dist_to_buy_bps == 0 else 'SELL' if dist_to_sell_bps == 0 else 'NEUTRAL')
             
