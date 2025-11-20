@@ -1,6 +1,8 @@
 #live_executor.py
 from __future__ import annotations
 import os, json, time, logging, argparse, math, threading
+from dotenv import load_dotenv
+load_dotenv()
 from typing import Dict, Any
 import pandas as pd
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -302,8 +304,28 @@ def main():
                 }
                 btc = bal_map.get("BTC", 0.0)
                 eth = bal_map.get("ETH", 0.0)
-            except Exception:
-                btc, eth = cfg.risk.basis_btc, 0.0
+                # Log successful fetch at least once to confirm connection
+                if state.get("last_balance_log_ts", 0) < now_s - 300: # Log every 5 mins
+                    log.info("[BALANCE] Successfully fetched: BTC=%.6f, ETH=%.6f", btc, eth)
+                    state["last_balance_log_ts"] = now_s
+            except Exception as e:
+                # CRITICAL FIX: Log the actual error!
+                log.error("CRITICAL: Failed to fetch %s account balance. Reason: %s", args.mode.upper(), e)
+                
+                # If in LIVE/TESTNET, we generally DO NOT want to fake a balance. 
+                # We should probably retry or use the last known valid balance.
+                # For now, we will stick to the fallback but WARN heavily.
+                if "last_known_btc" in state:
+                    btc = state["last_known_btc"]
+                    eth = state["last_known_eth"]
+                    log.warning("Using LAST KNOWN balance from state: BTC=%.6f", btc)
+                else:
+                    btc, eth = cfg.risk.basis_btc, 0.0
+                    log.warning("Using CONFIG BASIS fallback (Dangerous for Live!): BTC=%.6f", btc)
+
+            # Store valid balances for future fallbacks
+            state["last_known_btc"] = btc
+            state["last_known_eth"] = eth
 
             W = btc + eth * price
             cur_w = 0.0 if W <= 0 else (eth * price) / W
@@ -753,7 +775,7 @@ def main():
         
             # ---- Balance-aware clamp before placing the order ----------------------------
             if side == "BUY":
-                max_qty_by_balance = adapter.round_qty(max(btc / max(price, 1e-12), 0.0), f.step_size)
+                max_qty_by_balance = adapter.round_qty(max((btc * 0.999) / max(price, 1e-12), 0.0), f.step_size)
             else:  
                 max_qty_by_balance = adapter.round_qty(max(eth, 0.0), f.step_size)
 
