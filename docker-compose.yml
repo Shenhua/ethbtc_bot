@@ -11,7 +11,7 @@ services:
       BINANCE_KEY: "${BINANCE_KEY:-}"
       BINANCE_SECRET: "${BINANCE_SECRET:-}"
       # For spot testnet, uncomment the next line:
-      # BINANCE_BASE_URL: "https://testnet.binance.vision"
+      BINANCE_BASE_URL: "https://testnet.binance.vision"
 
       # --- Metrics / status ports inside the container ---
       METRICS_PORT: "9109"
