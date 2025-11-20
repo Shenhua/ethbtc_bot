@@ -112,6 +112,11 @@ DIST_TO_SELL_BPS = Gauge(
     "Distance to SELL entry in bps (0 if inside SELL zone)",
 )
 
+NEXT_ACTION_DIST_BPS = Gauge(
+    "next_action_dist_bps",
+    "Distance to nearest band entry in bps (0 if inside a band)",
+)
+
 # Risk mode: 1 for active mode, 0 for inactive
 RISK_MODE = Gauge(
     "risk_mode",
@@ -138,16 +143,16 @@ def start_metrics_server(port: int) -> None:
 
 
 def mark_signal_metrics(ratio: float, dist_buy_bps: float, dist_sell_bps: float) -> None:
-    """
-    Update signal-related metrics in one call.
+    SIGNAL_RATIO.set(ratio)
+    DIST_TO_BUY_BPS.set(dist_buy_bps)
+    DIST_TO_SELL_BPS.set(dist_sell_bps)
 
-    ratio          → SIGNAL_RATIO (can be +/-)
-    dist_buy_bps   → distance to BUY band in bps (clamped at >= 0)
-    dist_sell_bps  → distance to SELL band in bps (clamped at >= 0)
-    """
-    SIGNAL_RATIO.set(float(ratio))
-    DIST_TO_BUY_BPS.set(max(0.0, float(dist_buy_bps)))
-    DIST_TO_SELL_BPS.set(max(0.0, float(dist_sell_bps)))
+    # New: “distance to next action” = min(BUY, SELL)
+    try:
+        NEXT_ACTION_DIST_BPS.set(min(dist_buy_bps, dist_sell_bps))
+    except Exception:
+        # Defensive: don’t break if gauge missing in some env
+        pass
 
 
 def mark_gate(open_: bool) -> None:
