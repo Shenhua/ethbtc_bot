@@ -10,7 +10,7 @@ from core.config_schema import load_config
 from core.binance_adapter import BinanceSpotAdapter
 
 from core.metrics import (
-    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, snapshot_wealth_balances, set_delta_metrics,mark_risk_mode, mark_risk_flags
+    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, snapshot_wealth_balances, set_delta_metrics,mark_risk_mode, mark_risk_flags, mark_trade_readiness,
 )
 from ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 # --- Simple JSON /status on :9110 ------------------------------------------------
@@ -554,7 +554,28 @@ def main():
                 action_side,
                 dist_to_buy_bps, dist_to_sell_bps
             )
+            # --- Trade readiness (strategy + risk, high-level) -------------------
+            #   zone_ok: in BUY or SELL band (not neutral)
+            #   gate_ok: calendar gate is OPEN
+            #   delta_ok: |Δw| >= rebalance_threshold_w
+            #   risk_ok: daily / max-DD limits not hit
+            #   balance_ok, size_ok: kept True here (micro-filters handled by skips)
+            zone_ok = (zone == "buy_band") or (zone == "sell_band")
+            gate_open_ok = bool(gate_ok)
+            abs_delta_for_ready = abs(delta_w)
+            delta_ok = abs_delta_for_ready >= float(cfg.strategy.rebalance_threshold_w)
+            risk_ok = not (daily_limit_hit or maxdd_hit)
 
+            # We intentionally ignore balance / min-notional in trade_ready;
+            # those are already visible via SKIPS & Blocker panels.
+            mark_trade_readiness(
+                zone_ok=zone_ok,
+                gate_ok=gate_open_ok,
+                delta_ok=delta_ok,
+                risk_ok=risk_ok,
+                balance_ok=True,
+                size_ok=True,
+            )
 
             # --- Skip tiny rebalances / no-op --------------------------------------------
             tol = 1e-12

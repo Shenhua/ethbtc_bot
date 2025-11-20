@@ -39,6 +39,87 @@
         "type": "prometheus",
         "uid": "Prometheus"
       },
+      "description": "Overall trade readiness: 1 = all high-level conditions OK (zone, gate, delta, risk), 0 = blocked.",
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "NO TRADE"
+                },
+                "1": {
+                  "text": "OK TO TRADE"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "No data"
+                }
+              },
+              "type": "special"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "id": 31,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "trade_ready",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Trade readiness (now)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
       "description": "Active zone from signal_zone (buy_band / neutral / sell_band). Uses topk(1, signal_zone) so that the label of the active zone is shown.",
       "fieldConfig": {
         "defaults": {
@@ -72,8 +153,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 0,
+        "w": 4,
+        "x": 4,
         "y": 1
       },
       "id": 2,
@@ -84,7 +165,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -152,7 +235,7 @@
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 5,
+        "x": 8,
         "y": 1
       },
       "id": 3,
@@ -163,7 +246,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -187,7 +272,7 @@
         "type": "prometheus",
         "uid": "Prometheus"
       },
-      "description": "Sign of (SELL distance − BUY distance): negative → BUY closer; positive → SELL closer.",
+      "description": "Sign of (SELL distance \u2212 BUY distance): negative \u2192 BUY closer; positive \u2192 SELL closer.",
       "fieldConfig": {
         "defaults": {
           "decimals": 1,
@@ -198,13 +283,13 @@
                 "result": {
                   "text": "BUY next"
                 },
-                "to": -1e-7
+                "to": -1e-07
               },
               "type": "range"
             },
             {
               "options": {
-                "from": 1e-7,
+                "from": 1e-07,
                 "result": {
                   "text": "SELL next"
                 },
@@ -248,8 +333,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 8,
+        "w": 4,
+        "x": 11,
         "y": 1
       },
       "id": 4,
@@ -260,7 +345,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -308,8 +395,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 5,
-        "x": 13,
+        "w": 4,
+        "x": 15,
         "y": 1
       },
       "id": 5,
@@ -320,7 +407,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -390,8 +479,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
+        "w": 5,
+        "x": 19,
         "y": 1
       },
       "id": 6,
@@ -402,7 +491,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -499,7 +590,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -608,7 +701,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 8,
         "x": 0,
         "y": 10
       },
@@ -662,7 +755,7 @@
         "type": "prometheus",
         "uid": "Prometheus"
       },
-      "description": "How far we are from entering BUY or SELL band; 0 → inside band.",
+      "description": "How far we are from entering BUY or SELL band; 0 \u2192 inside band.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -723,8 +816,8 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
-        "x": 12,
+        "w": 8,
+        "x": 8,
         "y": 10
       },
       "id": 30,
@@ -758,6 +851,127 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "Prometheus"
+      },
+      "description": "0/1 curves for trade readiness conditions (zone, gate, delta, risk, balance, size).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 1,
+            "pointSize": 4,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 0,
+          "mappings": [],
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "id": 32,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "expr": "trade_ready_condition{cond=\"zone_ok\"}",
+          "legendFormat": "zone_ok",
+          "refId": "A"
+        },
+        {
+          "expr": "trade_ready_condition{cond=\"gate_open\"}",
+          "legendFormat": "gate_open",
+          "refId": "B"
+        },
+        {
+          "expr": "trade_ready_condition{cond=\"delta_ok\"}",
+          "legendFormat": "delta_ok",
+          "refId": "C"
+        },
+        {
+          "expr": "trade_ready_condition{cond=\"risk_ok\"}",
+          "legendFormat": "risk_ok",
+          "refId": "D"
+        },
+        {
+          "expr": "trade_ready_condition{cond=\"balance_ok\"}",
+          "legendFormat": "balance_ok",
+          "refId": "E"
+        },
+        {
+          "expr": "trade_ready_condition{cond=\"size_ok\"}",
+          "legendFormat": "size_ok",
+          "refId": "F"
+        }
+      ],
+      "title": "Trade readiness conditions (0/1)",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -775,7 +989,7 @@
         "type": "prometheus",
         "uid": "Prometheus"
       },
-      "description": "Weight delta (W) and equivalent ΔETH planned each bar.",
+      "description": "Weight delta (W) and equivalent \u0394ETH planned each bar.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1412,7 +1626,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -1436,7 +1652,7 @@
         "type": "prometheus",
         "uid": "Prometheus"
       },
-      "description": "Derived: mid × (1 − spread/2).",
+      "description": "Derived: mid \u00d7 (1 \u2212 spread/2).",
       "fieldConfig": {
         "defaults": {
           "decimals": 8,
@@ -1471,7 +1687,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -1495,7 +1713,7 @@
         "type": "prometheus",
         "uid": "Prometheus"
       },
-      "description": "Derived: mid × (1 + spread/2).",
+      "description": "Derived: mid \u00d7 (1 + spread/2).",
       "fieldConfig": {
         "defaults": {
           "decimals": 8,
@@ -1530,7 +1748,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -1590,7 +1810,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -1776,7 +1998,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -1845,7 +2069,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -1917,7 +2143,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -1989,7 +2217,9 @@
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
-          "calcs": ["lastNotNull"],
+          "calcs": [
+            "lastNotNull"
+          ],
           "fields": "",
           "values": false
         },
@@ -2215,163 +2445,16 @@
       ],
       "title": "Balances (USD value)",
       "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 69
-      },
-      "id": 31,
-      "panels": [],
-      "title": "Risk state",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "Prometheus"
-      },
-      "description": "Active risk mode from risk_mode{mode=\"fixed_basis\"|\"dynamic\"}. Uses last non-null sample.",
-      "fieldConfig": {
-        "defaults": {
-          "displayName": "${__field.labels.mode}",
-          "mappings": [
-            {
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "No data"
-                }
-              },
-              "type": "special"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 12,
-        "x": 0,
-        "y": 70
-      },
-      "id": 32,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "name",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "expr": "topk(1, risk_mode)",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Risk mode (current)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "Prometheus"
-      },
-      "description": "Risk flags from risk_flags{kind=\"daily_limit_hit\"|\"maxdd_hit\"}. Shows the first active flag (if any).",
-      "fieldConfig": {
-        "defaults": {
-          "displayName": "${__field.labels.kind}",
-          "mappings": [
-            {
-              "options": {
-                "match": "null",
-                "result": {
-                  "text": "None (no flags)"
-                }
-              },
-              "type": "special"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 12,
-        "x": 12,
-        "y": 70
-      },
-      "id": 33,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "name",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "expr": "topk(1, risk_flags)",
-          "instant": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Risk flags (if any)",
-      "type": "stat"
     }
   ],
   "preload": false,
   "refresh": "10s",
   "schemaVersion": 42,
-  "tags": ["ethbtc", "bot", "live"],
+  "tags": [
+    "ethbtc",
+    "bot",
+    "live"
+  ],
   "templating": {
     "list": []
   },
@@ -2380,10 +2463,15 @@
     "to": "now"
   },
   "timepicker": {
-    "refresh_intervals": ["5s", "10s", "30s", "1m"]
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m"
+    ]
   },
   "timezone": "",
-  "title": "ETHBTC Bot — Live (Full)",
+  "title": "ETHBTC Bot \u2014 Live (Full)",
   "uid": "ethbtc-bot-live-full",
   "version": 3
 }

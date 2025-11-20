@@ -131,9 +131,65 @@ RISK_FLAGS = Gauge(
     ["kind"],
 )
 
+# Overall trade readiness: 1 = all high-level conditions OK, 0 = something blocks
+TRADE_READY = Gauge(
+    "trade_ready",
+    "Overall trade readiness (1 = strategy & risk say 'OK to trade', 0 = blocked).",
+)
+
+# Per-condition readiness: each label is a step in the decision pipeline.
+# cond in {zone_ok, gate_open, delta_ok, risk_ok, balance_ok, size_ok}
+TRADE_READY_COND = Gauge(
+    "trade_ready_condition",
+    "Per-condition readiness flags (0/1) for trade decisions.",
+    ["cond"],
+)
+
 # ---- Helper functions used from live_executor.py ---------------------------
 
+def mark_trade_readiness(
+    zone_ok: bool,
+    gate_ok: bool,
+    delta_ok: bool,
+    risk_ok: bool,
+    balance_ok: bool,
+    size_ok: bool,
+) -> None:
+    """
+    Update per-condition 0/1 flags and overall trade_ready.
 
+    We keep this intentionally *high-level*:
+      - zone_ok: we are in BUY or SELL band (not neutral)
+      - gate_ok: gate is OPEN
+      - delta_ok: |Δw| >= rebalance threshold
+      - risk_ok: daily/maxDD risk not hit
+      - balance_ok: (optionally) sufficient balance to do the intended side
+      - size_ok: (optionally) notional >= minimum size
+
+    For now we will pass balance_ok=True, size_ok=True from live_executor
+    so this is purely “strategy + risk”; you can refine later if you want.
+    """
+    try:
+        TRADE_READY_COND.labels("zone_ok").set(1 if zone_ok else 0)
+        TRADE_READY_COND.labels("gate_open").set(1 if gate_ok else 0)
+        TRADE_READY_COND.labels("delta_ok").set(1 if delta_ok else 0)
+        TRADE_READY_COND.labels("risk_ok").set(1 if risk_ok else 0)
+        TRADE_READY_COND.labels("balance_ok").set(1 if balance_ok else 0)
+        TRADE_READY_COND.labels("size_ok").set(1 if size_ok else 0)
+
+        ready = (
+            zone_ok
+            and gate_ok
+            and delta_ok
+            and risk_ok
+            and balance_ok
+            and size_ok
+        )
+        TRADE_READY.set(1 if ready else 0)
+    except Exception:
+        # never let metrics crash the bot
+        pass
+    
 def start_metrics_server(port: int) -> None:
     """
     Start the Prometheus metrics HTTP server on the given port.
