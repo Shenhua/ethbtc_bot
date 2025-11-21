@@ -59,6 +59,7 @@ services:
       - BINANCE_SECRET=${BINANCE_SECRET}
       - BINANCE_BASE_URL=${BINANCE_BASE_URL}
       - MODE=${MODE}
+      - SWEEPER_IGNORE=${SWEEPER_IGNORE:-}
     volumes:
       - .:/app
     # Runs in 'auto' mode (syncs with MODE) on a 'weekly' schedule
