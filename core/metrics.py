@@ -145,6 +145,8 @@ TRADE_READY_COND = Gauge(
     ["cond"],
 )
 
+FUNDING_RATE = Gauge("funding_rate_pct", "Current funding rate percentage")
+
 # ---- Helper functions used from live_executor.py ---------------------------
 
 def mark_trade_readiness(
@@ -189,7 +191,7 @@ def mark_trade_readiness(
     except Exception:
         # never let metrics crash the bot
         pass
-    
+
 def start_metrics_server(port: int) -> None:
     """
     Start the Prometheus metrics HTTP server on the given port.
@@ -327,3 +329,9 @@ def snapshot_balances(btc_free: float, eth_free: float, price_mid: float) -> Non
     BAL_FREE.labels("btc").set(btc_free)
     BAL_FREE.labels("eth").set(eth_free)
     PRICE_MID.set(price_mid)
+
+def mark_funding_rate(rate: float) -> None:
+    """
+    Record the current funding rate (in %) to Prometheus.
+    """
+    FUNDING_RATE.set(rate)

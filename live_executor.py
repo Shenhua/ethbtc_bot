@@ -12,7 +12,7 @@ from core.config_schema import load_config
 from core.binance_adapter import BinanceSpotAdapter
 
 from core.metrics import (
-    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, snapshot_wealth_balances, set_delta_metrics,mark_risk_mode, mark_risk_flags, mark_trade_readiness,
+    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, snapshot_wealth_balances, set_delta_metrics,mark_risk_mode, mark_risk_flags, mark_trade_readiness,mark_funding_rate,
 )
 from ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 # --- Simple JSON /status on :9110 ------------------------------------------------
@@ -379,11 +379,41 @@ def main():
 
             # gate diagnostic (calendar daily ROC)
             gate_ok = True
+            gate_reason = "open" # track WHY it closed
+            funding_rate = 0.0  # Initialize safe default
+            
             if cfg.strategy.gate_window_days and cfg.strategy.gate_roc_threshold:
                 day_close = ser_close.resample("1D").last()
                 if len(day_close) > cfg.strategy.gate_window_days:
                     droc = float(day_close.iloc[-1] / max(day_close.shift(cfg.strategy.gate_window_days).iloc[-1], 1e-12) - 1.0)
-                    gate_ok = abs(droc) >= cfg.strategy.gate_roc_threshold
+                    if abs(droc) < cfg.strategy.gate_roc_threshold:
+                        gate_ok = False
+                        gate_reason = "trend_weak"
+
+            # --- FUNDING RATE CHECK ---
+            # We check ETHUSDT funding because we trade ETH.
+            try:
+                # 1. Fetch & Record
+                funding_rate = adapter.get_funding_rate("ETHUSDT")
+                mark_funding_rate(funding_rate)  
+                
+                # 2. Check Limits
+                # Long Squeeze Risk (Euphoria) -> Disable BUY
+                if funding_rate > cfg.strategy.funding_limit_long:
+                    if cur_ratio <= -entry:  # If we want to BUY...
+                        gate_ok = False
+                        gate_reason = f"funding_high ({funding_rate:.4f}%)"
+                        log.warning("Gate CLOSE: Market Euphoria! Funding=%.4f%%", funding_rate)
+
+                # Short Squeeze Risk (Panic) -> Disable SELL
+                if funding_rate < cfg.strategy.funding_limit_short:
+                    if cur_ratio >= entry:   # If we want to SELL...
+                        gate_ok = False
+                        gate_reason = f"funding_low ({funding_rate:.4f}%)"
+                        log.warning("Gate CLOSE: Market Panic! Funding=%.4f%%", funding_rate)
+
+            except Exception as e:
+                log.warning("Funding check warning: %s", e)
 
             # --- STRATEGY PARITY: compute target_w from EthBtcStrategy if available ---
             target_w = None
@@ -553,6 +583,9 @@ def main():
                 },
                 "btc_usd": float(btc_usd) if 'btc_usd' in locals() else None,
                 "eth_usd": float(eth_usd) if 'eth_usd' in locals() else None,
+                "funding_rate": funding_rate if 'funding_rate' in locals() else 0.0,
+                "gate": ("OPEN" if gate_ok else "CLOSED"),
+                "gate_reason": gate_reason, 
                 "dist_to_buy_bps": round(dist_to_buy_bps, 1),
                 "dist_to_sell_bps": round(dist_to_sell_bps, 1),
                 "zone": ('BUY' if dist_to_buy_bps == 0 else 'SELL' if dist_to_sell_bps == 0 else 'NEUTRAL'),
@@ -632,6 +665,9 @@ def main():
                     },
                     "btc_usd": float(btc_usd) if 'btc_usd' in locals() else None,
                     "eth_usd": float(eth_usd) if 'eth_usd' in locals() else None,
+                    "funding_rate": funding_rate if 'funding_rate' in locals() else 0.0,
+                    "gate": ("OPEN" if gate_ok else "CLOSED"),
+                    "gate_reason": gate_reason, 
                     "dist_to_buy_bps": round(dist_to_buy_bps, 1),
                     "dist_to_sell_bps": round(dist_to_sell_bps, 1),
                     "zone": ('BUY' if dist_to_buy_bps == 0 else
