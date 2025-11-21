@@ -236,6 +236,9 @@ def main():
         else str(Path.cwd() / "run_state" / "state.json")
     )
     ap.add_argument("--state", default=_default_state, help="state file path")
+    # --- Cron / Once flag ---
+    ap.add_argument("--once", action="store_true", help="Run one logic loop and exit (for Cron)")
+
     args = ap.parse_args()
 
     # --- Auto-link Mode to State File ---
@@ -253,7 +256,11 @@ def main():
     # -----------------------------------------
 
     cfg = load_config(args.params)
+    # We cannot assume 3-letter tickers (e.g. ETHUSDT is 3+4).
+    # We ask Binance: "What are the assets for this symbol?"
 
+        
+    # ------------------------------------
     # --- Robust base_url selection for Binance client -----------------------
     # Priority:
     #   1) If BINANCE_BASE_URL is set and non-empty, use it.
@@ -276,6 +283,22 @@ def main():
         base_url=base_url,
     )
 
+    try:
+        info = client.exchange_info(symbol=args.symbol)
+        s_info = info["symbols"][0]
+        base_asset = s_info["baseAsset"]   # e.g. "ETH" or "BNB"
+        quote_asset = s_info["quoteAsset"] # e.g. "BTC" or "USDT" or "SOL"
+        log.info("Configuration: Trading %s | Base=%s | Quote=%s", args.symbol, base_asset, quote_asset)
+    except Exception as e:
+        log.error("Could not fetch exchange info for %s: %s", args.symbol, e)
+        # Fallback (risky for USDT pairs, but allows dry run without network)
+        if args.mode == "dry":
+            base_asset = args.symbol.replace("BTC", "").replace("USDT", "")
+            quote_asset = "BTC" if "BTC" in args.symbol else "USDT"
+            log.warning("Dry run fallback parsing: Base=%s, Quote=%s", base_asset, quote_asset)
+        else:
+            raise e
+        
     # adapter & metrics
     adapter = BinanceSpotAdapter(client)
     metrics_port = int(os.getenv("METRICS_PORT", "9109"))
@@ -317,16 +340,18 @@ def main():
                     x["asset"]: float(x["free"]) + float(x["locked"])
                     for x in acct["balances"]
                 }
-                btc = bal_map.get("BTC", 0.0)
-                eth = bal_map.get("ETH", 0.0)
+                # DYNAMIC FETCH
+                quote_bal = bal_map.get(quote_asset, 0.0) # Was 'btc'
+                base_bal  = bal_map.get(base_asset,  0.0) # Was 'eth'
                 # Log successful fetch at least once to confirm connection
-                if state.get("last_balance_log_ts", 0) < now_s - 300: # Log every 5 mins
-                    log.info("[BALANCE] Successfully fetched: BTC=%.6f, ETH=%.6f", btc, eth)
+                if state.get("last_balance_log_ts", 0) < now_s - 300:
+                    log.info("[BALANCE] %s=%.6f, %s=%.6f", quote_asset, quote_bal, base_asset, base_bal)
                     state["last_balance_log_ts"] = now_s
             except Exception as e:
                 # CRITICAL FIX: Log the actual error!
                 log.error("CRITICAL: Failed to fetch %s account balance. Reason: %s", args.mode.upper(), e)
-                
+                quote_bal, base_bal = cfg.risk.basis_btc, 0.0 # Note: basis_btc now effectively means "basis_quote_currency"
+
                 # If in LIVE/TESTNET, we generally DO NOT want to fake a balance. 
                 # We should probably retry or use the last known valid balance.
                 # For now, we will stick to the fallback but WARN heavily.
@@ -338,9 +363,9 @@ def main():
                     btc, eth = cfg.risk.basis_btc, 0.0
                     log.warning("Using CONFIG BASIS fallback (Dangerous for Live!): BTC=%.6f", btc)
 
-            # Store valid balances for future fallbacks
-            state["last_known_btc"] = btc
-            state["last_known_eth"] = eth
+            # Store valid balances
+            state["last_known_quote"] = quote_bal
+            state["last_known_base"]  = base_bal
 
             # --- START DUST MASKING ---
             # 1. Get exchange filters to know what "too small" means
@@ -348,24 +373,23 @@ def main():
             
             # 2. Calculate the minimum tradeable ETH amount
             # min_notional is usually ~0.0001 BTC or 5 USDT
-            min_eth_val = f.min_notional / max(price, 1e-12)
+            min_base_val = f.min_notional / max(price, 1e-12)
             
             # 3. Determine Effective ETH for Strategy
             # If we have ETH, but it's less than the minimum required to trade, treat it as 0.
-            effective_eth = eth
-            if eth > 0 and eth < min_eth_val:
-                effective_eth = 0.0
-                # Optional: Log specifically about this decision periodically
+            effective_base = base_bal
+            if base_bal > 0 and base_bal < min_base_val:
+                effective_base = 0.0
                 if state.get("last_dust_log_ts", 0) < now_s - 3600:
-                    log.info("[DUST] Masking %.8f ETH (Too small to trade). Strategy sees 0.0.", eth)
+                    log.info("[DUST] Masking %.8f %s (Too small).", base_bal, base_asset)
                     state["last_dust_log_ts"] = now_s
 
             # 4. Calculate Metrics
-            # Wealth (W) uses REAL balance (money is money)
-            W = btc + eth * price
+            # Wealth (W) in QUOTE ASSET terms (e.g. BTC or USDT)
+            W = quote_bal + base_bal * price
             
             # Current Weight (cur_w) uses EFFECTIVE balance (to stop the loop)
-            cur_w = 0.0 if W <= 0 else (effective_eth * price) / W
+            cur_w = 0.0 if W <= 0 else (effective_base * price) / W            
             # --- END DUST MASKING ---
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
@@ -385,10 +409,10 @@ def main():
             mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
 
             # Snapshot → metrics
-            WEALTH_BTC_TOTAL.set(W)
+            WEALTH_BTC_TOTAL.set(W) # Note: This metric name remains "wealth_btc" for Grafana compatibility, but value is Quote.            
             PRICE_MID.set(price)
-            BAL_FREE.labels("btc").set(btc)
-            BAL_FREE.labels("eth").set(eth)
+            BAL_FREE.labels(quote_asset.lower()).set(quote_bal) # Dynamic Label
+            BAL_FREE.labels(base_asset.lower()).set(base_bal)  # Dynamic Label
 
             # Snapshot → USD prices (BTC/ETH)
             try:
@@ -400,7 +424,8 @@ def main():
                 log.debug("USD price fetch failed: %s", e)
 
             
-            log.debug("Wallet: BTC=%.8f, ETH=%.8f, W=%.8f BTC, cur_w=%.4f", btc, eth, W, cur_w)
+            log.debug("Wallet: %s=%.8f, %s=%.8f, W=%.8f, cur_w=%.4f", 
+                      quote_asset, quote_bal, base_asset, base_bal, W, cur_w)
 
             # indicators for diagnostics (not for decision if strategy is present)
             L = int(cfg.strategy.trend_lookback)
@@ -429,11 +454,15 @@ def main():
                         gate_reason = "trend_weak"
 
             # --- FUNDING RATE CHECK ---
+            # We typically check BaseAsset/USDT for funding sentiment (e.g. ETHUSDT, BNBUSDT, SOLUSDT)
+            # If trading ETH/USDT, we check ETHUSDT.
+            # If trading BNB/SOL, we check BNBUSDT (Base vs Stable).
+            funding_ticker = f"{base_asset}USDT"
+
             # We check ETHUSDT funding because we trade ETH.
             try:
                 # 1. Fetch & Record
-                funding_rate = adapter.get_funding_rate("ETHUSDT")
-                mark_funding_rate(funding_rate)  
+                funding_rate = adapter.get_funding_rate(funding_ticker)  
                 
                 # 2. Check Limits
                 # Long Squeeze Risk (Euphoria) -> Disable BUY
@@ -523,8 +552,7 @@ def main():
             dist_to_buy_bps, dist_to_sell_bps = dist_to_buy_sell_bps(cur_ratio, entry, exitb)
             mark_signal_metrics(cur_ratio, dist_to_buy_bps, dist_to_sell_bps)
 
-            snapshot_wealth_balances(W, price, btc, eth)
-
+            snapshot_wealth_balances(W, price, quote_bal, base_bal)
             log.info("[SIG] ratio=%+0.4f  bands: -entry=%0.4f  -exit=%0.4f  +exit=%0.4f  +entry=%0.4f  gate=%s  %s",
                     cur_ratio, -entry, -exitb, exitb, entry, "OPEN" if gate_ok else "CLOSED", meter)
 
@@ -550,20 +578,18 @@ def main():
             # --- NEW: SNAP-TO-ZERO (Clean Small Positions) ---
             # If we want to sell everything (target=0) but the step (e.g. 50%) 
             # would create an order smaller than the exchange minimum, force 100% sell.
-            if target_w == 0.0 and eth > 0:
-                f = adapter.get_filters(args.symbol)
-                # Calculate current total value
-                total_val_btc = eth * price
+            if target_w == 0.0 and base_bal > 0:
+                total_val_quote = base_bal * price
                 
                 # Calculate the effective minimum trade size (same logic as order block)
-                min_trade = max(cfg.execution.min_trade_floor_btc,
-                                cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
+                min_trade_quote = max(cfg.execution.min_trade_floor_btc,
+                                cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc)) # "btc" config param acts as "quote" param
                 
                 # If total position is small (e.g. < 3x min trade), just sell it all.
                 # This prevents the "Selling 50% is too small" loop.
-                if total_val_btc < (3.0 * min_trade):
+                if total_val_quote > min_trade_quote and total_val_quote < (3.0 * min_trade_quote):
                     step = 1.0
-                    log.info("[EXEC] Snap-to-Zero triggered: Small position (%.6f BTC), forcing 100%% sell.", total_val_btc)
+                    log.info("[EXEC] Snap-to-Zero: %s position small (%.6f %s). Forcing exit.", base_asset, total_val_quote, quote_asset)
             # -------------------------------------------------
 
             if getattr(cfg.strategy, "vol_scaled_step", False):
@@ -869,11 +895,13 @@ def main():
                 time.sleep(cfg.execution.poll_sec); continue
 
         
-            # ---- Balance-aware clamp before placing the order ----------------------------
+            # ---- Balance-aware clamp (Generic) ----------------------------
             if side == "BUY":
-                max_qty_by_balance = adapter.round_qty(max((btc * 0.999) / max(price, 1e-12), 0.0), f.step_size)
+                # Use quote_bal (e.g. BTC or USDT)
+                max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), f.step_size)
             else:  
-                max_qty_by_balance = adapter.round_qty(max(eth, 0.0), f.step_size)
+                # Use base_bal (e.g. ETH or BNB)
+                max_qty_by_balance = adapter.round_qty(max(base_bal, 0.0), f.step_size)
 
             qty_exec = min(qty_rounded, max_qty_by_balance)
 
@@ -891,8 +919,8 @@ def main():
                 bar_reason = "skip_balance"
                 mark_decision("skip_balance")
                 log.info(
-                    "Skip: insufficient free balance for %s (qty_rounded=%.8f, max_by_balance=%.8f, btc=%.8f, eth=%.8f)",
-                    side, qty_rounded, max_qty_by_balance, btc, eth
+                    "Skip: insufficient free balance for %s (qty_rounded=%.8f, max_by_balance=%.8f, %s=%.8f, %s=%.8f)",
+                    side, qty_rounded, max_qty_by_balance, quote_asset, quote_bal, base_asset, base_bal
                 )
                 inc_rejection("insufficient_balance")
                 state["last_target_w"] = target_w
