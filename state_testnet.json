@@ -1,0 +1,13 @@
+{
+  "last_balance_log_ts": 1763732293,
+  "last_bar_close": 1763731799,
+  "last_known_base": 1.0,
+  "last_known_quote": 1.03261057,
+  "last_target_w": 0.0,
+  "risk_current_date": "2025-11-21",
+  "risk_daily_limit_hit": false,
+  "risk_daily_start_wealth": 1.04240757,
+  "risk_equity_high_btc": 1.04240757,
+  "risk_maxdd_hit": false,
+  "session_start_W": 1.04240757
+}

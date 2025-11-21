@@ -1,66 +1,58 @@
 version: "3.8"
-
 services:
-  ethbtc_bot_v3:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ethbtc_bot_v3_a
-    environment:
-      # --- Binance API ---
-      BINANCE_KEY: "${BINANCE_KEY:-}"
-      BINANCE_SECRET: "${BINANCE_SECRET:-}"
-      # For spot testnet, uncomment the next line:
-      BINANCE_BASE_URL: "${BINANCE_BASE_URL:-https://testnet.binance.vision}"
-
-      # --- Metrics / status ports inside the container ---
-      METRICS_PORT: "9109"
-      STATUS_PORT: "9110"
-
-      # --- State file path used by live_executor (inside container) ---
-      STATE_FILE: "/data/state.json"
-
-    # live_executor uses the new v3-style config (no top-level `params`)
-    command:
-      - python
-      - /app/live_executor.py
-      - --params
-      - configs/prod_dynamic_15m_016btc.json
-      - --mode
-      - ${MODE:-testnet}
-      - --symbol
-      - ${SYMBOL:-ETHBTC}
-
-    # Persist state (risk tracking, session start wealth, etc.)
-    volumes:
-      - ./run_state:/data
-      - .:/app
-      # Optional: if you keep configs outside the image, mount them read-only:
-      # - ./configs:/app/configs:ro
-
-    # Expose metrics and status to the host (Prometheus & manual inspection)
-    ports:
-      - "9109:9109" # Prometheus metrics
-      - "9110:9110" # /status JSON
-
-    restart: unless-stopped
-
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
-  sweeper:
+  # --- INSTANCE 1: ETH/BTC ---
+  bot_eth:
     build: .
-    container_name: ethbtc_sweeper
+    container_name: ethbtc_bot
     restart: unless-stopped
     environment:
       - BINANCE_KEY=${BINANCE_KEY}
       - BINANCE_SECRET=${BINANCE_SECRET}
       - BINANCE_BASE_URL=${BINANCE_BASE_URL}
       - MODE=${MODE}
-      - SWEEPER_IGNORE=${SWEEPER_IGNORE:-}
+      - SYMBOL=ETHBTC # <--- Specific Symbol
+    volumes:
+      - ./run_state/eth:/data # <--- Specific State Folder
+      - .:/app
+    command: >
+      python /app/live_executor.py 
+      --params configs/prod_dynamic_15m_016btc.json 
+      --mode ${MODE} --symbol ETHBTC
+    ports:
+      - "9109:9109" # Metric Port 9109
+
+  # --- INSTANCE 2: BNB/BTC ---
+  bot_bnb:
+    build: .
+    container_name: bnbbtc_bot
+    restart: unless-stopped
+    environment:
+      - BINANCE_KEY=${BINANCE_KEY}
+      - BINANCE_SECRET=${BINANCE_SECRET}
+      - BINANCE_BASE_URL=${BINANCE_BASE_URL}
+      - MODE=${MODE}
+      - SYMBOL=BNBBTC # <--- Specific Symbol
+    volumes:
+      - ./run_state/bnb:/data # <--- Specific State Folder
+      - .:/app
+    command: >
+      python /app/live_executor.py 
+      --params configs/prod_dynamic_15m_016bnb.json 
+      --mode ${MODE} --symbol BNBBTC
+    ports:
+      - "9101:9109" # Metric Port 9101
+
+  # --- UTILITIES ---
+  sweeper:
+    build: .
+    container_name: global_sweeper
+    restart: unless-stopped
+    environment:
+      - BINANCE_KEY=${BINANCE_KEY}
+      - BINANCE_SECRET=${BINANCE_SECRET}
+      - BINANCE_BASE_URL=${BINANCE_BASE_URL}
+      - MODE=${MODE}
+      - SWEEPER_IGNORE=${SWEEPER_IGNORE}
     volumes:
       - .:/app
-    # Runs in 'auto' mode (syncs with MODE) on a 'weekly' schedule
     command: python /app/dust_sweeper.py --mode auto --schedule weekly

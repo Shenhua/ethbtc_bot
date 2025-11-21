@@ -220,7 +220,7 @@ def main():
     ap.add_argument("--once", action="store_true", help="Run one logic loop and exit (for Cron)")
 
     args = ap.parse_args()
-
+    log.name = args.symbol
     # --- Auto-link Mode to State File ---
     state_file_name = "state.json"
     if args.state.endswith(state_file_name):
@@ -568,6 +568,7 @@ def main():
                 "step": step,
                 "delta_w_planned": delta_w,
                 "delta_eth_planned": delta_eth,
+                "base_asset": base_asset,
                 "side": action_side,
                 "ratio": cur_ratio,
                 "entry": entry,
@@ -599,11 +600,11 @@ def main():
 
             log.info(
                 "[STATUS] %s | px=%.8f W=%.6f | zone=%s gate=%s | w: cur=%.4f tgt=%.4f step=%.2f | "
-                "plan: Δw=%+.4f (ΔETH=%+.6f) → %s | dist: BUY=%0.1fbps SELL=%0.1fbps",
+                "plan: Δw=%+.4f (Δ%s=%+.6f) → %s | dist: BUY=%0.1fbps SELL=%0.1fbps",
                 args.mode, price, W,
                 zone, ("OPEN" if gate_ok else "CLOSED"),
                 cur_w, target_w, step,
-                delta_w, delta_eth,
+                delta_w, base_asset, delta_eth,  # <--- Added base_asset here
                 action_side,
                 dist_to_buy_bps, dist_to_sell_bps
             )
@@ -770,8 +771,8 @@ def main():
                 ORDERS_SUBMITTED.labels("MARKET", side).inc()
                 mark_decision("exec_buy" if side == "BUY" else "exec_sell")
                 log.info(
-                    "[DRY] Would EXEC %s %0.8f @ ~%0.8f (Δw=%+.4f, ΔBASE=%+.6f)",
-                    side, qty_exec, price, delta_w, delta_eth
+                    "[DRY] Would EXEC %s %0.8f @ ~%0.8f (Δw=%+.4f, Δ%s=%+.6f)",
+                    side, qty_exec, price, delta_w, base_asset, delta_eth
                 )
             else:
                 try:
