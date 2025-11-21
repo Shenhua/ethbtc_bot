@@ -497,7 +497,7 @@ def main():
             mark_signal_metrics(cur_ratio, dist_to_buy_bps, dist_to_sell_bps)
 
             # Correct snapshot call
-            snapshot_wealth_balances(W, price, quote_bal, base_bal)
+            snapshot_wealth_balances(W, price, quote_bal, base_bal, quote_asset, base_asset)
             
             gate_display = "OPEN" if gate_ok else f"CLOSED ({gate_reason})"
             log.info("[SIG] ratio=%+0.4f  bands: -entry=%0.4f  -exit=%0.4f  +exit=%0.4f  +entry=%0.4f  gate=%s  %s",

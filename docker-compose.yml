@@ -12,12 +12,14 @@ services:
       - MODE=${MODE}
       - SYMBOL=ETHBTC
     volumes:
-      - ./run_state/eth:/data
-      - .:/app
+      - ./run_state/eth:/data # <--- Host Folder "eth" maps to Container "/data"
+      - .:/app # <--- Your code mapping
     command: >
       python /app/live_executor.py 
       --params configs/prod_dynamic_15m_016btc.json 
-      --mode ${MODE} --symbol ETHBTC
+      --mode ${MODE} 
+      --symbol ETHBTC
+      --state /data/state.json
     ports:
       - "9109:9109" # Metric Port 9109
 
@@ -33,12 +35,14 @@ services:
       - MODE=${MODE}
       - SYMBOL=BNBUSDC
     volumes:
-      - ./run_state/bnb:/data
+      - ./run_state/bnb:/data # <--- Host Folder "bnb" maps to Container "/data"
       - .:/app
     command: >
       python /app/live_executor.py 
       --params configs/prod_dynamic_15m_016bnb.json 
-      --mode ${MODE} --symbol BNBUSDC
+      --mode ${MODE} 
+      --symbol BNBUSDC
+      --state /data/state.json
     ports:
       - "9101:9109" # Metric Port 9101
 

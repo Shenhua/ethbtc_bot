@@ -301,18 +301,21 @@ def set_delta_metrics(delta_w: float, delta_eth: float) -> None:
     DELTA_ETH.set(delta_eth)
 
 def snapshot_wealth_balances(
-    wealth_btc: float,
+    wealth_total: float,
     price_mid: float,
-    btc_free: float,
-    eth_free: float,
+    quote_val: float,
+    base_val: float,
+    quote_asset: str = "btc",
+    base_asset: str = "eth"
 ) -> None:
     """
-    One-shot snapshot of wealth + balances + mid price.
+    Generic snapshot of wealth + balances + mid price.
     """
-    WEALTH_BTC_TOTAL.set(wealth_btc)
+    WEALTH_BTC_TOTAL.set(wealth_total)
     PRICE_MID.set(price_mid)
-    BAL_FREE.labels("btc").set(btc_free)
-    BAL_FREE.labels("eth").set(eth_free)
+    # Use dynamic labels instead of hardcoded 'btc'/'eth'
+    BAL_FREE.labels(quote_asset.lower()).set(quote_val)
+    BAL_FREE.labels(base_asset.lower()).set(base_val)
 
 
 def snapshot_wealth(wealth_btc: float) -> None:
