@@ -342,8 +342,31 @@ def main():
             state["last_known_btc"] = btc
             state["last_known_eth"] = eth
 
+            # --- START DUST MASKING ---
+            # 1. Get exchange filters to know what "too small" means
+            f = adapter.get_filters(args.symbol)
+            
+            # 2. Calculate the minimum tradeable ETH amount
+            # min_notional is usually ~0.0001 BTC or 5 USDT
+            min_eth_val = f.min_notional / max(price, 1e-12)
+            
+            # 3. Determine Effective ETH for Strategy
+            # If we have ETH, but it's less than the minimum required to trade, treat it as 0.
+            effective_eth = eth
+            if eth > 0 and eth < min_eth_val:
+                effective_eth = 0.0
+                # Optional: Log specifically about this decision periodically
+                if state.get("last_dust_log_ts", 0) < now_s - 3600:
+                    log.info("[DUST] Masking %.8f ETH (Too small to trade). Strategy sees 0.0.", eth)
+                    state["last_dust_log_ts"] = now_s
+
+            # 4. Calculate Metrics
+            # Wealth (W) uses REAL balance (money is money)
             W = btc + eth * price
-            cur_w = 0.0 if W <= 0 else (eth * price) / W
+            
+            # Current Weight (cur_w) uses EFFECTIVE balance (to stop the loop)
+            cur_w = 0.0 if W <= 0 else (effective_eth * price) / W
+            # --- END DUST MASKING ---
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
@@ -523,6 +546,26 @@ def main():
 
             # step toward target
             step = cfg.strategy.step_allocation
+
+            # --- NEW: SNAP-TO-ZERO (Clean Small Positions) ---
+            # If we want to sell everything (target=0) but the step (e.g. 50%) 
+            # would create an order smaller than the exchange minimum, force 100% sell.
+            if target_w == 0.0 and eth > 0:
+                f = adapter.get_filters(args.symbol)
+                # Calculate current total value
+                total_val_btc = eth * price
+                
+                # Calculate the effective minimum trade size (same logic as order block)
+                min_trade = max(cfg.execution.min_trade_floor_btc,
+                                cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
+                
+                # If total position is small (e.g. < 3x min trade), just sell it all.
+                # This prevents the "Selling 50% is too small" loop.
+                if total_val_btc < (3.0 * min_trade):
+                    step = 1.0
+                    log.info("[EXEC] Snap-to-Zero triggered: Small position (%.6f BTC), forcing 100%% sell.", total_val_btc)
+            # -------------------------------------------------
+
             if getattr(cfg.strategy, "vol_scaled_step", False):
                 z = cur_ratio / max(rv, 1e-6)
                 step = min(1.0, max(0.1, step * min(2.0, abs(z))))
