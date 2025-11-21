@@ -1,8 +1,8 @@
 {
-  "last_balance_log_ts": 1763721118,
-  "last_bar_close": 1763720999,
-  "last_known_btc": 1.03228625,
-  "last_known_eth": 0.0099,
+  "last_balance_log_ts": 1763727957,
+  "last_bar_close": 1763727299,
+  "last_known_btc": 1.03261057,
+  "last_known_eth": 0.0,
   "last_target_w": 0.0,
   "risk_current_date": "2025-11-21",
   "risk_daily_limit_hit": false,
