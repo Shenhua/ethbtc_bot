@@ -16,10 +16,10 @@ from core.metrics import (
     ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
     GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, 
     PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, 
-    DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,
+    DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE, PNL_QUOTE, DELTA_BASE, WEALTH_TOTAL, PRICE_ASSET_USD,
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
-    mark_trade_readiness, mark_funding_rate,
+    mark_trade_readiness, mark_funding_rate,mark_asset_price_usd
 )
 from ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 
@@ -374,20 +374,25 @@ def main():
             mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
 
             # Snapshot → metrics
-            WEALTH_BTC_TOTAL.set(W) 
+            WEALTH_TOTAL.set(W) 
             PRICE_MID.set(price)
             # Dynamic labels
             BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
             BAL_FREE.labels(base_asset.lower()).set(float(base_bal))
 
+            # Snapshot → USD prices
+            # We fetch USD prices for both Base and Quote assets for the dashboard
             try:
-                # Try to fetch USD prices. 
-                # If trading ETHBTC, Quote=BTC, Base=ETH.
-                # If trading BNBUSDT, Quote=USDT, Base=BNB.
-                btc_usd = adapter.get_usd_price("BTCUSDT")
-                eth_usd = adapter.get_usd_price("ETHUSDT") 
-                PRICE_BTC_USD.set(btc_usd)
-                PRICE_ETH_USD.set(eth_usd)
+                # 1. Quote Asset USD Price (e.g. BTC -> BTCUSDT, USDT -> 1.0)
+                if quote_asset == "USDT":
+                    mark_asset_price_usd("usdt", 1.0)
+                else:
+                    q_usd = adapter.get_usd_price(f"{quote_asset}USDT")
+                    mark_asset_price_usd(quote_asset, q_usd)
+
+                # 2. Base Asset USD Price (e.g. ETH -> ETHUSDT, BNB -> BNBUSDT)
+                b_usd = adapter.get_usd_price(f"{base_asset}USDT")
+                mark_asset_price_usd(base_asset, b_usd)
             except Exception:
                 pass
             
@@ -483,7 +488,7 @@ def main():
 
             # Snapshot (Generic)
             # NOTE: WEALTH_BTC_TOTAL name is kept for compatibility, but value is W (Quote units)
-            WEALTH_BTC_TOTAL.set(W)
+            WEALTH_TOTAL.set(W)
             PRICE_MID.set(price)
             BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
             BAL_FREE.labels(base_asset.lower()).set(float(base_bal))
@@ -638,7 +643,7 @@ def main():
                 save_state(args.state, state)
                 EXPOSURE_W.labels("target").set(target_w)
                 EXPOSURE_W.labels("current").set(cur_w)
-                PNL_BTC.set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (no-op).")
@@ -658,7 +663,7 @@ def main():
                 save_state(args.state, state)
                 EXPOSURE_W.labels("target").set(target_w)
                 EXPOSURE_W.labels("current").set(cur_w)
-                PNL_BTC.set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip threshold).")
@@ -668,7 +673,7 @@ def main():
 
             # Order planning
             try:
-                DELTA_ETH.set(delta_eth)
+                DELTA_BASE.set(delta_eth)
             except Exception:
                 pass
 
@@ -683,7 +688,7 @@ def main():
                 save_state(args.state, state)
                 EXPOSURE_W.labels("target").set(target_w)
                 EXPOSURE_W.labels("current").set(cur_w)
-                PNL_BTC.set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip balance).")
@@ -810,7 +815,7 @@ def main():
 
             EXPOSURE_W.labels("target").set(target_w)
             EXPOSURE_W.labels("current").set(new_w)
-            PNL_BTC.set(W - float(state.get("session_start_W", W)))
+            PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
             last_seen_bar = bar_ts
             
             if args.once:
