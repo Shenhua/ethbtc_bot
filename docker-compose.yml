@@ -10,9 +10,9 @@ services:
       - BINANCE_SECRET=${BINANCE_SECRET}
       - BINANCE_BASE_URL=${BINANCE_BASE_URL}
       - MODE=${MODE}
-      - SYMBOL=ETHBTC # <--- Specific Symbol
+      - SYMBOL=ETHBTC
     volumes:
-      - ./run_state/eth:/data # <--- Specific State Folder
+      - ./run_state/eth:/data
       - .:/app
     command: >
       python /app/live_executor.py 
@@ -21,24 +21,24 @@ services:
     ports:
       - "9109:9109" # Metric Port 9109
 
-  # --- INSTANCE 2: BNB/BTC ---
+  # --- INSTANCE 2: BNB/USDC ---
   bot_bnb:
     build: .
-    container_name: bnbbtc_bot
+    container_name: bnbusdc_bot
     restart: unless-stopped
     environment:
       - BINANCE_KEY=${BINANCE_KEY}
       - BINANCE_SECRET=${BINANCE_SECRET}
       - BINANCE_BASE_URL=${BINANCE_BASE_URL}
       - MODE=${MODE}
-      - SYMBOL=BNBBTC # <--- Specific Symbol
+      - SYMBOL=BNBUSDC
     volumes:
-      - ./run_state/bnb:/data # <--- Specific State Folder
+      - ./run_state/bnb:/data
       - .:/app
     command: >
       python /app/live_executor.py 
       --params configs/prod_dynamic_15m_016bnb.json 
-      --mode ${MODE} --symbol BNBBTC
+      --mode ${MODE} --symbol BNBUSDC
     ports:
       - "9101:9109" # Metric Port 9101
 
