@@ -13,7 +13,7 @@ from core.binance_adapter import BinanceSpotAdapter
 from pathlib import Path
 
 from core.metrics import (
-    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, snapshot_wealth_balances, set_delta_metrics,mark_risk_mode, mark_risk_flags, mark_trade_readiness,
+    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, snapshot_wealth_balances, set_delta_metrics,mark_risk_mode, mark_risk_flags, mark_trade_readiness,mark_funding_rate,
 )
 from ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 # --- Simple JSON /status on :9110 ------------------------------------------------
@@ -342,8 +342,31 @@ def main():
             state["last_known_btc"] = btc
             state["last_known_eth"] = eth
 
+            # --- START DUST MASKING ---
+            # 1. Get exchange filters to know what "too small" means
+            f = adapter.get_filters(args.symbol)
+            
+            # 2. Calculate the minimum tradeable ETH amount
+            # min_notional is usually ~0.0001 BTC or 5 USDT
+            min_eth_val = f.min_notional / max(price, 1e-12)
+            
+            # 3. Determine Effective ETH for Strategy
+            # If we have ETH, but it's less than the minimum required to trade, treat it as 0.
+            effective_eth = eth
+            if eth > 0 and eth < min_eth_val:
+                effective_eth = 0.0
+                # Optional: Log specifically about this decision periodically
+                if state.get("last_dust_log_ts", 0) < now_s - 3600:
+                    log.info("[DUST] Masking %.8f ETH (Too small to trade). Strategy sees 0.0.", eth)
+                    state["last_dust_log_ts"] = now_s
+
+            # 4. Calculate Metrics
+            # Wealth (W) uses REAL balance (money is money)
             W = btc + eth * price
-            cur_w = 0.0 if W <= 0 else (eth * price) / W
+            
+            # Current Weight (cur_w) uses EFFECTIVE balance (to stop the loop)
+            cur_w = 0.0 if W <= 0 else (effective_eth * price) / W
+            # --- END DUST MASKING ---
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
@@ -394,11 +417,41 @@ def main():
 
             # gate diagnostic (calendar daily ROC)
             gate_ok = True
+            gate_reason = "open" # track WHY it closed
+            funding_rate = 0.0  # Initialize safe default
+            
             if cfg.strategy.gate_window_days and cfg.strategy.gate_roc_threshold:
                 day_close = ser_close.resample("1D").last()
                 if len(day_close) > cfg.strategy.gate_window_days:
                     droc = float(day_close.iloc[-1] / max(day_close.shift(cfg.strategy.gate_window_days).iloc[-1], 1e-12) - 1.0)
-                    gate_ok = abs(droc) >= cfg.strategy.gate_roc_threshold
+                    if abs(droc) < cfg.strategy.gate_roc_threshold:
+                        gate_ok = False
+                        gate_reason = "trend_weak"
+
+            # --- FUNDING RATE CHECK ---
+            # We check ETHUSDT funding because we trade ETH.
+            try:
+                # 1. Fetch & Record
+                funding_rate = adapter.get_funding_rate("ETHUSDT")
+                mark_funding_rate(funding_rate)  
+                
+                # 2. Check Limits
+                # Long Squeeze Risk (Euphoria) -> Disable BUY
+                if funding_rate > cfg.strategy.funding_limit_long:
+                    if cur_ratio <= -entry:  # If we want to BUY...
+                        gate_ok = False
+                        gate_reason = f"funding_high ({funding_rate:.4f}%)"
+                        log.warning("Gate CLOSE: Market Euphoria! Funding=%.4f%%", funding_rate)
+
+                # Short Squeeze Risk (Panic) -> Disable SELL
+                if funding_rate < cfg.strategy.funding_limit_short:
+                    if cur_ratio >= entry:   # If we want to SELL...
+                        gate_ok = False
+                        gate_reason = f"funding_low ({funding_rate:.4f}%)"
+                        log.warning("Gate CLOSE: Market Panic! Funding=%.4f%%", funding_rate)
+
+            except Exception as e:
+                log.warning("Funding check warning: %s", e)
 
             # --- STRATEGY PARITY: compute target_w from EthBtcStrategy if available ---
             target_w = None
@@ -493,6 +546,26 @@ def main():
 
             # step toward target
             step = cfg.strategy.step_allocation
+
+            # --- NEW: SNAP-TO-ZERO (Clean Small Positions) ---
+            # If we want to sell everything (target=0) but the step (e.g. 50%) 
+            # would create an order smaller than the exchange minimum, force 100% sell.
+            if target_w == 0.0 and eth > 0:
+                f = adapter.get_filters(args.symbol)
+                # Calculate current total value
+                total_val_btc = eth * price
+                
+                # Calculate the effective minimum trade size (same logic as order block)
+                min_trade = max(cfg.execution.min_trade_floor_btc,
+                                cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
+                
+                # If total position is small (e.g. < 3x min trade), just sell it all.
+                # This prevents the "Selling 50% is too small" loop.
+                if total_val_btc < (3.0 * min_trade):
+                    step = 1.0
+                    log.info("[EXEC] Snap-to-Zero triggered: Small position (%.6f BTC), forcing 100%% sell.", total_val_btc)
+            # -------------------------------------------------
+
             if getattr(cfg.strategy, "vol_scaled_step", False):
                 z = cur_ratio / max(rv, 1e-6)
                 step = min(1.0, max(0.1, step * min(2.0, abs(z))))
@@ -568,6 +641,9 @@ def main():
                 },
                 "btc_usd": float(btc_usd) if 'btc_usd' in locals() else None,
                 "eth_usd": float(eth_usd) if 'eth_usd' in locals() else None,
+                "funding_rate": funding_rate if 'funding_rate' in locals() else 0.0,
+                "gate": ("OPEN" if gate_ok else "CLOSED"),
+                "gate_reason": gate_reason, 
                 "dist_to_buy_bps": round(dist_to_buy_bps, 1),
                 "dist_to_sell_bps": round(dist_to_sell_bps, 1),
                 "zone": ('BUY' if dist_to_buy_bps == 0 else 'SELL' if dist_to_sell_bps == 0 else 'NEUTRAL'),
@@ -647,6 +723,9 @@ def main():
                     },
                     "btc_usd": float(btc_usd) if 'btc_usd' in locals() else None,
                     "eth_usd": float(eth_usd) if 'eth_usd' in locals() else None,
+                    "funding_rate": funding_rate if 'funding_rate' in locals() else 0.0,
+                    "gate": ("OPEN" if gate_ok else "CLOSED"),
+                    "gate_reason": gate_reason, 
                     "dist_to_buy_bps": round(dist_to_buy_bps, 1),
                     "dist_to_sell_bps": round(dist_to_sell_bps, 1),
                     "zone": ('BUY' if dist_to_buy_bps == 0 else

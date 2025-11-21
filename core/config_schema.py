@@ -30,6 +30,13 @@ class Strategy(BaseModel):
     vol_scaled_step: bool = False
     profit_lock_dd: float = Field(0.0, ge=0.0, le=1.0)
     long_only: bool = True
+    # 0.05 means 0.05% funding rate (very bullish sentiment)
+    # If funding > 0.05, we forbid BUYING (too expensive/risky)
+    funding_limit_long: float = Field(0.05, ge=0.0, le=1.0)
+    
+    # -0.05 means -0.05% funding rate (very bearish sentiment)
+    # If funding < -0.05, we forbid SELLING (expecting a short squeeze bounce)
+    funding_limit_short: float = Field(-0.05, ge=-1.0, le=0.0)
 
 class Execution(BaseModel):
     interval: Interval = "15m"

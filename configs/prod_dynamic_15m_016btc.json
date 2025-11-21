@@ -23,7 +23,10 @@
     "min_trade_btc": 0.0,
 
     "gate_window_days": 60,
-    "gate_roc_threshold": 0.0
+    "gate_roc_threshold": 0.0,
+
+    "funding_limit_long": 0.05,
+    "funding_limit_short": -0.05
   },
 
   "fees": {

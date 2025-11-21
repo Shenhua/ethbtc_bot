@@ -3,7 +3,7 @@ import time
 from typing import Any, Dict, List, Tuple
 from binance.spot import Spot
 from .exchange_adapter import ExchangeAdapter, Book, Filters
-
+import requests
 class BinanceSpotAdapter(ExchangeAdapter):
     def __init__(self, client: Spot, public_client: Spot | None = None, timeout: int = 5000):
 
@@ -123,3 +123,27 @@ class BinanceSpotAdapter(ExchangeAdapter):
         resp = self.client.new_order(symbol=symbol, side=side, type="MARKET",
                                      quantity=f"{quantity:.8f}", newOrderRespType="FULL")
         return str(resp.get("orderId") or resp.get("clientOrderId"))
+    
+    def get_funding_rate(self, symbol: str = "ETHUSDT") -> float:
+            """
+            Fetches the current funding rate for a Futures symbol via public API.
+            Returns percentage (e.g. 0.01 for 0.01%).
+            """
+            try:
+                # Public Endpoint for Binance Futures
+                url = "https://fapi.binance.com/fapi/v1/premiumIndex"
+                params = {"symbol": symbol}
+                
+                # Short timeout (2s) to prevent hanging the bot if Futures API is slow
+                resp = requests.get(url, params=params, timeout=2)
+                data = resp.json()
+                
+                # 'lastFundingRate' comes as string "0.0001" (decimal)
+                raw_rate = float(data.get("lastFundingRate", 0.0))
+                
+                # Convert to percentage: 0.0001 -> 0.01%
+                return raw_rate * 100.0
+                
+            except Exception:
+                # Fail safe: return 0.0 (Neutral) on network error
+                return 0.0
