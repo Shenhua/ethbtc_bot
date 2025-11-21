@@ -11,7 +11,7 @@ services:
       BINANCE_KEY: "${BINANCE_KEY:-}"
       BINANCE_SECRET: "${BINANCE_SECRET:-}"
       # For spot testnet, uncomment the next line:
-      BINANCE_BASE_URL: "https://testnet.binance.vision"
+      BINANCE_BASE_URL: "${BINANCE_BASE_URL:-https://testnet.binance.vision}"
 
       # --- Metrics / status ports inside the container ---
       METRICS_PORT: "9109"
@@ -50,3 +50,17 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+  sweeper:
+    build: .
+    container_name: ethbtc_sweeper
+    restart: unless-stopped
+    environment:
+      - BINANCE_KEY=${BINANCE_KEY}
+      - BINANCE_SECRET=${BINANCE_SECRET}
+      - BINANCE_BASE_URL=${BINANCE_BASE_URL}
+      - MODE=${MODE}
+      - SWEEPER_IGNORE=${SWEEPER_IGNORE:-}
+    volumes:
+      - .:/app
+    # Runs in 'auto' mode (syncs with MODE) on a 'weekly' schedule
+    command: python /app/dust_sweeper.py --mode auto --schedule weekly

@@ -10,6 +10,7 @@ from threading import Lock
 from binance.spot import Spot
 from core.config_schema import load_config
 from core.binance_adapter import BinanceSpotAdapter
+from pathlib import Path
 
 from core.metrics import (
     ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, snapshot_wealth_balances, set_delta_metrics,mark_risk_mode, mark_risk_flags, mark_trade_readiness,mark_funding_rate,
@@ -236,6 +237,20 @@ def main():
     )
     ap.add_argument("--state", default=_default_state, help="state file path")
     args = ap.parse_args()
+
+    # --- Auto-link Mode to State File ---
+    # If the user didn't manually specify a custom state path, 
+    # automatically append the mode (e.g. state_dry.json, state_live.json)
+    state_file_name = "state.json"
+    
+    if args.state.endswith(state_file_name):
+        # /data/state.json -> /data/state_testnet.json
+        p = Path(args.state)
+        new_name = f"{p.stem}_{args.mode}{p.suffix}"
+        args.state = str(p.parent / new_name)
+        
+    log.info("State file: %s", args.state)
+    # -----------------------------------------
 
     cfg = load_config(args.params)
 
