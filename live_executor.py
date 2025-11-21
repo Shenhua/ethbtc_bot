@@ -1,4 +1,4 @@
-#live_executor.py
+# live_executor.py
 from __future__ import annotations
 import os, json, time, logging, argparse, math, threading
 from dotenv import load_dotenv
@@ -12,14 +12,23 @@ from core.config_schema import load_config
 from core.binance_adapter import BinanceSpotAdapter
 from pathlib import Path
 
+# --- UPDATED IMPORTS (Matches new metrics.py) ---
 from core.metrics import (
-    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, snapshot_wealth_balances, set_delta_metrics,mark_risk_mode, mark_risk_flags, mark_trade_readiness,mark_funding_rate,
+    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_QUOTE, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
+    GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, 
+    PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, 
+    DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,
+    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
+    snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
+    mark_trade_readiness, mark_funding_rate, mark_asset_price_usd
 )
 from ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
+
 # --- Simple JSON /status on :9110 ------------------------------------------------
 
 DECISION_KEYS = (
-    "exec_buy", "exec_sell", "skip_threshold", "skip_balance", "skip_min_notional", "skip_cooldown", "skip_gate_closed", "skip_delta_zero","skip_order_error"
+    "exec_buy", "exec_sell", "skip_threshold", "skip_balance", "skip_min_notional", 
+    "skip_cooldown", "skip_gate_closed", "skip_delta_zero","skip_order_error"
 )
 
 def reset_trade_decision():
@@ -70,8 +79,6 @@ def start_status_server(port: int = 9110):
     return update_status
 
 
-
-
 # --------------------------------------------------------------------------------
 # --- Strategy parity import (used INSIDE main only) ---------------------------
 try:
@@ -79,25 +86,16 @@ try:
 except Exception:
     EthBtcStrategy = None
     StratParams = None
+
 def inc_rejection(reason: str = "error") -> None:
     try:
-        # metrics with a label called 'reason'
         REJECTIONS.labels(reason=reason).inc()
     except Exception:
-        try:
-            # metrics with single positional label
-            REJECTIONS.labels(reason).inc()
-        except Exception:
-            try:
-                # metrics without labels
-                REJECTIONS.inc()
-            except Exception:
-                pass
+        REJECTIONS.inc()
 
 
 logging.basicConfig(level=os.getenv("LOGLEVEL","INFO"))
 log = logging.getLogger("live_enhanced")
-
 
 
 def last_closed_bar_ts(now_s: int, interval: str) -> int:
@@ -113,9 +111,7 @@ def load_state(path: str) -> Dict[str, Any]:
         return {}
 
 def save_state(path: str, st: Dict[str, Any]) -> None:
-    from pathlib import Path
     import json, os, errno
-
     p = Path(path)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -124,7 +120,6 @@ def save_state(path: str, st: Dict[str, Any]) -> None:
             json.dump(st, f, indent=2, sort_keys=True)
         os.replace(tmp, str(p))
     except OSError as e:
-        # read-only FS (e.g., /data on macOS outside Docker)
         if e.errno in (errno.EROFS,):
             fallback = Path.cwd() / "run_state" / p.name
             fallback.parent.mkdir(parents=True, exist_ok=True)
@@ -134,10 +129,8 @@ def save_state(path: str, st: Dict[str, Any]) -> None:
             os.replace(tmp, str(fallback))
         else:
             raise
+
 def _ensure_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestamp) -> None:
-    """
-    Initialize risk-related fields in the persisted state dict, if missing.
-    """
     if "risk_equity_high_btc" not in state:
         state["risk_equity_high_btc"] = wealth_btc
     if "risk_current_date" not in state:
@@ -151,14 +144,6 @@ def _ensure_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestam
 
 
 def _update_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestamp, cfg) -> None:
-    """
-    Update risk tracking (max DD & daily loss) in-place on the state dict.
-
-    Behaviour:
-      - In 'dynamic' mode, fractional caps (max_dd_frac, max_daily_loss_frac)
-        are interpreted as fractions of peak / daily-start equity.
-      - In 'fixed_basis' mode, we use the BTC caps directly.
-    """
     risk = cfg.risk
     risk_mode = getattr(risk, "risk_mode", "fixed_basis")
     max_dd_frac = float(getattr(risk, "max_dd_frac", 0.0) or 0.0)
@@ -197,7 +182,6 @@ def _update_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestam
     # --- Daily loss tracking --------------------------------------------------
     cur_date = ts.normalize().date()
     if cur_date != current_date:
-        # New calendar day → reset daily counters
         current_date = cur_date
         daily_start = wealth_btc
         daily_limit_hit = False
@@ -223,44 +207,36 @@ def _update_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestam
     state["risk_maxdd_hit"] = maxdd_hit
 
 
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--params", required=True)
     ap.add_argument("--mode", choices=["dry","testnet","live"], default="dry")
     ap.add_argument("--symbol", default="ETHBTC")
-    from pathlib import Path
-    # Choose default based on env or whether we're inside a container
+    
     _default_state = os.getenv("STATE_FILE") or (
         "/data/state.json" if Path("/.dockerenv").exists()
         else str(Path.cwd() / "run_state" / "state.json")
     )
     ap.add_argument("--state", default=_default_state, help="state file path")
+    ap.add_argument("--once", action="store_true", help="Run one logic loop and exit (for Cron)")
+
     args = ap.parse_args()
 
     # --- Auto-link Mode to State File ---
-    # If the user didn't manually specify a custom state path, 
-    # automatically append the mode (e.g. state_dry.json, state_live.json)
     state_file_name = "state.json"
-    
     if args.state.endswith(state_file_name):
-        # /data/state.json -> /data/state_testnet.json
         p = Path(args.state)
         new_name = f"{p.stem}_{args.mode}{p.suffix}"
         args.state = str(p.parent / new_name)
         
+    # FIX: Rename logger to match symbol
+    log.name = args.symbol
     log.info("State file: %s", args.state)
-    # -----------------------------------------
 
     cfg = load_config(args.params)
 
-    # --- Robust base_url selection for Binance client -----------------------
-    # Priority:
-    #   1) If BINANCE_BASE_URL is set and non-empty, use it.
-    #   2) Else if mode == "testnet", use Binance spot testnet URL.
-    #   3) Else default to mainnet spot URL.
+    # --- 1. SETUP CLIENT (Must be done first!) ------------------------------
     env_base = (os.getenv("BINANCE_BASE_URL") or "").strip()
-
     if env_base:
         base_url = env_base
     elif args.mode == "testnet":
@@ -276,13 +252,28 @@ def main():
         base_url=base_url,
     )
 
+    # --- 2. DYNAMIC ASSET DISCOVERY -----------------------------------------
+    try:
+        info = client.exchange_info(symbol=args.symbol)
+        s_info = info["symbols"][0]
+        base_asset = s_info["baseAsset"]   # e.g. "ETH" or "BNB"
+        quote_asset = s_info["quoteAsset"] # e.g. "BTC" or "USDT" or "SOL"
+        log.info("Configuration: Trading %s | Base=%s | Quote=%s", args.symbol, base_asset, quote_asset)
+    except Exception as e:
+        log.error("Could not fetch exchange info for %s: %s", args.symbol, e)
+        if args.mode == "dry":
+            base_asset = args.symbol.replace("BTC", "").replace("USDT", "")
+            quote_asset = "BTC" if "BTC" in args.symbol else "USDT"
+            log.warning("Dry run fallback parsing: Base=%s, Quote=%s", base_asset, quote_asset)
+        else:
+            raise e
+        
     # adapter & metrics
     adapter = BinanceSpotAdapter(client)
     metrics_port = int(os.getenv("METRICS_PORT", "9109"))
     status_port  = int(os.getenv("STATUS_PORT", "9110"))
-    # Start Prometheus metrics HTTP server
+    
     start_metrics_server(metrics_port)
-    # Start human-readable /status server, and get its update_status function
     update_status = start_status_server(status_port)
 
     # state
@@ -291,24 +282,29 @@ def main():
         state["session_start_W"] = 0.0
     last_seen_bar = 0
 
-
     while True:
         t0 = time.time()
         now_s = int(t0)
         bar_ts = last_closed_bar_ts(now_s, cfg.execution.interval)
         if last_seen_bar == bar_ts:
+            if args.once:
+                log.info("Run-once mode: Bar not closed yet, but logic complete. Exiting.")
+                break
             time.sleep(cfg.execution.poll_sec)
             continue
 
-        # Measure full bar processing latency
         with BAR_LATENCY.time():
-
             # klines & price
-            ks = adapter.get_klines(args.symbol, cfg.execution.interval, limit=600)
-            df = pd.DataFrame(ks)
-            if "close_time" in df.columns:
-                df.index = pd.to_datetime(df["close_time"], unit="ms", utc=True)
-            price = float(df["close"].iloc[-1])
+            try:
+                ks = adapter.get_klines(args.symbol, cfg.execution.interval, limit=600)
+                df = pd.DataFrame(ks)
+                if "close_time" in df.columns:
+                    df.index = pd.to_datetime(df["close_time"], unit="ms", utc=True)
+                price = float(df["close"].iloc[-1])
+            except Exception as e:
+                log.error("Failed to fetch klines: %s", e)
+                time.sleep(5)
+                continue
 
             # balances → weights
             try:
@@ -317,66 +313,55 @@ def main():
                     x["asset"]: float(x["free"]) + float(x["locked"])
                     for x in acct["balances"]
                 }
-                btc = bal_map.get("BTC", 0.0)
-                eth = bal_map.get("ETH", 0.0)
-                # Log successful fetch at least once to confirm connection
-                if state.get("last_balance_log_ts", 0) < now_s - 300: # Log every 5 mins
-                    log.info("[BALANCE] Successfully fetched: BTC=%.6f, ETH=%.6f", btc, eth)
+                # DYNAMIC FETCH
+                quote_bal = bal_map.get(quote_asset, 0.0) 
+                base_bal  = bal_map.get(base_asset,  0.0) 
+                
+                if state.get("last_balance_log_ts", 0) < now_s - 300:
+                    log.info("[BALANCE] %s=%.6f, %s=%.6f", quote_asset, quote_bal, base_asset, base_bal)
                     state["last_balance_log_ts"] = now_s
             except Exception as e:
-                # CRITICAL FIX: Log the actual error!
                 log.error("CRITICAL: Failed to fetch %s account balance. Reason: %s", args.mode.upper(), e)
-                
-                # If in LIVE/TESTNET, we generally DO NOT want to fake a balance. 
-                # We should probably retry or use the last known valid balance.
-                # For now, we will stick to the fallback but WARN heavily.
-                if "last_known_btc" in state:
-                    btc = state["last_known_btc"]
-                    eth = state["last_known_eth"]
-                    log.warning("Using LAST KNOWN balance from state: BTC=%.6f", btc)
-                else:
-                    btc, eth = cfg.risk.basis_btc, 0.0
-                    log.warning("Using CONFIG BASIS fallback (Dangerous for Live!): BTC=%.6f", btc)
+                # Fallback logic
+                quote_bal, base_bal = cfg.risk.basis_btc, 0.0 
 
-            # Store valid balances for future fallbacks
-            state["last_known_btc"] = btc
-            state["last_known_eth"] = eth
+                if "last_known_quote" in state:
+                    quote_bal = state["last_known_quote"]
+                    base_bal = state.get("last_known_base", 0.0)
+                    log.warning("Using LAST KNOWN balance: %s=%.6f", quote_asset, quote_bal)
+                else:
+                    log.warning("Using CONFIG BASIS fallback (Dangerous for Live!): %.6f", quote_bal)
+
+            # Store valid balances
+            state["last_known_quote"] = quote_bal
+            state["last_known_base"]  = base_bal
 
             # --- START DUST MASKING ---
-            # 1. Get exchange filters to know what "too small" means
             f = adapter.get_filters(args.symbol)
+            min_base_val = f.min_notional / max(price, 1e-12)
             
-            # 2. Calculate the minimum tradeable ETH amount
-            # min_notional is usually ~0.0001 BTC or 5 USDT
-            min_eth_val = f.min_notional / max(price, 1e-12)
-            
-            # 3. Determine Effective ETH for Strategy
-            # If we have ETH, but it's less than the minimum required to trade, treat it as 0.
-            effective_eth = eth
-            if eth > 0 and eth < min_eth_val:
-                effective_eth = 0.0
-                # Optional: Log specifically about this decision periodically
+            effective_base = base_bal
+            if base_bal > 0 and base_bal < min_base_val:
+                effective_base = 0.0
                 if state.get("last_dust_log_ts", 0) < now_s - 3600:
-                    log.info("[DUST] Masking %.8f ETH (Too small to trade). Strategy sees 0.0.", eth)
+                    log.info("[DUST] Masking %.8f %s (Too small).", base_bal, base_asset)
                     state["last_dust_log_ts"] = now_s
 
-            # 4. Calculate Metrics
-            # Wealth (W) uses REAL balance (money is money)
-            W = btc + eth * price
+            # Wealth (W) in QUOTE ASSET terms
+            W = quote_bal + base_bal * price
             
-            # Current Weight (cur_w) uses EFFECTIVE balance (to stop the loop)
-            cur_w = 0.0 if W <= 0 else (effective_eth * price) / W
+            cur_w = 0.0 if W <= 0 else (effective_base * price) / W            
             # --- END DUST MASKING ---
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
 
-            # --- Risk tracking (max DD / daily loss) ------------------------------
+            # --- Risk tracking ---
             bar_dt = pd.to_datetime(bar_ts, unit="s", utc=True)
             _ensure_risk_state(state, W, bar_dt)
             _update_risk_state(state, W, bar_dt, cfg)
 
-            # --- Risk metrics → Prometheus ---------------------------------------
+            # --- Metrics ---
             risk_mode_str = getattr(cfg.risk, "risk_mode", "fixed_basis")
             mark_risk_mode(risk_mode_str)
 
@@ -384,25 +369,32 @@ def main():
             maxdd_hit = bool(state.get("risk_maxdd_hit", False))
             mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
 
-            # Snapshot → metrics
-            WEALTH_BTC_TOTAL.set(W)
+            # Snapshot → metrics (GENERIC)
+            WEALTH_TOTAL.set(W) 
             PRICE_MID.set(price)
-            BAL_FREE.labels("btc").set(btc)
-            BAL_FREE.labels("eth").set(eth)
+            # Dynamic labels for balances
+            BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
+            BAL_FREE.labels(base_asset.lower()).set(float(base_bal))
 
-            # Snapshot → USD prices (BTC/ETH)
+            # Snapshot → USD prices (GENERIC)
             try:
-                btc_usd = adapter.get_usd_price("BTCUSDT")
-                eth_usd = adapter.get_usd_price("ETHUSDT")
-                PRICE_BTC_USD.set(btc_usd)
-                PRICE_ETH_USD.set(eth_usd)
-            except Exception as e:
-                log.debug("USD price fetch failed: %s", e)
+                # Quote Asset USD Price
+                if quote_asset == "USDT":
+                    mark_asset_price_usd("usdt", 1.0)
+                else:
+                    q_usd = adapter.get_usd_price(f"{quote_asset}USDT")
+                    mark_asset_price_usd(quote_asset, q_usd)
 
+                # Base Asset USD Price
+                b_usd = adapter.get_usd_price(f"{base_asset}USDT")
+                mark_asset_price_usd(base_asset, b_usd)
+            except Exception:
+                pass
             
-            log.debug("Wallet: BTC=%.8f, ETH=%.8f, W=%.8f BTC, cur_w=%.4f", btc, eth, W, cur_w)
+            log.debug("Wallet: %s=%.8f, %s=%.8f, W=%.8f, cur_w=%.4f", 
+                      quote_asset, quote_bal, base_asset, base_bal, W, cur_w)
 
-            # indicators for diagnostics (not for decision if strategy is present)
+            # Strategy Indicators
             L = int(cfg.strategy.trend_lookback)
             ser_close = df["close"].astype(float)
             if cfg.strategy.trend_kind == "sma":
@@ -415,10 +407,10 @@ def main():
             entry = cfg.strategy.flip_band_entry + cfg.strategy.vol_adapt_k * (rv if rv == rv else 0.0)
             exitb = cfg.strategy.flip_band_exit + cfg.strategy.vol_adapt_k * (rv if rv == rv else 0.0)
 
-            # gate diagnostic (calendar daily ROC)
+            # Gate Logic
             gate_ok = True
-            gate_reason = "open" # track WHY it closed
-            funding_rate = 0.0  # Initialize safe default
+            gate_reason = "open"
+            funding_rate = 0.0
             
             if cfg.strategy.gate_window_days and cfg.strategy.gate_roc_threshold:
                 day_close = ser_close.resample("1D").last()
@@ -428,34 +420,28 @@ def main():
                         gate_ok = False
                         gate_reason = "trend_weak"
 
-            # --- FUNDING RATE CHECK ---
-            # We check ETHUSDT funding because we trade ETH.
+            # Funding Rate Check (Generic)
+            funding_ticker = f"{base_asset}USDT"
             try:
-                # 1. Fetch & Record
-                funding_rate = adapter.get_funding_rate("ETHUSDT")
-                mark_funding_rate(funding_rate)  
+                funding_rate = adapter.get_funding_rate(funding_ticker)  
+                mark_funding_rate(funding_rate)
                 
-                # 2. Check Limits
-                # Long Squeeze Risk (Euphoria) -> Disable BUY
                 if funding_rate > cfg.strategy.funding_limit_long:
-                    if cur_ratio <= -entry:  # If we want to BUY...
+                    if cur_ratio <= -entry:
                         gate_ok = False
                         gate_reason = f"funding_high ({funding_rate:.4f}%)"
                         log.warning("Gate CLOSE: Market Euphoria! Funding=%.4f%%", funding_rate)
 
-                # Short Squeeze Risk (Panic) -> Disable SELL
                 if funding_rate < cfg.strategy.funding_limit_short:
-                    if cur_ratio >= entry:   # If we want to SELL...
+                    if cur_ratio >= entry:
                         gate_ok = False
                         gate_reason = f"funding_low ({funding_rate:.4f}%)"
                         log.warning("Gate CLOSE: Market Panic! Funding=%.4f%%", funding_rate)
-
             except Exception as e:
                 log.warning("Funding check warning: %s", e)
 
-            # --- STRATEGY PARITY: compute target_w from EthBtcStrategy if available ---
+            # Target Weight Calculation
             target_w = None
-            
             if EthBtcStrategy and StratParams:
                 try:
                     sp = StratParams(
@@ -478,16 +464,11 @@ def main():
                     strat = EthBtcStrategy(sp)
                     plan = strat.generate_positions(ser_close)
                     target_w = float(plan["target_w"].iloc[-1])
-                    # Spot-only: cannot short ETH. Clamp to [0, 1].
-                    raw_target_w = target_w
                     target_w = max(0.0, min(1.0, target_w))
-                    if target_w != raw_target_w:
-                        log.info("Clamp target_w from %.4f to %.4f for spot (no shorting).", raw_target_w, target_w)
                 except Exception as e:
                     log.warning("Parity strategy import failed (%s); using inline logic.", e)
                     target_w = cur_w
 
-            # Fallback inline logic
             if target_w is None:
                 target_w = 0.0
                 if gate_ok:
@@ -498,40 +479,25 @@ def main():
                     else:
                         target_w = float(state.get("last_target_w", 0.0))
 
-
-            # --- Per-bar initialization ------------------------------------------------
-            reset_trade_decision()  # zero all decision gauges this bar
-
-            # Snapshot → metrics (wealth, price, balances)
-            try:
-                WEALTH_BTC_TOTAL.set(W)
-                PRICE_MID.set(price)
-                BAL_FREE.labels("btc").set(float(btc))
-                BAL_FREE.labels("eth").set(float(eth))
-            except Exception:
-                pass
+            reset_trade_decision()
 
             delta_eth = 0.0
             delta_w = 0.0
             side = "HOLD"
 
-            # --- ASCII diagnostic & distances --------------------------------------------
             meter = ascii_level_bar(cur_ratio, entry, exitb, width=64)
-            bar_reason = None
-
-            # Distances in bps to next triggers
             dist_to_buy_bps, dist_to_sell_bps = dist_to_buy_sell_bps(cur_ratio, entry, exitb)
             mark_signal_metrics(cur_ratio, dist_to_buy_bps, dist_to_sell_bps)
 
-            snapshot_wealth_balances(W, price, btc, eth)
-
+            # Correct generic snapshot call
+            snapshot_wealth_balances(W, price, quote_bal, base_bal, quote_asset, base_asset)
+            
+            gate_display = "OPEN" if gate_ok else f"CLOSED ({gate_reason})"
             log.info("[SIG] ratio=%+0.4f  bands: -entry=%0.4f  -exit=%0.4f  +exit=%0.4f  +entry=%0.4f  gate=%s  %s",
-                    cur_ratio, -entry, -exitb, exitb, entry, "OPEN" if gate_ok else "CLOSED", meter)
+                    cur_ratio, -entry, -exitb, exitb, entry, gate_display, meter)
 
-            # ---- Metrics: gate / zone / signal / distances
             mark_gate(gate_ok)
 
-            # Decide zone
             if cur_ratio <= -entry:
                 zone = "buy_band"
             elif cur_ratio >= entry:
@@ -540,86 +506,51 @@ def main():
                 zone = "neutral"
             mark_zone(zone)
 
-        
-            # quick preview (same step, without vol-scaling nuance if you prefer)
             action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
-
-            # step toward target
             step = cfg.strategy.step_allocation
 
-            # --- NEW: SNAP-TO-ZERO (Clean Small Positions) ---
-            # If we want to sell everything (target=0) but the step (e.g. 50%) 
-            # would create an order smaller than the exchange minimum, force 100% sell.
-            if target_w == 0.0 and eth > 0:
-                f = adapter.get_filters(args.symbol)
-                # Calculate current total value
-                total_val_btc = eth * price
-                
-                # Calculate the effective minimum trade size (same logic as order block)
-                min_trade = max(cfg.execution.min_trade_floor_btc,
+            # --- SNAP-TO-ZERO (Generic) ---
+            if target_w == 0.0 and base_bal > 0:
+                total_val_quote = base_bal * price
+                min_trade_quote = max(cfg.execution.min_trade_floor_btc,
                                 cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
                 
-                # If total position is small (e.g. < 3x min trade), just sell it all.
-                # This prevents the "Selling 50% is too small" loop.
-                if total_val_btc < (3.0 * min_trade):
+                if total_val_quote > min_trade_quote and total_val_quote < (3.0 * min_trade_quote):
                     step = 1.0
-                    log.info("[EXEC] Snap-to-Zero triggered: Small position (%.6f BTC), forcing 100%% sell.", total_val_btc)
-            # -------------------------------------------------
+                    log.info("[EXEC] Snap-to-Zero: %s position small (%.6f %s). Forcing exit.", base_asset, total_val_quote, quote_asset)
 
             if getattr(cfg.strategy, "vol_scaled_step", False):
                 z = cur_ratio / max(rv, 1e-6)
                 step = min(1.0, max(0.1, step * min(2.0, abs(z))))
 
-            # Spot-only: clamp the *target* as well (keeps metrics & state consistent)
             target_w = max(0.0, min(1.0, target_w))
-            # target_w = 1.0  # TEMP uncomment : force full ETH allocation for test only
-
             new_w_ideal = cur_w + step * (target_w - cur_w)
-            new_w = max(0.0, min(1.0, new_w_ideal))  # spot guard
-
-            # --- Apply risk caps (max DD / daily loss) ----------------------------
-            risk_mode = getattr(cfg.risk, "risk_mode", "fixed_basis")
-
+            new_w = max(0.0, min(1.0, new_w_ideal))
 
             if maxdd_hit:
-                # Hard stop: force BTC-only from here on
                 if new_w > 0.0:
-                    log.warning("Risk: max drawdown hit → forcing BTC-only (new_w=0.0).")
+                    log.warning("Risk: max drawdown hit → forcing Exit (new_w=0.0).")
                 target_w = 0.0
                 new_w = 0.0
             elif daily_limit_hit:
-                # Freeze position for the rest of the day (no further rebalancing)
                 if abs(new_w - cur_w) > 1e-12:
                     log.warning("Risk: daily loss limit hit → freezing position at w=%.4f.", cur_w)
                 new_w = cur_w
 
-            # --- Actual deltas after risk caps -----------------------------------
             delta_w = new_w - cur_w
             delta_eth = delta_w * W / max(price, 1e-12)
-
-            # --- Step-aware planned deltas → metrics (record even if we skip) -----
             set_delta_metrics(delta_w, delta_eth)
 
-            WEALTH_BTC_TOTAL.set(W)
-            PRICE_MID.set(price)
-            BAL_FREE.labels("btc").set(btc)
-            BAL_FREE.labels("eth").set(eth)
-            # ---- Snapshot → metrics (wealth, mid price, balances)
-            snapshot_wealth_balances(W, price, btc, eth)
-
-            # ---- Spread probe (optional but used by Grafana panels)
-# ---- Spread probe (Fixed)
+            # Spread Probe
             try:
                 book = adapter.get_book(args.symbol)
-                # FIX: Use .best_ask instead of ["best_ask"]
                 sp_bps = 1e4 * (book.best_ask - book.best_bid) / max(price, 1e-12)
                 SPREAD_BPS.set(sp_bps)
             except Exception as e:
                 log.warning("Spread probe failed. Reason: %s", e)
-            action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
-            zone = ('BUY' if dist_to_buy_bps == 0 else 'SELL' if dist_to_sell_bps == 0 else 'NEUTRAL')
-            
 
+            action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
+            
             update_status({
                 "mode": args.mode,
                 "symbol": args.symbol,
@@ -629,7 +560,8 @@ def main():
                 "target_w": target_w,
                 "step": step,
                 "delta_w_planned": delta_w,
-                "delta_eth_planned": delta_eth,
+                "delta_base_planned": delta_eth, # Generic Key
+                "base_asset": base_asset,        # Context
                 "side": action_side,
                 "ratio": cur_ratio,
                 "entry": entry,
@@ -641,13 +573,12 @@ def main():
                 },
                 "btc_usd": float(btc_usd) if 'btc_usd' in locals() else None,
                 "eth_usd": float(eth_usd) if 'eth_usd' in locals() else None,
-                "funding_rate": funding_rate if 'funding_rate' in locals() else 0.0,
+                "funding_rate": funding_rate,
                 "gate": ("OPEN" if gate_ok else "CLOSED"),
                 "gate_reason": gate_reason, 
                 "dist_to_buy_bps": round(dist_to_buy_bps, 1),
                 "dist_to_sell_bps": round(dist_to_sell_bps, 1),
-                "zone": ('BUY' if dist_to_buy_bps == 0 else 'SELL' if dist_to_sell_bps == 0 else 'NEUTRAL'),
-                "gate": ("OPEN" if gate_ok else "CLOSED"),
+                "zone": zone,
                 "ascii_meter": meter,
                 "risk": {
                     "mode": getattr(cfg.risk, "risk_mode", "fixed_basis"),
@@ -659,30 +590,25 @@ def main():
                     "daily_limit_hit": bool(state.get("risk_daily_limit_hit", False)),
                 },
             })
+
             log.info(
                 "[STATUS] %s | px=%.8f W=%.6f | zone=%s gate=%s | w: cur=%.4f tgt=%.4f step=%.2f | "
-                "plan: Δw=%+.4f (ΔETH=%+.6f) → %s | dist: BUY=%0.1fbps SELL=%0.1fbps",
+                "plan: Δw=%+.4f (Δ%s=%+.6f) → %s | dist: BUY=%0.1fbps SELL=%0.1fbps",
                 args.mode, price, W,
                 zone, ("OPEN" if gate_ok else "CLOSED"),
                 cur_w, target_w, step,
-                delta_w, delta_eth,
+                delta_w, base_asset, delta_eth,
                 action_side,
                 dist_to_buy_bps, dist_to_sell_bps
             )
-            # --- Trade readiness (strategy + risk, high-level) -------------------
-            #   zone_ok: in BUY or SELL band (not neutral)
-            #   gate_ok: calendar gate is OPEN
-            #   delta_ok: |Δw| >= rebalance_threshold_w
-            #   risk_ok: daily / max-DD limits not hit
-            #   balance_ok, size_ok: kept True here (micro-filters handled by skips)
+
+            # Trade readiness
             zone_ok = (zone == "buy_band") or (zone == "sell_band")
             gate_open_ok = bool(gate_ok)
             abs_delta_for_ready = abs(delta_w)
             delta_ok = abs_delta_for_ready >= float(cfg.strategy.rebalance_threshold_w)
             risk_ok = not (daily_limit_hit or maxdd_hit)
 
-            # We intentionally ignore balance / min-notional in trade_ready;
-            # those are already visible via SKIPS & Blocker panels.
             mark_trade_readiness(
                 zone_ok=zone_ok,
                 gate_ok=gate_open_ok,
@@ -692,83 +618,30 @@ def main():
                 size_ok=True,
             )
 
-            # --- Skip tiny rebalances / no-op --------------------------------------------
+            # --- Skip tiny rebalances / no-op ---
             tol = 1e-12
             abs_delta = abs(delta_w)
 
             if abs_delta < tol:
-                # No-op: target equals current (within numerical tolerance)
                 SKIPS.labels("delta_zero").inc()
-                bar_reason = "skip_delta_zero"
                 mark_decision("skip_delta_zero")
-                update_status({
-                    "mode": args.mode,
-                    "symbol": args.symbol,
-                    "price": price,
-                    "wealth_btc": W,
-                    "cur_w": cur_w,
-                    "target_w": target_w,
-                    "step": step,
-                    # for a true no-op, treat actual trade delta as zero
-                    "delta_w_planned": 0.0,
-                    "delta_eth_planned": 0.0,
-                    "side": "HOLD",
-                    "ratio": cur_ratio,
-                    "entry": entry,
-                    "bands": {
-                        "neg_entry": -entry,
-                        "neg_exit":  -exitb,
-                        "pos_exit":   exitb,
-                        "pos_entry":  entry,
-                    },
-                    "btc_usd": float(btc_usd) if 'btc_usd' in locals() else None,
-                    "eth_usd": float(eth_usd) if 'eth_usd' in locals() else None,
-                    "funding_rate": funding_rate if 'funding_rate' in locals() else 0.0,
-                    "gate": ("OPEN" if gate_ok else "CLOSED"),
-                    "gate_reason": gate_reason, 
-                    "dist_to_buy_bps": round(dist_to_buy_bps, 1),
-                    "dist_to_sell_bps": round(dist_to_sell_bps, 1),
-                    "zone": ('BUY' if dist_to_buy_bps == 0 else
-                            'SELL' if dist_to_sell_bps == 0 else
-                            'NEUTRAL'),
-                    "gate": ("OPEN" if gate_ok else "CLOSED"),
-                    "ascii_meter": meter,
-                    "reason": "skip_delta_zero",
-                })
                 log.info("Skip: cur_w==target_w==%.4f (no change).", cur_w)
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
                 EXPOSURE_W.labels("target").set(target_w)
                 EXPOSURE_W.labels("current").set(cur_w)
-                PNL_BTC.set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
+                if args.once:
+                    log.info("Run-once complete (no-op).")
+                    break
                 time.sleep(cfg.execution.poll_sec)
                 continue
 
             if abs_delta < cfg.strategy.rebalance_threshold_w:
                 SKIPS.labels('threshold').inc()
-                bar_reason = "skip_threshold"
                 mark_decision("skip_threshold")   
-                try:
-                    update_status({
-                        "mode":   args.mode,
-                        "symbol": args.symbol,
-                        "price":  price,
-                        "wealth_btc":      W,
-                        "cur_w":  cur_w,
-                        "target_w": target_w,
-                        "step":   step,
-                        "delta_w": 0.0,
-                        "delta_eth": 0.0,
-                        "zone":  "BUY" if cur_ratio <= -entry else (
-                                "SELL" if cur_ratio >=  entry else "NEUTRAL"),
-                        "gate":  "OPEN" if gate_ok else "CLOSED",
-                        "reason": "below threshold",
-                    })
-                except Exception:
-                    pass
-
                 log.info(
                     "Skip: |Δw|=%.4f < threshold=%.4f (need ≥ %.4f).",
                     abs_delta, cfg.strategy.rebalance_threshold_w, cfg.strategy.rebalance_threshold_w
@@ -776,231 +649,166 @@ def main():
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
-
                 EXPOSURE_W.labels("target").set(target_w)
                 EXPOSURE_W.labels("current").set(cur_w)
-                PNL_BTC.set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
+                if args.once:
+                    log.info("Run-once complete (skip threshold).")
+                    break
                 time.sleep(cfg.execution.poll_sec)
-                
                 continue
 
             # Order planning
             try:
-                DELTA_ETH.set(delta_eth)
+                DELTA_BASE.set(delta_eth)
             except Exception:
                 pass
 
             side = "BUY" if delta_eth > 0 else "SELL"
 
-            if side == "SELL" and eth <= 1e-12:
+            if side == "SELL" and base_bal <= 1e-12:
                 SKIPS.labels("balance").inc()
-                bar_reason = "skip_balance"
                 mark_decision("skip_balance")
-                log.info("Skip: SELL requested but ETH balance is 0 on spot (cur_w=%.4f, target_w=%.4f).", cur_w, target_w)
-                try:
-                    update_status({
-                        "mode":   args.mode,
-                        "symbol": args.symbol,
-                        "price":  price,
-                        "wealth_btc":      W,
-                        "cur_w":  cur_w,
-                        "target_w": target_w,
-                        "step":   step,
-                        "delta_w": float(new_w - cur_w),
-                        "delta_eth": float(delta_eth),
-                        "zone":  "BUY" if cur_ratio <= -entry else (
-                                "SELL" if cur_ratio >=  entry else "NEUTRAL"),
-                        "gate":  "OPEN" if gate_ok else "CLOSED",
-                        "reason": "no ETH to SELL",
-                    })
-                except Exception:
-                    pass
-                
+                log.info("Skip: SELL requested but %s balance is 0 (cur_w=%.4f, target_w=%.4f).", base_asset, cur_w, target_w)
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
-                # keep metrics in sync
                 EXPOSURE_W.labels("target").set(target_w)
                 EXPOSURE_W.labels("current").set(cur_w)
-                PNL_BTC.set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
+                if args.once:
+                    log.info("Run-once complete (skip balance).")
+                    break
                 time.sleep(cfg.execution.poll_sec)
-                try:
-                    update_status(
-                        evt="bar", symbol=args.symbol, bar_close=pd.Timestamp.utcfromtimestamp(bar_ts).isoformat()+"Z",
-                        wealth_btc=W, target_w=target_w, new_w=new_w, cur_w=cur_w
-                    )
-                except Exception:
-                    pass
                 continue
 
-
-
             qty_abs = abs(delta_eth)
-
             f = adapter.get_filters(args.symbol)
             qty_rounded = adapter.round_qty(qty_abs, f.step_size)
 
-            min_trade_btc = max(cfg.execution.min_trade_floor_btc,
+            min_trade_quote = max(cfg.execution.min_trade_floor_btc,
                                 cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
             if cfg.execution.min_trade_cap_btc > 0:
-                min_trade_btc = min(min_trade_btc, cfg.execution.min_trade_cap_btc)
+                min_trade_quote = min(min_trade_quote, cfg.execution.min_trade_cap_btc)
 
-            notional_btc = qty_rounded * price
-            need = max(min_trade_btc, f.min_notional)
-            if notional_btc < need:
+            notional_quote = qty_rounded * price
+            need = max(min_trade_quote, f.min_notional)
+            
+            if notional_quote < need:
                 SKIPS.labels("min_notional").inc()
-                bar_reason = "skip_min_notional"
                 mark_decision("skip_min_notional")
-                log.info("Skip: notional below minimum (%.8f BTC < min %.8f)", notional_btc, need)
+                log.info("Skip: notional below minimum (%.8f %s < min %.8f)", notional_quote, quote_asset, need)
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
-                last_seen_bar = bar_ts            
+                last_seen_bar = bar_ts
+                if args.once:
+                    log.info("Run-once complete (skip min_notional).")
+                    break
+                time.sleep(cfg.execution.poll_sec)
+                continue
 
-                try:
-                    update_status(
-                        evt="bar", symbol=args.symbol, bar_close=pd.Timestamp.utcfromtimestamp(bar_ts).isoformat()+"Z",
-                        wealth_btc=W, target_w=target_w, new_w=new_w, cur_w=cur_w
-                    )
-                except Exception:
-                    pass
-                time.sleep(cfg.execution.poll_sec); continue
-
-        
-            # ---- Balance-aware clamp before placing the order ----------------------------
+            # ---- Balance-aware clamp (Generic) ----------------------------
             if side == "BUY":
-                max_qty_by_balance = adapter.round_qty(max((btc * 0.999) / max(price, 1e-12), 0.0), f.step_size)
+                # Use quote_bal (e.g. BTC or USDT) with fee buffer
+                max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), f.step_size)
             else:  
-                max_qty_by_balance = adapter.round_qty(max(eth, 0.0), f.step_size)
+                # Use base_bal (e.g. ETH or BNB)
+                max_qty_by_balance = adapter.round_qty(max(base_bal, 0.0), f.step_size)
 
             qty_exec = min(qty_rounded, max_qty_by_balance)
 
-                # After successful submit/fill
-            try:
-                if side == "BUY":
-                    TRADE_DECISION.labels("exec_buy").set(1)
-                else:
-                    TRADE_DECISION.labels("exec_sell").set(1)
-            except Exception:
-                pass
-
             if qty_exec <= 0:
                 SKIPS.labels("balance").inc()
-                bar_reason = "skip_balance"
                 mark_decision("skip_balance")
                 log.info(
-                    "Skip: insufficient free balance for %s (qty_rounded=%.8f, max_by_balance=%.8f, btc=%.8f, eth=%.8f)",
-                    side, qty_rounded, max_qty_by_balance, btc, eth
+                    "Skip: insufficient free balance for %s (qty_rounded=%.8f, max_by_balance=%.8f, %s=%.8f, %s=%.8f)",
+                    side, qty_rounded, max_qty_by_balance, quote_asset, quote_bal, base_asset, base_bal
                 )
                 inc_rejection("insufficient_balance")
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
                 last_seen_bar = bar_ts
+                if args.once:
+                    log.info("Run-once complete (skip balance clamped).")
+                    break
                 time.sleep(cfg.execution.poll_sec)            
                 continue
 
             # Recompute notional and min checks with the clamped size
-            notional_btc = qty_exec * price
-            need = max(cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc),
-                    f.min_notional, cfg.execution.min_trade_floor_btc)
-            if cfg.execution.min_trade_cap_btc > 0:
-                need = min(need, cfg.execution.min_trade_cap_btc)
-
-            if notional_btc < need:
+            notional_quote = qty_exec * price
+            
+            # Reuse 'need' from above logic
+            if notional_quote < need:
                 SKIPS.labels("min_notional").inc()
-                bar_reason = "skip_min_notional"
                 mark_decision('skip_min_notional')
-
                 log.info(
-                    "Skip: notional below minimum after clamp (%.8f BTC < min %.8f) [side=%s qty=%.8f]",
-                    notional_btc, need, side, qty_exec
+                    "Skip: notional below minimum after clamp (%.8f %s < min %.8f) [side=%s qty=%.8f]",
+                    notional_quote, quote_asset, need, side, qty_exec
                 )
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
                 last_seen_bar = bar_ts
+                if args.once:
+                    log.info("Run-once complete (skip min_notional clamped).")
+                    break
                 time.sleep(cfg.execution.poll_sec)            
                 continue
 
             # ---- Place the order (or simulate in dry mode) -------------------------------
-                   # ---- Place the order (or simulate in dry mode) -------------------------------
-        if args.mode == "dry":
-            # Simulation only: log a fake trade, don't hit the Binance order API
-            ORDERS_SUBMITTED.labels("MARKET", side).inc()
-            mark_decision("exec_buy" if side == "BUY" else "exec_sell")
-
-            log.info(
-                "[DRY] Would EXEC %s %0.8f @ ~%0.8f (Δw=%+.4f, ΔETH=%+.6f)",
-                side, qty_exec, price, delta_w, delta_eth
-            )
-
-            try:
-                update_status(
-                    evt="bar",
-                    symbol=args.symbol,
-                    bar_close=pd.Timestamp.utcfromtimestamp(bar_ts).isoformat() + "Z",
-                    wealth_btc=W,
-                    target_w=target_w,
-                    new_w=new_w,
-                    cur_w=cur_w,
-                    sizing={"delta_eth": float(delta_eth), "side": side},
-                    dry_run=True,
-                )
-            except Exception:
-                pass
-
-        else:
-            # Live / testnet: actually send the order
-            try:
-                oid = adapter.market_order(args.symbol, side, qty_exec)
+            if args.mode == "dry":
                 ORDERS_SUBMITTED.labels("MARKET", side).inc()
                 mark_decision("exec_buy" if side == "BUY" else "exec_sell")
-                log.info("EXEC %s %0.8f %s @ ~%0.8f (oid=%s)", side, qty_exec, args.symbol, price, oid)
-
-                try:
-                    update_status(
-                        evt="bar",
-                        symbol=args.symbol,
-                        bar_close=pd.Timestamp.utcfromtimestamp(bar_ts).isoformat() + "Z",
-                        wealth_btc=W,
-                        target_w=target_w,
-                        new_w=new_w,
-                        cur_w=cur_w,
-                        sizing={"delta_eth": float(delta_eth), "side": side},
-                        dry_run=False,
-                    )
-                except Exception:
-                    pass
-
-            except Exception as e:
-                # Label the rejection reason when possible
-                msg = str(e)
-                reason = "insufficient_balance" if "-2010" in msg else "order_error"
-                inc_rejection(reason)
-                log.exception("Order rejected: %s", e)
-                # Continue loop without crashing
-                state["last_target_w"] = target_w
-                state["last_bar_close"] = bar_ts
-                save_state(args.state, state)
-                last_seen_bar = bar_ts
-                time.sleep(cfg.execution.poll_sec)
-                mark_decision(
-                    "skip_balance" if reason == "insufficient_balance" else "skip_order_error"
+                log.info(
+                    "[DRY] Would EXEC %s %0.8f @ ~%0.8f (Δw=%+.4f, Δ%s=%+.6f)",
+                    side, qty_exec, price, delta_w, base_asset, delta_eth
                 )
-                continue
+            else:
+                try:
+                    oid = adapter.market_order(args.symbol, side, qty_exec)
+                    ORDERS_SUBMITTED.labels("MARKET", side).inc()
+                    mark_decision("exec_buy" if side == "BUY" else "exec_sell")
+                    log.info("EXEC %s %0.8f %s @ ~%0.8f (oid=%s)", side, qty_exec, args.symbol, price, oid)
+                    
+                    # If success, we assume trade happened for metrics
+                    if side == "BUY":
+                        TRADE_DECISION.labels("exec_buy").set(1)
+                    else:
+                        TRADE_DECISION.labels("exec_sell").set(1)
 
-            # Update state/metrics
+                except Exception as e:
+                    msg = str(e)
+                    reason = "insufficient_balance" if "-2010" in msg else "order_error"
+                    inc_rejection(reason)
+                    log.exception("Order rejected: %s", e)
+                    state["last_target_w"] = target_w
+                    state["last_bar_close"] = bar_ts
+                    save_state(args.state, state)
+                    last_seen_bar = bar_ts
+                    mark_decision(
+                        "skip_balance" if reason == "insufficient_balance" else "skip_order_error"
+                    )
+                    if args.once: break
+                    time.sleep(cfg.execution.poll_sec)
+                    continue
+
+            # Update state/metrics after successful (or simulated) trade
             state["last_target_w"] = target_w
             state["last_bar_close"] = bar_ts
             save_state(args.state, state)
 
             EXPOSURE_W.labels("target").set(target_w)
             EXPOSURE_W.labels("current").set(new_w)
-            PNL_BTC.set(W - float(state.get("session_start_W", W)))
+            PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
             last_seen_bar = bar_ts
+            
+            if args.once:
+                log.info("Run-once complete (executed).")
+                break
 
         # pacing
         dt = time.time() - t0

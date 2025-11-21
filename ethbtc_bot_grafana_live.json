@@ -40,7 +40,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Total Wealth in BTC.",
+      "description": "Total Wealth in Quote Currency.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -54,7 +54,7 @@
             "lineColor": "rgb(30, 255, 0)",
             "show": true
           },
-          "unit": "currencyBTC"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -86,13 +86,13 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "last_over_time(wealth_btc_total{instance=~\"$instance\"}[1h])",
-          "legendFormat": "__auto",
+          "expr": "last_over_time(wealth_total{instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} Wealth",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Total Wealth (BTC)",
+      "title": "Total Wealth",
       "type": "stat"
     },
     {
@@ -121,7 +121,7 @@
               }
             ]
           },
-          "unit": "currencyBTC"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -153,8 +153,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "last_over_time(pnl_btc{instance=~\"$instance\"}[1h])",
-          "legendFormat": "__auto",
+          "expr": "last_over_time(pnl_quote{instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} PnL",
           "range": true,
           "refId": "A"
         }
@@ -235,7 +235,7 @@
           },
           "editorMode": "code",
           "expr": "max_over_time(risk_flags{kind=\"maxdd_hit\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "__auto",
+          "legendFormat": "{{instance}} Risk",
           "range": true,
           "refId": "A"
         }
@@ -248,7 +248,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Regime Gate Status (Trend + Funding).",
+      "description": "Regime Gate Status.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -316,7 +316,7 @@
           },
           "editorMode": "code",
           "expr": "last_over_time(gate_state{gate_state=\"open\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "__auto",
+          "legendFormat": "{{instance}} Gate",
           "range": true,
           "refId": "A"
         }
@@ -329,7 +329,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Market Sentiment (Funding Rate).\n\nRed = Euphoria/Panic (>0.05% or <-0.05%).\nGreen = Safe.",
+      "description": "Funding Rate Risk Meter.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -387,7 +387,7 @@
           },
           "editorMode": "code",
           "expr": "last_over_time(funding_rate_pct{instance=~\"$instance\"}[1h])",
-          "legendFormat": "Funding Rate",
+          "legendFormat": "{{instance}} Funding",
           "range": true,
           "refId": "A"
         }
@@ -400,7 +400,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Current ETH exposure.",
+      "description": "Current Base exposure.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -455,8 +455,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "last_over_time(exposure_eth_weight{kind=\"current\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "ETH Alloc",
+          "expr": "last_over_time(exposure_base_weight{kind=\"current\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} Exposure",
           "range": true,
           "refId": "A"
         }
@@ -482,7 +482,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Traceability: Why did the bot skip or trade?",
+      "description": "Traceability.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -541,7 +541,7 @@
           },
           "editorMode": "code",
           "expr": "trade_decision{instance=~\"$instance\"} > 0",
-          "legendFormat": "{{trade_decision}}",
+          "legendFormat": "{{instance}} - {{trade_decision}}",
           "range": true,
           "refId": "A"
         }
@@ -674,7 +674,7 @@
           },
           "editorMode": "code",
           "expr": "last_over_time(signal_ratio{instance=~\"$instance\"}[1h])",
-          "legendFormat": "Signal Ratio",
+          "legendFormat": "{{instance}} Signal",
           "range": true,
           "refId": "A"
         },
@@ -753,7 +753,7 @@
           },
           "editorMode": "code",
           "expr": "last_over_time(next_action_dist_bps{instance=~\"$instance\"}[1h])",
-          "legendFormat": "Distance to Action",
+          "legendFormat": "{{instance}} Dist",
           "range": true,
           "refId": "A"
         }
@@ -831,7 +831,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Target"
+              "options": "/.*Target/"
             },
             "properties": [
               {
@@ -853,7 +853,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Current"
+              "options": "/.*Current/"
             },
             "properties": [
               {
@@ -893,8 +893,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "last_over_time(exposure_eth_weight{kind=\"target\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "Target",
+          "expr": "last_over_time(exposure_base_weight{kind=\"target\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} Target",
           "range": true,
           "refId": "A"
         },
@@ -904,8 +904,8 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "last_over_time(exposure_eth_weight{kind=\"current\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "Current",
+          "expr": "last_over_time(exposure_base_weight{kind=\"current\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} Current",
           "range": true,
           "refId": "B"
         }
@@ -994,7 +994,7 @@
           },
           "editorMode": "code",
           "expr": "increase(skips_total{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{reason}}",
+          "legendFormat": "{{instance}} - {{reason}}",
           "range": true,
           "refId": "A"
         }
@@ -1043,7 +1043,7 @@
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
-              "type": "linear"
+              "type": "log"
             },
             "showPoints": "never",
             "spanNulls": true,
@@ -1095,12 +1095,12 @@
           },
           "editorMode": "code",
           "expr": "last_over_time(balance_free{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{asset}}",
+          "legendFormat": "{{instance}} {{asset}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Holdings History (Stacked)",
+      "title": "Holdings History (Log Scale)",
       "type": "timeseries"
     },
     {
@@ -1159,7 +1159,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "ETH/USD"
+              "options": "/.* ETH/USD/"
             },
             "properties": [
               {
@@ -1196,21 +1196,10 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "last_over_time(price_btc_usd{instance=~\"$instance\"}[1h])",
-          "legendFormat": "BTC/USD",
+          "expr": "last_over_time(price_asset_usd{instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{asset}}/USD",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "editorMode": "code",
-          "expr": "last_over_time(price_eth_usd{instance=~\"$instance\"}[1h])",
-          "legendFormat": "ETH/USD",
-          "range": true,
-          "refId": "B"
         }
       ],
       "title": "Market Prices (USD)",
@@ -1315,7 +1304,7 @@
           },
           "editorMode": "code",
           "expr": "rate(bar_latency_seconds_sum{instance=~\"$instance\"}[1h]) / rate(bar_latency_seconds_count{instance=~\"$instance\"}[1h])",
-          "legendFormat": "Latency (avg)",
+          "legendFormat": "{{instance}} Latency",
           "range": true,
           "refId": "A"
         }
@@ -1380,7 +1369,7 @@
           },
           "editorMode": "code",
           "expr": "increase(rejections_total{instance=~\"$instance\"}[24h])",
-          "legendFormat": "__auto",
+          "legendFormat": "{{instance}}",
           "range": true,
           "refId": "A"
         }
@@ -1470,7 +1459,7 @@
           },
           "editorMode": "code",
           "expr": "avg_over_time(spread_bps{instance=~\"$instance\"}[1h])",
-          "legendFormat": "Spread",
+          "legendFormat": "{{instance}} Spread",
           "range": true,
           "refId": "A"
         }
@@ -1482,7 +1471,7 @@
   "refresh": "1m",
   "schemaVersion": 38,
   "style": "dark",
-  "tags": ["ethbtc", "admiral"],
+  "tags": ["ethbtc", "admiral", "multi-instance"],
   "templating": {
     "list": [
       {
@@ -1513,7 +1502,7 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(wealth_btc_total, instance)",
+        "definition": "label_values(wealth_total, instance)",
         "hide": 0,
         "includeAll": true,
         "label": "Instance",
@@ -1521,7 +1510,7 @@
         "name": "instance",
         "options": [],
         "query": {
-          "query": "label_values(wealth_btc_total, instance)",
+          "query": "label_values(wealth_total, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -1538,8 +1527,8 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "ETHBTC Admiral V4.1",
-  "uid": "ethbtc-admiral-41",
+  "title": "ETHBTC Admiral V4.2 (Multi-Asset)",
+  "uid": "ethbtc-admiral-42",
   "version": 1,
   "weekStart": ""
 }
