@@ -12,14 +12,15 @@ from core.config_schema import load_config
 from core.binance_adapter import BinanceSpotAdapter
 from pathlib import Path
 
+# --- UPDATED IMPORTS (Matches new metrics.py) ---
 from core.metrics import (
-    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_BTC, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
-    GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_ETH, WEALTH_BTC_TOTAL, 
-    PRICE_MID, BAL_FREE, SKIPS, PRICE_BTC_USD, PRICE_ETH_USD, SIGNAL_RATIO, 
-    DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE, PNL_QUOTE, DELTA_BASE, WEALTH_TOTAL, PRICE_ASSET_USD,
+    ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_QUOTE, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
+    GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, 
+    PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, 
+    DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
-    mark_trade_readiness, mark_funding_rate,mark_asset_price_usd
+    mark_trade_readiness, mark_funding_rate, mark_asset_price_usd
 )
 from ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 
@@ -220,7 +221,7 @@ def main():
     ap.add_argument("--once", action="store_true", help="Run one logic loop and exit (for Cron)")
 
     args = ap.parse_args()
-    log.name = args.symbol
+
     # --- Auto-link Mode to State File ---
     state_file_name = "state.json"
     if args.state.endswith(state_file_name):
@@ -228,6 +229,8 @@ def main():
         new_name = f"{p.stem}_{args.mode}{p.suffix}"
         args.state = str(p.parent / new_name)
         
+    # FIX: Rename logger to match symbol
+    log.name = args.symbol
     log.info("State file: %s", args.state)
 
     cfg = load_config(args.params)
@@ -259,7 +262,6 @@ def main():
     except Exception as e:
         log.error("Could not fetch exchange info for %s: %s", args.symbol, e)
         if args.mode == "dry":
-            # Fallback for offline/dry runs
             base_asset = args.symbol.replace("BTC", "").replace("USDT", "")
             quote_asset = "BTC" if "BTC" in args.symbol else "USDT"
             log.warning("Dry run fallback parsing: Base=%s, Quote=%s", base_asset, quote_asset)
@@ -328,13 +330,7 @@ def main():
                     base_bal = state.get("last_known_base", 0.0)
                     log.warning("Using LAST KNOWN balance: %s=%.6f", quote_asset, quote_bal)
                 else:
-                    # Try legacy keys just in case
-                    if "last_known_btc" in state:
-                        quote_bal = state["last_known_btc"]
-                        base_bal = state.get("last_known_eth", 0.0)
-                        log.warning("Using LEGACY state balance: %.6f", quote_bal)
-                    else:
-                        log.warning("Using CONFIG BASIS fallback (Dangerous for Live!): %.6f", quote_bal)
+                    log.warning("Using CONFIG BASIS fallback (Dangerous for Live!): %.6f", quote_bal)
 
             # Store valid balances
             state["last_known_quote"] = quote_bal
@@ -373,24 +369,23 @@ def main():
             maxdd_hit = bool(state.get("risk_maxdd_hit", False))
             mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
 
-            # Snapshot → metrics
+            # Snapshot → metrics (GENERIC)
             WEALTH_TOTAL.set(W) 
             PRICE_MID.set(price)
-            # Dynamic labels
+            # Dynamic labels for balances
             BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
             BAL_FREE.labels(base_asset.lower()).set(float(base_bal))
 
-            # Snapshot → USD prices
-            # We fetch USD prices for both Base and Quote assets for the dashboard
+            # Snapshot → USD prices (GENERIC)
             try:
-                # 1. Quote Asset USD Price (e.g. BTC -> BTCUSDT, USDT -> 1.0)
+                # Quote Asset USD Price
                 if quote_asset == "USDT":
                     mark_asset_price_usd("usdt", 1.0)
                 else:
                     q_usd = adapter.get_usd_price(f"{quote_asset}USDT")
                     mark_asset_price_usd(quote_asset, q_usd)
 
-                # 2. Base Asset USD Price (e.g. ETH -> ETHUSDT, BNB -> BNBUSDT)
+                # Base Asset USD Price
                 b_usd = adapter.get_usd_price(f"{base_asset}USDT")
                 mark_asset_price_usd(base_asset, b_usd)
             except Exception:
@@ -425,7 +420,7 @@ def main():
                         gate_ok = False
                         gate_reason = "trend_weak"
 
-            # Funding Rate Check
+            # Funding Rate Check (Generic)
             funding_ticker = f"{base_asset}USDT"
             try:
                 funding_rate = adapter.get_funding_rate(funding_ticker)  
@@ -486,13 +481,6 @@ def main():
 
             reset_trade_decision()
 
-            # Snapshot (Generic)
-            # NOTE: WEALTH_BTC_TOTAL name is kept for compatibility, but value is W (Quote units)
-            WEALTH_TOTAL.set(W)
-            PRICE_MID.set(price)
-            BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
-            BAL_FREE.labels(base_asset.lower()).set(float(base_bal))
-            
             delta_eth = 0.0
             delta_w = 0.0
             side = "HOLD"
@@ -501,7 +489,7 @@ def main():
             dist_to_buy_bps, dist_to_sell_bps = dist_to_buy_sell_bps(cur_ratio, entry, exitb)
             mark_signal_metrics(cur_ratio, dist_to_buy_bps, dist_to_sell_bps)
 
-            # Correct snapshot call
+            # Correct generic snapshot call
             snapshot_wealth_balances(W, price, quote_bal, base_bal, quote_asset, base_asset)
             
             gate_display = "OPEN" if gate_ok else f"CLOSED ({gate_reason})"
@@ -521,7 +509,7 @@ def main():
             action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
             step = cfg.strategy.step_allocation
 
-            # --- SNAP-TO-ZERO ---
+            # --- SNAP-TO-ZERO (Generic) ---
             if target_w == 0.0 and base_bal > 0:
                 total_val_quote = base_bal * price
                 min_trade_quote = max(cfg.execution.min_trade_floor_btc,
@@ -572,8 +560,8 @@ def main():
                 "target_w": target_w,
                 "step": step,
                 "delta_w_planned": delta_w,
-                "delta_eth_planned": delta_eth,
-                "base_asset": base_asset,
+                "delta_base_planned": delta_eth, # Generic Key
+                "base_asset": base_asset,        # Context
                 "side": action_side,
                 "ratio": cur_ratio,
                 "entry": entry,
@@ -609,7 +597,7 @@ def main():
                 args.mode, price, W,
                 zone, ("OPEN" if gate_ok else "CLOSED"),
                 cur_w, target_w, step,
-                delta_w, base_asset, delta_eth,  # <--- Added base_asset here
+                delta_w, base_asset, delta_eth,
                 action_side,
                 dist_to_buy_bps, dist_to_sell_bps
             )
