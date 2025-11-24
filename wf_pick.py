@@ -1,19 +1,14 @@
-
 #!/usr/bin/env python3
 """
 wf_pick.py — Walk-forward family picker (stable, cost-aware)
-Version: 1.3.0 (2025-10-29)
+Version: 1.4.0 (2025-11-24) - Funding Rate Support
 
 Key features
 - Robust "params" parsing (JSON first, then ast.literal_eval)
 - Reasonable fee/turnover filter (quantiles)
 - Family definition: (flip_band_entry, flip_band_exit, trend_lookback, cooldown_minutes, step_allocation)
-  * with configurable rounding/bucketing via CLI:
-      --band-round, --step-round, --lb-bucket, --cd-bucket
-- Preflight checks: require variation in test_final_btc and costs if desired
-- min-occurs filter: require families to repeat across runs to be considered
 - Ranking uses mean test_final_btc, cost penalties, dispersion, and a tie-break on fewer turns
-- Emits selected_params.json with rich fields + legacy flip_band mirror
+- Emits selected_params.json with rich fields including Funding Limits
 """
 
 import argparse, json, ast, os, sys
@@ -21,12 +16,14 @@ from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 
+# --- UPDATED: Added funding limits to the list of keys to preserve ---
 RICH_PARAM_KEYS = [
     "trend_kind","trend_lookback",
     "flip_band_entry","flip_band_exit",
     "vol_window","vol_adapt_k","target_vol","min_mult","max_mult",
     "cooldown_minutes","step_allocation","max_position",
     "gate_window_days","gate_roc_threshold",
+    "funding_limit_long", "funding_limit_short"
 ]
 FEE_KEYS = ["maker_fee","taker_fee","slippage_bps","bnb_discount","pay_fees_in_bnb"]
 
@@ -64,12 +61,18 @@ def load_and_flatten(paths):
         frames.append(df)
     out = pd.concat(frames, ignore_index=True)
 
-    # Ensure columns exist
-    for k in ["flip_band_entry","flip_band_exit","flip_band","trend_lookback",
-              "cooldown_minutes","step_allocation","max_position",
-              "vol_window","vol_adapt_k","target_vol",
-              "gate_window_days","gate_roc_threshold","trend_kind"]:
+    # Ensure columns exist (Updated with funding keys)
+    expected_cols = [
+        "flip_band_entry","flip_band_exit","flip_band","trend_lookback",
+        "cooldown_minutes","step_allocation","max_position",
+        "vol_window","vol_adapt_k","target_vol",
+        "gate_window_days","gate_roc_threshold","trend_kind",
+        "funding_limit_long", "funding_limit_short"
+    ]
+    
+    for k in expected_cols:
         if k not in out.columns: out[k] = np.nan
+        
     for k in ["fees_btc","turnover_btc","turns_test","test_final_btc","train_final_btc"]:
         if k not in out.columns: out[k] = np.nan
     return out
@@ -86,6 +89,11 @@ def reasonable_filter(df, q_fee=0.75, q_turnover=0.75):
     return df[filt].copy()
 
 def make_family_key(row, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
+    """
+    Groups strategies by their 'Core Logic'.
+    We intentionally exclude Funding Limits from the family key.
+    This allows the picker to find the 'Best Funding Limit' for a given Trend/Band strategy.
+    """
     e = row.get("flip_band_entry", np.nan)
     x = row.get("flip_band_exit", np.nan)
     fb = row.get("flip_band", np.nan)
@@ -140,6 +148,9 @@ def pick_representative(df_all, family_tuple, band_round=4, step_round=2, lb_buc
     for c in ["fees_btc","turnover_btc"]:
         if c not in pool.columns: pool[c] = 0.0
         pool[c] = pool[c].fillna(0.0)
+    
+    # Pick the best row within the family. 
+    # This is where the best 'funding_limit' for this family is selected.
     pool["__row_score"] = pool["test_final_btc"].fillna(-1e9) - 1.0*pool["fees_btc"] - 0.5*pool["turnover_btc"]
     best = pool.sort_values(["__row_score","test_final_btc","turns_test"], ascending=[False,False,True]).iloc[0]
     return best.to_dict()

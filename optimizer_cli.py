@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 import os, json, math, argparse, time, random
 import concurrent.futures as cf
@@ -24,6 +23,12 @@ def sample_params():
         max_position=float(random.choice([0.6,0.8,1.0])),
         gate_window_days=int(random.choice([30,60,90])),
         gate_roc_threshold=float(random.choice([0.0, 0.01, 0.02])),
+        
+        # --- NEW: Optimize Funding Limits ---
+        # Long limit: 0.01% to 0.1% (Euphoria)
+        funding_limit_long=float(random.uniform(0.01, 0.10)),
+        # Short limit: -0.1% to -0.01% (Panic)
+        funding_limit_short=float(random.uniform(-0.10, -0.01)),
     )
 
 def score_rows(df, lam_turns=2.0, gap_penalty=0.35, turns_scale=800.0, lam_fees=2.0, lam_turnover=1.0):
@@ -53,11 +58,16 @@ def select_from_top(df, top_quantile=0.95):
     return pool.iloc[0]
 
 def _eval_one(arg):
-    (params_dict, fee, train_close, test_close, bnb_train, bnb_test) = arg
+    # Updated signature to accept funding data
+    (params_dict, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test) = arg
+    
     p = StratParams(**params_dict)
     bt = Backtester(fee)
-    res_tr = bt.simulate(train_close, EthBtcStrategy(p), bnb_price_series=bnb_train)
-    res_te = bt.simulate(test_close,  EthBtcStrategy(p), bnb_price_series=bnb_test)
+    
+    # Pass funding series to the simulation
+    res_tr = bt.simulate(train_close, EthBtcStrategy(p), funding_series=funding_train, bnb_price_series=bnb_train)
+    res_te = bt.simulate(test_close,  EthBtcStrategy(p), funding_series=funding_test,  bnb_price_series=bnb_test)
+    
     return {
         "params": p.__dict__,
         "train_final_btc": res_tr["summary"]["final_btc"],
@@ -71,6 +81,7 @@ def _eval_one(arg):
 def main():
     ap = argparse.ArgumentParser(description="Fast Optimizer (parallel + early stop)")
     ap.add_argument("--data", required=True)
+    ap.add_argument("--funding-data", help="Path to funding rates CSV (Time, Rate)")
     ap.add_argument("--bnb-data")
     ap.add_argument("--config")
     ap.add_argument("--train-start", required=True)
@@ -110,10 +121,12 @@ def main():
         pay_fees_in_bnb=bool(cfg.get("pay_fees_in_bnb", not args.no_bnb)),
     )
 
+    # 1. Load Price Data
     df = load_vision_csv(args.data); close = df["close"]
     train_close = close.loc[args.train_start:args.train_end].dropna()
     test_close  = close.loc[args.test_start:args.test_end].dropna()
 
+    # 2. Load BNB Data (Optional)
     bnb_train = bnb_test = None
     bnb_path = cfg.get("bnb_data", args.bnb_data)
     if bnb_path:
@@ -121,16 +134,35 @@ def main():
         bnb_train = df_bnb.reindex(train_close.index, method="ffill")
         bnb_test  = df_bnb.reindex(test_close.index,  method="ffill")
 
+    # 3. Load Funding Data (New)
+    funding_train = funding_test = None
+    if args.funding_data:
+        f_df = pd.read_csv(args.funding_data)
+        # Handle Mixed formats robustly
+        f_df["time"] = pd.to_datetime(f_df["time"], format="mixed", utc=True)
+        f_df = f_df.set_index("time").sort_index()
+        funding_series = f_df["rate"]
+        
+        # Align to price candles (ffill)
+        funding_train = funding_series.reindex(train_close.index, method="ffill").fillna(0.0)
+        funding_test  = funding_series.reindex(test_close.index, method="ffill").fillna(0.0)
+        print(f"Loaded Funding Data: {len(funding_series)} records.")
+
+    # 4. Build Tasks
     tasks = []
     for _ in range(args.n_random):
         p = sample_params()
-        tasks.append((p.__dict__, fee, train_close, test_close, bnb_train, bnb_test))
+        # Pass funding slices to the task
+        tasks.append((p.__dict__, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test))
 
+    # 5. Execute
     threads = (os.cpu_count() or 2) if args.threads == 0 else args.threads
     results = []
     best_score = -1e9
     stale_checks = 0
     t0 = time.time()
+
+    print(f"Starting optimization with {args.n_random} iterations on {threads} threads...")
 
     with cf.ProcessPoolExecutor(max_workers=threads) as ex:
         for i, res in enumerate(ex.map(_eval_one, tasks, chunksize=args.chunk_size), 1):
@@ -141,6 +173,7 @@ def main():
             if i % args.early_stop == 0:
                 stale_checks += 1
                 if stale_checks >= args.patience:
+                    print(f"Early stopping at iteration {i} (no improvement).")
                     break
 
     df_out = pd.DataFrame(results).sort_values("score", ascending=False)
