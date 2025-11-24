@@ -22,7 +22,7 @@ from core.metrics import (
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd
 )
-from ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
+from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 
 from core.twap_maker import maker_chase
 
@@ -78,7 +78,7 @@ def start_status_server(port: int = 9110):
 
 # --- Strategy parity import ---------------------------------------------------
 try:
-    from ethbtc_accum_bot import EthBtcStrategy, StratParams  # source of truth
+    from core.ethbtc_accum_bot import EthBtcStrategy, StratParams  # source of truth
 except Exception:
     EthBtcStrategy = None
     StratParams = None
