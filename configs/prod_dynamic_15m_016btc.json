@@ -40,7 +40,7 @@
     "interval": "15m",
     "poll_sec": 5,
     "ttl_sec": 30,
-    "taker_fallback": false,
+    "taker_fallback": true,
     "max_taker_btc": 0.002,
     "max_spread_bps_for_taker": 2.0,
     "min_trade_frac": 0.0015,

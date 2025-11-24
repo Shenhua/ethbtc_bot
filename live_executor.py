@@ -12,7 +12,7 @@ from core.config_schema import load_config
 from core.binance_adapter import BinanceSpotAdapter
 from pathlib import Path
 
-# --- UPDATED IMPORTS (Matches new metrics.py) ---
+# --- METRICS ---
 from core.metrics import (
     ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_QUOTE, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
     GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, 
@@ -24,6 +24,8 @@ from core.metrics import (
 )
 from ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 
+from core.twap_maker import maker_chase
+
 # --- Simple JSON /status on :9110 ------------------------------------------------
 
 DECISION_KEYS = (
@@ -32,15 +34,11 @@ DECISION_KEYS = (
 )
 
 def reset_trade_decision():
-    # zero all decision gauges once per bar so panels don’t get stale
     for k in DECISION_KEYS:
         try:
             TRADE_DECISION.labels(k).set(0)
         except Exception:
             pass
-
-
-# ---- Human-friendly JSON status server ---------------------------------------
 
 def start_status_server(port: int = 9110):
     log = logging.getLogger("live_enhanced")
@@ -78,9 +76,7 @@ def start_status_server(port: int = 9110):
 
     return update_status
 
-
-# --------------------------------------------------------------------------------
-# --- Strategy parity import (used INSIDE main only) ---------------------------
+# --- Strategy parity import ---------------------------------------------------
 try:
     from ethbtc_accum_bot import EthBtcStrategy, StratParams  # source of truth
 except Exception:
@@ -93,10 +89,8 @@ def inc_rejection(reason: str = "error") -> None:
     except Exception:
         REJECTIONS.inc()
 
-
 logging.basicConfig(level=os.getenv("LOGLEVEL","INFO"))
 log = logging.getLogger("live_enhanced")
-
 
 def last_closed_bar_ts(now_s: int, interval: str) -> int:
     units = {"m":60, "h":3600, "d":86400}
@@ -130,26 +124,25 @@ def save_state(path: str, st: Dict[str, Any]) -> None:
         else:
             raise
 
-def _ensure_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestamp) -> None:
-    if "risk_equity_high_btc" not in state:
-        state["risk_equity_high_btc"] = wealth_btc
+def _ensure_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp) -> None:
+    if "risk_equity_high" not in state:
+        state["risk_equity_high"] = wealth
     if "risk_current_date" not in state:
         state["risk_current_date"] = ts.normalize().date().isoformat()
     if "risk_daily_start_wealth" not in state:
-        state["risk_daily_start_wealth"] = wealth_btc
+        state["risk_daily_start_wealth"] = wealth
     if "risk_daily_limit_hit" not in state:
         state["risk_daily_limit_hit"] = False
     if "risk_maxdd_hit" not in state:
         state["risk_maxdd_hit"] = False
 
-
-def _update_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestamp, cfg) -> None:
+def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, cfg) -> None:
     risk = cfg.risk
     risk_mode = getattr(risk, "risk_mode", "fixed_basis")
     max_dd_frac = float(getattr(risk, "max_dd_frac", 0.0) or 0.0)
     max_daily_loss_frac = float(getattr(risk, "max_daily_loss_frac", 0.0) or 0.0)
 
-    equity_high = float(state.get("risk_equity_high_btc", wealth_btc))
+    equity_high = float(state.get("risk_equity_high", wealth))
     current_date_str = state.get("risk_current_date")
     if current_date_str:
         try:
@@ -159,14 +152,13 @@ def _update_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestam
     else:
         current_date = ts.normalize().date()
 
-    daily_start = float(state.get("risk_daily_start_wealth", wealth_btc))
+    daily_start = float(state.get("risk_daily_start_wealth", wealth))
     daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
     maxdd_hit = bool(state.get("risk_maxdd_hit", False))
 
-    # --- Max drawdown tracking ------------------------------------------------
-    if wealth_btc > equity_high:
-        equity_high = wealth_btc
-    dd_now = equity_high - wealth_btc
+    if wealth > equity_high:
+        equity_high = wealth
+    dd_now = equity_high - wealth
 
     if risk_mode == "dynamic":
         if max_dd_frac > 0.0:
@@ -179,14 +171,13 @@ def _update_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestam
     if threshold_dd > 0.0 and dd_now >= threshold_dd:
         maxdd_hit = True
 
-    # --- Daily loss tracking --------------------------------------------------
     cur_date = ts.normalize().date()
     if cur_date != current_date:
         current_date = cur_date
-        daily_start = wealth_btc
+        daily_start = wealth
         daily_limit_hit = False
 
-    daily_pnl = wealth_btc - daily_start
+    daily_pnl = wealth - daily_start
 
     if risk_mode == "dynamic":
         if max_daily_loss_frac > 0.0:
@@ -199,13 +190,11 @@ def _update_risk_state(state: Dict[str, Any], wealth_btc: float, ts: pd.Timestam
     if threshold_loss > 0.0 and daily_pnl <= -threshold_loss:
         daily_limit_hit = True
 
-    # Persist updated state
-    state["risk_equity_high_btc"] = equity_high
+    state["risk_equity_high"] = equity_high
     state["risk_current_date"] = current_date.isoformat()
     state["risk_daily_start_wealth"] = daily_start
     state["risk_daily_limit_hit"] = daily_limit_hit
     state["risk_maxdd_hit"] = maxdd_hit
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -222,20 +211,17 @@ def main():
 
     args = ap.parse_args()
 
-    # --- Auto-link Mode to State File ---
     state_file_name = "state.json"
     if args.state.endswith(state_file_name):
         p = Path(args.state)
         new_name = f"{p.stem}_{args.mode}{p.suffix}"
         args.state = str(p.parent / new_name)
         
-    # FIX: Rename logger to match symbol
     log.name = args.symbol
     log.info("State file: %s", args.state)
 
     cfg = load_config(args.params)
 
-    # --- 1. SETUP CLIENT (Must be done first!) ------------------------------
     env_base = (os.getenv("BINANCE_BASE_URL") or "").strip()
     if env_base:
         base_url = env_base
@@ -252,12 +238,11 @@ def main():
         base_url=base_url,
     )
 
-    # --- 2. DYNAMIC ASSET DISCOVERY -----------------------------------------
     try:
         info = client.exchange_info(symbol=args.symbol)
         s_info = info["symbols"][0]
-        base_asset = s_info["baseAsset"]   # e.g. "ETH" or "BNB"
-        quote_asset = s_info["quoteAsset"] # e.g. "BTC" or "USDT" or "SOL"
+        base_asset = s_info["baseAsset"]
+        quote_asset = s_info["quoteAsset"]
         log.info("Configuration: Trading %s | Base=%s | Quote=%s", args.symbol, base_asset, quote_asset)
     except Exception as e:
         log.error("Could not fetch exchange info for %s: %s", args.symbol, e)
@@ -268,7 +253,6 @@ def main():
         else:
             raise e
         
-    # adapter & metrics
     adapter = BinanceSpotAdapter(client)
     metrics_port = int(os.getenv("METRICS_PORT", "9109"))
     status_port  = int(os.getenv("STATUS_PORT", "9110"))
@@ -276,7 +260,6 @@ def main():
     start_metrics_server(metrics_port)
     update_status = start_status_server(status_port)
 
-    # state
     state = load_state(args.state)
     if "session_start_W" not in state:
         state["session_start_W"] = 0.0
@@ -294,7 +277,6 @@ def main():
             continue
 
         with BAR_LATENCY.time():
-            # klines & price
             try:
                 ks = adapter.get_klines(args.symbol, cfg.execution.interval, limit=600)
                 df = pd.DataFrame(ks)
@@ -306,14 +288,12 @@ def main():
                 time.sleep(5)
                 continue
 
-            # balances → weights
             try:
                 acct = client.account()
                 bal_map = {
                     x["asset"]: float(x["free"]) + float(x["locked"])
                     for x in acct["balances"]
                 }
-                # DYNAMIC FETCH
                 quote_bal = bal_map.get(quote_asset, 0.0) 
                 base_bal  = bal_map.get(base_asset,  0.0) 
                 
@@ -322,7 +302,6 @@ def main():
                     state["last_balance_log_ts"] = now_s
             except Exception as e:
                 log.error("CRITICAL: Failed to fetch %s account balance. Reason: %s", args.mode.upper(), e)
-                # Fallback logic
                 quote_bal, base_bal = cfg.risk.basis_btc, 0.0 
 
                 if "last_known_quote" in state:
@@ -332,11 +311,9 @@ def main():
                 else:
                     log.warning("Using CONFIG BASIS fallback (Dangerous for Live!): %.6f", quote_bal)
 
-            # Store valid balances
             state["last_known_quote"] = quote_bal
             state["last_known_base"]  = base_bal
 
-            # --- START DUST MASKING ---
             f = adapter.get_filters(args.symbol)
             min_base_val = f.min_notional / max(price, 1e-12)
             
@@ -347,21 +324,16 @@ def main():
                     log.info("[DUST] Masking %.8f %s (Too small).", base_bal, base_asset)
                     state["last_dust_log_ts"] = now_s
 
-            # Wealth (W) in QUOTE ASSET terms
             W = quote_bal + base_bal * price
-            
             cur_w = 0.0 if W <= 0 else (effective_base * price) / W            
-            # --- END DUST MASKING ---
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
 
-            # --- Risk tracking ---
             bar_dt = pd.to_datetime(bar_ts, unit="s", utc=True)
             _ensure_risk_state(state, W, bar_dt)
             _update_risk_state(state, W, bar_dt, cfg)
 
-            # --- Metrics ---
             risk_mode_str = getattr(cfg.risk, "risk_mode", "fixed_basis")
             mark_risk_mode(risk_mode_str)
 
@@ -369,23 +341,21 @@ def main():
             maxdd_hit = bool(state.get("risk_maxdd_hit", False))
             mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
 
-            # Snapshot → metrics (GENERIC)
             WEALTH_TOTAL.set(W) 
             PRICE_MID.set(price)
-            # Dynamic labels for balances
             BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
             BAL_FREE.labels(base_asset.lower()).set(float(base_bal))
 
-            # Snapshot → USD prices (GENERIC)
+            # Generic USD Prices
+            q_usd, b_usd = 0.0, 0.0
             try:
-                # Quote Asset USD Price
                 if quote_asset == "USDT":
                     mark_asset_price_usd("usdt", 1.0)
+                    q_usd = 1.0
                 else:
                     q_usd = adapter.get_usd_price(f"{quote_asset}USDT")
                     mark_asset_price_usd(quote_asset, q_usd)
 
-                # Base Asset USD Price
                 b_usd = adapter.get_usd_price(f"{base_asset}USDT")
                 mark_asset_price_usd(base_asset, b_usd)
             except Exception:
@@ -394,20 +364,18 @@ def main():
             log.debug("Wallet: %s=%.8f, %s=%.8f, W=%.8f, cur_w=%.4f", 
                       quote_asset, quote_bal, base_asset, base_bal, W, cur_w)
 
-            # Strategy Indicators
             L = int(cfg.strategy.trend_lookback)
             ser_close = df["close"].astype(float)
             if cfg.strategy.trend_kind == "sma":
                 sma = ser_close.rolling(L).mean()
                 cur_ratio = float(ser_close.iloc[-1] / max(sma.iloc[-1], 1e-12) - 1.0)
-            else:  # 'roc'
+            else:
                 prev = ser_close.shift(L).iloc[-1]
                 cur_ratio = float(ser_close.iloc[-1] / max(prev, 1e-12) - 1.0)
             rv = float(ser_close.pct_change().rolling(cfg.strategy.vol_window).std().iloc[-1])
             entry = cfg.strategy.flip_band_entry + cfg.strategy.vol_adapt_k * (rv if rv == rv else 0.0)
             exitb = cfg.strategy.flip_band_exit + cfg.strategy.vol_adapt_k * (rv if rv == rv else 0.0)
 
-            # Gate Logic
             gate_ok = True
             gate_reason = "open"
             funding_rate = 0.0
@@ -420,7 +388,6 @@ def main():
                         gate_ok = False
                         gate_reason = "trend_weak"
 
-            # Funding Rate Check (Generic)
             funding_ticker = f"{base_asset}USDT"
             try:
                 funding_rate = adapter.get_funding_rate(funding_ticker)  
@@ -440,7 +407,6 @@ def main():
             except Exception as e:
                 log.warning("Funding check warning: %s", e)
 
-            # Target Weight Calculation
             target_w = None
             if EthBtcStrategy and StratParams:
                 try:
@@ -489,7 +455,6 @@ def main():
             dist_to_buy_bps, dist_to_sell_bps = dist_to_buy_sell_bps(cur_ratio, entry, exitb)
             mark_signal_metrics(cur_ratio, dist_to_buy_bps, dist_to_sell_bps)
 
-            # Correct generic snapshot call
             snapshot_wealth_balances(W, price, quote_bal, base_bal, quote_asset, base_asset)
             
             gate_display = "OPEN" if gate_ok else f"CLOSED ({gate_reason})"
@@ -509,7 +474,6 @@ def main():
             action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
             step = cfg.strategy.step_allocation
 
-            # --- SNAP-TO-ZERO (Generic) ---
             if target_w == 0.0 and base_bal > 0:
                 total_val_quote = base_bal * price
                 min_trade_quote = max(cfg.execution.min_trade_floor_btc,
@@ -542,6 +506,7 @@ def main():
             set_delta_metrics(delta_w, delta_eth)
 
             # Spread Probe
+            sp_bps = 0.0
             try:
                 book = adapter.get_book(args.symbol)
                 sp_bps = 1e4 * (book.best_ask - book.best_bid) / max(price, 1e-12)
@@ -560,8 +525,8 @@ def main():
                 "target_w": target_w,
                 "step": step,
                 "delta_w_planned": delta_w,
-                "delta_base_planned": delta_eth, # Generic Key
-                "base_asset": base_asset,        # Context
+                "delta_base_planned": delta_eth,
+                "base_asset": base_asset,
                 "side": action_side,
                 "ratio": cur_ratio,
                 "entry": entry,
@@ -571,8 +536,9 @@ def main():
                     "pos_exit":   exitb,
                     "pos_entry":  entry,
                 },
-                "btc_usd": float(btc_usd) if 'btc_usd' in locals() else None,
-                "eth_usd": float(eth_usd) if 'eth_usd' in locals() else None,
+                # CORRECTED GENERIC VALUES
+                "quote_usd": q_usd,
+                "base_usd": b_usd,
                 "funding_rate": funding_rate,
                 "gate": ("OPEN" if gate_ok else "CLOSED"),
                 "gate_reason": gate_reason, 
@@ -602,7 +568,6 @@ def main():
                 dist_to_buy_bps, dist_to_sell_bps
             )
 
-            # Trade readiness
             zone_ok = (zone == "buy_band") or (zone == "sell_band")
             gate_open_ok = bool(gate_ok)
             abs_delta_for_ready = abs(delta_w)
@@ -618,7 +583,6 @@ def main():
                 size_ok=True,
             )
 
-            # --- Skip tiny rebalances / no-op ---
             tol = 1e-12
             abs_delta = abs(delta_w)
 
@@ -659,12 +623,6 @@ def main():
                 time.sleep(cfg.execution.poll_sec)
                 continue
 
-            # Order planning
-            try:
-                DELTA_BASE.set(delta_eth)
-            except Exception:
-                pass
-
             side = "BUY" if delta_eth > 0 else "SELL"
 
             if side == "SELL" and base_bal <= 1e-12:
@@ -685,7 +643,6 @@ def main():
                 continue
 
             qty_abs = abs(delta_eth)
-            f = adapter.get_filters(args.symbol)
             qty_rounded = adapter.round_qty(qty_abs, f.step_size)
 
             min_trade_quote = max(cfg.execution.min_trade_floor_btc,
@@ -712,10 +669,8 @@ def main():
 
             # ---- Balance-aware clamp (Generic) ----------------------------
             if side == "BUY":
-                # Use quote_bal (e.g. BTC or USDT) with fee buffer
                 max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), f.step_size)
             else:  
-                # Use base_bal (e.g. ETH or BNB)
                 max_qty_by_balance = adapter.round_qty(max(base_bal, 0.0), f.step_size)
 
             qty_exec = min(qty_rounded, max_qty_by_balance)
@@ -738,10 +693,8 @@ def main():
                 time.sleep(cfg.execution.poll_sec)            
                 continue
 
-            # Recompute notional and min checks with the clamped size
             notional_quote = qty_exec * price
             
-            # Reuse 'need' from above logic
             if notional_quote < need:
                 SKIPS.labels("min_notional").inc()
                 mark_decision('skip_min_notional')
@@ -759,7 +712,13 @@ def main():
                 time.sleep(cfg.execution.poll_sec)            
                 continue
 
-            # ---- Place the order (or simulate in dry mode) -------------------------------
+            # ---- EXECUTION: MAKER vs TAKER -------------------------------
+            use_maker = False
+            if cfg.execution.taker_fallback and maker_chase:
+                use_maker = True
+
+            executed_qty = 0.0
+            
             if args.mode == "dry":
                 ORDERS_SUBMITTED.labels("MARKET", side).inc()
                 mark_decision("exec_buy" if side == "BUY" else "exec_sell")
@@ -767,36 +726,62 @@ def main():
                     "[DRY] Would EXEC %s %0.8f @ ~%0.8f (Δw=%+.4f, Δ%s=%+.6f)",
                     side, qty_exec, price, delta_w, base_asset, delta_eth
                 )
+                executed_qty = qty_exec # Assume fill
             else:
-                try:
-                    oid = adapter.market_order(args.symbol, side, qty_exec)
-                    ORDERS_SUBMITTED.labels("MARKET", side).inc()
-                    mark_decision("exec_buy" if side == "BUY" else "exec_sell")
-                    log.info("EXEC %s %0.8f %s @ ~%0.8f (oid=%s)", side, qty_exec, args.symbol, price, oid)
+                # --- MAKER EXECUTION ---
+                if use_maker:
+                    log.info("Attempting MAKER execution for %s %s...", side, qty_exec)
+                    try:
+                        filled_maker = maker_chase(
+                            adapter, args.symbol, side, qty_exec, f.tick_size,
+                            max_reprices=3, step_sec=8
+                        )
+                        executed_qty += filled_maker
+                        if filled_maker > 0:
+                            FILLS.inc(filled_maker)
+                            log.info("MAKER Filled: %.8f / %.8f", filled_maker, qty_exec)
+                    except Exception as e:
+                        log.error("Maker chase error: %s", e)
+                
+                # --- TAKER FALLBACK ---
+                remaining = qty_exec - executed_qty
+                rem_notional = remaining * price
+                
+                if remaining > 0 and rem_notional >= need:
+                    if use_maker:
+                        log.info("Falling back to TAKER for remaining %.8f...", remaining)
                     
-                    # If success, we assume trade happened for metrics
-                    if side == "BUY":
-                        TRADE_DECISION.labels("exec_buy").set(1)
-                    else:
-                        TRADE_DECISION.labels("exec_sell").set(1)
+                    try:
+                        oid = adapter.market_order(args.symbol, side, remaining)
+                        ORDERS_SUBMITTED.labels("MARKET", side).inc()
+                        mark_decision("exec_buy" if side == "BUY" else "exec_sell")
+                        log.info("EXEC TAKER %s %0.8f %s @ ~%0.8f (oid=%s)", side, remaining, args.symbol, price, oid)
+                        
+                        if side == "BUY":
+                            TRADE_DECISION.labels("exec_buy").set(1)
+                        else:
+                            TRADE_DECISION.labels("exec_sell").set(1)
+                        executed_qty += remaining
+                    except Exception as e:
+                        msg = str(e)
+                        reason = "insufficient_balance" if "-2010" in msg else "order_error"
+                        inc_rejection(reason)
+                        log.exception("Taker order rejected: %s", e)
+                        # If we filled nothing, we effectively skipped/failed
+                        if executed_qty == 0:
+                            state["last_target_w"] = target_w
+                            state["last_bar_close"] = bar_ts
+                            save_state(args.state, state)
+                            last_seen_bar = bar_ts
+                            mark_decision("skip_order_error")
+                            if args.once: break
+                            time.sleep(cfg.execution.poll_sec)
+                            continue
 
-                except Exception as e:
-                    msg = str(e)
-                    reason = "insufficient_balance" if "-2010" in msg else "order_error"
-                    inc_rejection(reason)
-                    log.exception("Order rejected: %s", e)
-                    state["last_target_w"] = target_w
-                    state["last_bar_close"] = bar_ts
-                    save_state(args.state, state)
-                    last_seen_bar = bar_ts
-                    mark_decision(
-                        "skip_balance" if reason == "insufficient_balance" else "skip_order_error"
-                    )
-                    if args.once: break
-                    time.sleep(cfg.execution.poll_sec)
-                    continue
+                elif remaining > 0:
+                    log.info("Remainder %.8f too small for Taker (Notional %.8f < %.8f). Stopping.", remaining, rem_notional, need)
 
-            # Update state/metrics after successful (or simulated) trade
+            # Update state/metrics after trade logic
             state["last_target_w"] = target_w
             state["last_bar_close"] = bar_ts
             save_state(args.state, state)
