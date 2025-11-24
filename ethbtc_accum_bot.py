@@ -172,6 +172,8 @@ class StratParams:
     # regime gate (daily)
     gate_window_days: int = 60
     gate_roc_threshold: float = 0.0
+    funding_limit_long: float = 0.05
+    funding_limit_short: float = -0.05
 
 @dataclass
 class FeeParams:
@@ -204,7 +206,7 @@ class EthBtcStrategy:
         roc = daily.pct_change(self.p.gate_window_days)
         return roc.reindex(close.index, method="ffill")
 
-    def generate_positions(self, close: pd.Series) -> pd.DataFrame:
+    def generate_positions(self, close: pd.Series, funding: Optional[pd.Series] = None) -> pd.DataFrame:
         ratio = self._trend_ratio(close).fillna(0)
         ret = close.pct_change().fillna(0)
         vol = self._realized_vol(ret)
@@ -237,18 +239,38 @@ class EthBtcStrategy:
             r = ratio.loc[t]
             be = float(band_entry.loc[t]); bx = float(band_exit.loc[t])
             g = gate.loc[t] if gate is not None else 0.0
+            
+            # --- Funding Check ---
+            f_ok_buy = True
+            f_ok_sell = True
+            
+            if funding is not None:
+                f_rate = funding.loc[t] if t in funding.index else 0.0
+                # Note: accessing by loc[t] in a loop is slow but safe for backtesting
+                if pd.notna(f_rate):
+                    if f_rate > self.p.funding_limit_long:
+                        f_ok_buy = False # Euphoria -> Don't Buy
+                    if f_rate < self.p.funding_limit_short:
+                        f_ok_sell = False # Panic -> Don't Sell
+
             desired = state
 
+            # Buy Logic (state <= 0 means we are currently in BTC)
             if state <= 0:
-                if r > be and g >= self.p.gate_roc_threshold:
-                    desired = +1.0
+                # Must be below -Entry AND Gate Open AND Funding OK
+                if r < -be and g <= -self.p.gate_roc_threshold and f_ok_buy:
+                    desired = 1.0
+            
+            # Sell Logic (state >= 0 means we are currently in ETH)
             if state >= 0:
-                if r < -be and g <= -self.p.gate_roc_threshold:
-                    desired = -1.0
+                # Signal Sell (above +Entry) -> Check Funding OK
+                if r > be and g >= self.p.gate_roc_threshold and f_ok_sell:
+                     desired = -1.0 
+                # Profit Take / Stop Loss (crossed Exit) -> Always allowed
                 if state > 0 and r < bx:
                     desired = -1.0
                 if state < 0 and r > -bx:
-                    desired = +1.0
+                    desired = 1.0 # Short covering (if we supported shorts)
 
             if desired != state:
                 state = desired
@@ -274,6 +296,7 @@ class Backtester:
     def __init__(self, fee: FeeParams): self.fee = fee
 
     def simulate(self, close: pd.Series, strat: EthBtcStrategy,
+                 funding_series: Optional[pd.Series] = None,
                  initial_btc: float = 1.0, start_bnb: float = 0.05,
                  bnb_price_series: Optional[pd.Series] = None,
                  max_daily_loss_btc: float = 0.0,
@@ -282,7 +305,11 @@ class Backtester:
                  max_dd_frac: float = 0.0,
                  risk_mode: str = "fixed_basis"):
         px = close.astype(float).copy()
-        plan = strat.generate_positions(px)
+        aligned_funding = None
+        if funding_series is not None:
+            aligned_funding = funding_series.reindex(close.index, method="ffill").fillna(0.0)
+
+        plan = strat.generate_positions(px, funding=aligned_funding)
         target_w = plan["target_w"]
 
         btc = np.zeros(len(px)); eth = np.zeros(len(px)); bnb = np.zeros(len(px))
@@ -552,7 +579,13 @@ def _parse_utc(ts: Optional[str]) -> Optional[pd.Timestamp]:
 # ------------------ Commands ------------------
 def cmd_backtest(args):
     df = load_vision_csv(args.data); close = df["close"]
-
+    funding_series = None
+    if getattr(args, "funding_data", None):
+        f_df = pd.read_csv(args.funding_data)
+        # Use 'mixed' format to handle timestamps with/without microseconds
+        f_df["time"] = pd.to_datetime(f_df["time"], format="mixed", utc=True)
+        f_df = f_df.set_index("time").sort_index()
+        funding_series = f_df["rate"]
     # Optional date slicing for apples-to-apples comparisons
     start_ts = _parse_utc(args.start)
     end_ts   = _parse_utc(args.end)
@@ -673,6 +706,12 @@ def cmd_backtest(args):
     # --- NOW build params so p.min_trade_btc reflects the computed value ---
     p = _load_params_from_cfg_args(cfg, args)
 
+    # Inject Funding Limits from CLI or Config
+    if getattr(args, "funding_limit_long", None):
+        p.funding_limit_long = float(args.funding_limit_long)
+    if getattr(args, "funding_limit_short", None):
+        p.funding_limit_short = float(args.funding_limit_short)
+
     # Print effective params, fees, and window for audit
     print(json.dumps({
         "effective_params": p.__dict__,
@@ -685,6 +724,7 @@ def cmd_backtest(args):
     res = bt.simulate(
         close,
         EthBtcStrategy(p),
+        funding_series=funding_series,
         initial_btc=basis,
         bnb_price_series=bnb_series,
         max_daily_loss_btc=max_daily_loss,
@@ -835,6 +875,10 @@ if __name__ == "__main__":
     a.add_argument("--bnb-discount", type=float, default=None)
     a.add_argument("--no-bnb", action="store_true")
     a.add_argument("--slippage-bps", type=float, default=None)
+
+    a.add_argument("--funding-data", help="Path to funding rates CSV")
+    a.add_argument("--funding-limit-long", type=float, default=None)
+    a.add_argument("--funding-limit-short", type=float, default=None)
 
     a.add_argument("--out")
     a.add_argument("--excel-out")
