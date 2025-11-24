@@ -120,16 +120,20 @@ def main():
     for interval in intervals:
         print(f"== {args.symbol} {interval} ==")
         all_frames = []
+        downloaded_months = set()
 
         if not args.prefer_daily:
-            # Try monthly first
+            # --- OPTIMIZED DEFAULT PATH (Monthly First) ---
+            
+            # 1. Try monthly first
             for mdt in month_range(start, end):
                 url, fname = url_monthly(args.symbol, interval, mdt.year, mdt.month)
                 if not head_ok(url): 
                     continue
                 print(f"Downloading monthly {fname}")
                 zbytes = download(url)
-                # checksum (best-effort)
+                
+                # Checksum (Optional)
                 chk_url = url + ".CHECKSUM"
                 chk = None
                 try:
@@ -139,20 +143,32 @@ def main():
                 ok = verify_checksum(zbytes, chk) if chk else None
                 if ok is False:
                     print(f"WARNING: checksum failed for {fname}")
+                
+                df = load_zip_csvs(zbytes)
+                all_frames.append(df)
+                
+                # Mark this month as done so we don't re-download days
+                downloaded_months.add((mdt.year, mdt.month))
+
+            # 2. Fill gaps with daily
+            for ddt in day_range(start, end):
+                # NEW: Skip if we already have the full month
+                if (ddt.year, ddt.month) in downloaded_months:
+                    continue
+                
+                url, fname = url_daily(args.symbol, interval, ddt.year, ddt.month, ddt.day)
+                if not head_ok(url): 
+                    continue
+                print(f"Downloading daily {fname}")
+                zbytes = download(url)
                 df = load_zip_csvs(zbytes)
                 all_frames.append(df)
 
-            # fill gaps with daily
-            for ddt in day_range(start, end):
-                url, fname = url_daily(args.symbol, interval, ddt.year, ddt.month, ddt.day)
-                if not head_ok(url): 
-                    continue
-                print(f"Downloading daily {fname}")
-                zbytes = download(url)
-                df = load_zip_csvs(zbytes)
-                all_frames.append(df)
         else:
-            # Daily first
+            # --- ALTERNATIVE PATH (--prefer-daily) ---
+            # Keeps original logic: try daily first, then monthly fallback
+            
+            # 1. Daily first
             for ddt in day_range(start, end):
                 url, fname = url_daily(args.symbol, interval, ddt.year, ddt.month, ddt.day)
                 if not head_ok(url): 
@@ -161,7 +177,8 @@ def main():
                 zbytes = download(url)
                 df = load_zip_csvs(zbytes)
                 all_frames.append(df)
-            # Then monthly for any remaining
+            
+            # 2. Then monthly for any remaining (simplified fallback)
             for mdt in month_range(start, end):
                 url, fname = url_monthly(args.symbol, interval, mdt.year, mdt.month)
                 if not head_ok(url): 
@@ -170,6 +187,10 @@ def main():
                 zbytes = download(url)
                 df = load_zip_csvs(zbytes)
                 all_frames.append(df)
+
+        if not all_frames:
+            print(f"No data found for {args.symbol} {interval} in range {args.start}..{args.end}")
+            continue
 
         if not all_frames:
             print(f"No data found for {args.symbol} {interval} in range {args.start}..{args.end}")
