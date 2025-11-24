@@ -23,7 +23,8 @@ class ExchangeAdapter:
     def get_filters(self, symbol: str) -> Filters:
         raise NotImplementedError
 
-    def place_post_only(self, symbol: str, side: str, quantity: float, price: float, ttl_sec: int) -> str:
+    # Renamed & Simplified: Just places the order, returns ID immediately. No sleeping.
+    def place_limit_maker(self, symbol: str, side: str, quantity: float, price: float) -> str:
         raise NotImplementedError
 
     def cancel(self, symbol: str, order_id: str) -> None:
@@ -35,6 +36,12 @@ class ExchangeAdapter:
     def market_order(self, symbol: str, side: str, quantity: float) -> str:
         raise NotImplementedError
 
+    def get_usd_price(self, symbol: str) -> float:
+        raise NotImplementedError
+    
+    def get_funding_rate(self, symbol: str) -> float:
+        raise NotImplementedError
+
     def round_qty(self, qty: float, step: float) -> float:
         from math import floor
         if step <= 0: return qty
@@ -44,4 +51,3 @@ class ExchangeAdapter:
         from math import floor
         if tick <= 0: return price
         return floor(price / tick) * tick
-    

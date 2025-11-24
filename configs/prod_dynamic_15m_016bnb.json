@@ -1,56 +1,55 @@
 {
   "strategy": {
     "trend_kind": "sma",
-    "trend_lookback": 200,
-
-    "flip_band_entry": 0.025,
-    "flip_band_exit": 0.015,
-
-    "vol_window": 60,
-    "vol_adapt_k": 0.0,
-
-    "bar_interval_minutes": 15,
-    "target_vol": 0.0,
+    "trend_lookback": 120,
+    "flip_band_entry": 0.049314042665418244,
+    "flip_band_exit": 0.009533373925883229,
+    "vol_window": 45,
+    "vol_adapt_k": 0.0075,
+    "target_vol": 0.4,
     "min_mult": 0.5,
     "max_mult": 1.5,
-
-    "cooldown_minutes": 180,
-    "step_allocation": 0.5,
-    "max_position": 1.0,
+    "cooldown_minutes": 60,
+    "step_allocation": 1.0,
+    "max_position": 0.8,
+    "gate_window_days": 60,
+    "gate_roc_threshold": 0.01,
+    "flip_band": 0.049314042665418244,
     "long_only": true,
 
     "rebalance_threshold_w": 0.0,
     "min_trade_btc": 0.0,
-
-    "gate_window_days": 60,
-    "gate_roc_threshold": 0.0,
 
     "funding_limit_long": 0.05,
     "funding_limit_short": -0.05
   },
 
   "fees": {
-    "maker_fee": 0.0002,
-    "taker_fee": 0.0004,
+    "maker_fee": 0.00075,
+    "taker_fee": 0.00075,
     "slippage_bps": 1.0,
     "bnb_discount": 0.25,
     "pay_fees_in_bnb": true
   },
+
   "execution": {
     "interval": "15m",
     "poll_sec": 5,
     "ttl_sec": 30,
-    "taker_fallback": false,
+    "taker_fallback": true,
     "max_taker_btc": 0.002,
     "max_spread_bps_for_taker": 2.0,
+
     "min_trade_frac": 0.0015,
     "min_trade_floor_btc": 0.0,
     "min_trade_cap_btc": 0.0,
-    "min_trade_btc": null
+
+    "min_trade_btc": 10.0
   },
 
   "risk": {
-    "basis_btc": 0.16,
+    "basis_btc": 1000.0,
+
     "max_daily_loss_btc": 0.0,
     "max_dd_btc": 0.0,
     "max_daily_loss_frac": 0.02,
