@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import os
+import math
 
 # --- MAGIC PATH FIX ---
 # Allows running this script from the root or tools/ folder without PYTHONPATH errors
@@ -105,19 +106,35 @@ class Objective:
             
             test_final = float(summ_te["final_btc"])
             train_final = float(summ_tr["final_btc"])
-            turns = float(summ_te["turns"])
+            turns = float(summ_te["n_trades"])
             fees = float(summ_te["fees_btc"])
             turnover = float(summ_te["turnover_btc"])
             
             gen_gap = max(0.0, train_final - test_final)
+            if turns < 0: turns = 0
+            if fees < 0: fees = 0
             
-            robust_score = (
-                test_final
-                - self.args.lambda_turns * (turns / self.args.turns_scale)
-                - self.args.gap_penalty * gen_gap
-                - self.args.lambda_fees * fees
-                - self.args.lambda_turnover * turnover
-            )
+            # Prevent division by zero if turns_scale is 0 (unlikely but safe)
+            t_scale = self.args.turns_scale if self.args.turns_scale > 0 else 1.0
+            
+            # CRITICAL FIX: Penalize strategies that don't trade at all
+            # If the strategy doesn't trade (turns=0), it gets a terrible score
+            if turns == 0:
+                robust_score = -1000.0  # Massive penalty for not trading
+            else:
+                robust_score = (
+                    test_final
+                    - self.args.lambda_turns * (turns / t_scale)
+                    - self.args.gap_penalty * gen_gap
+                    - self.args.lambda_fees * fees
+                    - self.args.lambda_turnover * turnover
+                )
+            
+            # Check for valid float
+            if not math.isfinite(robust_score):
+                log.warning(f"Trial {tid}: Non-finite score {robust_score}. Profit={test_final}")
+                return -1e9 # Return a bad finite number instead of -inf
+            
             
             # 5. Store Attributes for CSV export
             trial.set_user_attr("train_final_btc", train_final)
@@ -191,7 +208,14 @@ def main():
     )
 
     log.info(f"Loading price data from {args.data}...")
-    df = load_vision_csv(args.data); close = df["close"]
+    df = load_vision_csv(args.data)
+    # Drop NaT index if any
+    df = df[df.index.notna()]
+    df = df.sort_index()
+    df = df[~df.index.duplicated(keep='first')]
+    close = df["close"]
+    
+    print(f"Index Monotonic: {close.index.is_monotonic_increasing}")
     train_close = close.loc[args.train_start:args.train_end].dropna()
     test_close  = close.loc[args.test_start:args.test_end].dropna()
 
