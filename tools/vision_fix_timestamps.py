@@ -2,7 +2,13 @@
 import argparse, re
 import pandas as pd
 from datetime import datetime, timezone
+import sys
+import os
 
+# --- MAGIC PATH FIX ---
+# Allow importing 'core' even if running from tools/ folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 def parse_start_from_name(name: str):
     # try patterns like: ..._2021-01_2025-12_...
     m = re.search(r'_(\d{4}-\d{2})_(\d{4}-\d{2})_', name)

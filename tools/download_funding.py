@@ -10,7 +10,13 @@ import time
 import pandas as pd
 import requests
 from datetime import datetime, timezone
+import sys
+import os
 
+# --- MAGIC PATH FIX ---
+# Allow importing 'core' even if running from tools/ folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 API_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
 
 def get_timestamp(dt_str):

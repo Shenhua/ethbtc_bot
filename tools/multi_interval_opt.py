@@ -7,7 +7,13 @@ import numpy as np
 from core.ethbtc_accum_bot import (
     load_vision_csv, FeeParams, StratParams, EthBtcStrategy, Backtester, Optimizer, _write_excel
 )
+import sys
+import os
 
+# --- MAGIC PATH FIX ---
+# Allow importing 'core' even if running from tools/ folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 def compute_scores(df: pd.DataFrame, lam_turns: float = 1.0, gap_penalty: float = 0.25,
                    turns_scale: float = 1000.0, lam_fees: float = 1.0, lam_turnover: float = 0.0) -> pd.DataFrame:
     df = df.copy()

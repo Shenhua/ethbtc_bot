@@ -2,6 +2,11 @@
 from __future__ import annotations
 import argparse, csv, json, subprocess, sys, os
 
+
+# --- MAGIC PATH FIX ---
+# Allow importing 'core' even if running from tools/ folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 def main():
     ap = argparse.ArgumentParser("ledger backtest wrap")
     ap.add_argument("--data", required=True)

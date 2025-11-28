@@ -16,6 +16,10 @@ from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 
+# --- MAGIC PATH FIX ---
+# Allow importing 'core' even if running from tools/ folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 # --- UPDATED: Added funding limits to the list of keys to preserve ---
 RICH_PARAM_KEYS = [
     "trend_kind","trend_lookback",
@@ -215,9 +219,9 @@ def main():
     ap.add_argument("--require-costs", action="store_true", help="Fail if costs are missing/constant")
     ap.add_argument("--require-var", action="store_true", help="Fail if test_final_btc lacks variation")
     ap.add_argument("--top-k", type=int, default=12)
-    ap.add_argument("--out-csv", default="wf_ranked_families.csv")
+    ap.add_argument("--out-csv", default="results/wf_ranked_families.csv")
     ap.add_argument("--excel-out")
-    ap.add_argument("--emit-config", default="selected_params.json")
+    ap.add_argument("--emit-config", default="configs/selected_params.json")
     ap.add_argument("--family-index", type=int, default=0)
     args = ap.parse_args()
 
