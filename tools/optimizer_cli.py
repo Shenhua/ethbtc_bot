@@ -1,115 +1,184 @@
+#!/usr/bin/env python3
 from __future__ import annotations
-import os, json, math, argparse, time, random
-import concurrent.futures as cf
-import numpy as np
+
+import sys
+import os
+
+# --- MAGIC PATH FIX ---
+# Allows running this script from the root or tools/ folder without PYTHONPATH errors
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
+
+import json, argparse, time, random, logging
 import pandas as pd
+import numpy as np
+import optuna
 from core.ethbtc_accum_bot import (
     load_vision_csv, load_json_config, _write_excel,
     FeeParams, StratParams, EthBtcStrategy, Backtester
 )
 
-def sample_params():
+# 1. Setup Logging
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s [OPT] %(message)s', 
+    datefmt='%H:%M:%S'
+)
+log = logging.getLogger("optimizer")
+
+# Enable Optuna logs
+optuna.logging.set_verbosity(optuna.logging.INFO)
+
+def suggest_params(trial):
+    """
+    Define the search space for Optuna.
+    """
     return StratParams(
-        trend_kind=random.choice(["sma","roc"]),
-        trend_lookback=int(random.choice([120,160,200,240,300])),
-        flip_band_entry=float(random.uniform(0.01,0.05)),
-        flip_band_exit=float(random.uniform(0.005,0.03)),
-        vol_window=int(random.choice([45,60,90])),
-        vol_adapt_k=float(random.choice([0.0, 0.25, 0.5, 0.75]))/100.0,
-        target_vol=float(random.choice([0.3,0.4,0.5,0.6])),
-        min_mult=0.5, max_mult=1.5,
-        cooldown_minutes=int(random.choice([60,120,180,240])),
-        step_allocation=float(random.choice([0.33,0.5,0.66,1.0])),
-        max_position=float(random.choice([0.6,0.8,1.0])),
-        gate_window_days=int(random.choice([30,60,90])),
-        gate_roc_threshold=float(random.choice([0.0, 0.01, 0.02])),
+        trend_kind=trial.suggest_categorical("trend_kind", ["sma", "roc"]),
+        trend_lookback=trial.suggest_categorical("trend_lookback", [120, 160, 200, 240, 300]),
         
-        # --- NEW: Optimize Funding Limits ---
-        # Long limit: 0.01% to 0.1% (Euphoria)
-        funding_limit_long=float(random.uniform(0.01, 0.10)),
-        # Short limit: -0.1% to -0.01% (Panic)
-        funding_limit_short=float(random.uniform(-0.10, -0.01)),
+        flip_band_entry=trial.suggest_float("flip_band_entry", 0.01, 0.06),
+        flip_band_exit=trial.suggest_float("flip_band_exit", 0.005, 0.03),
+        
+        vol_window=trial.suggest_categorical("vol_window", [45, 60, 90]),
+        vol_adapt_k=trial.suggest_categorical("vol_adapt_k", [0.0, 0.0025, 0.005, 0.0075]),
+        
+        target_vol=trial.suggest_categorical("target_vol", [0.3, 0.4, 0.5, 0.6]),
+        min_mult=0.5, 
+        max_mult=1.5,
+        
+        cooldown_minutes=trial.suggest_categorical("cooldown_minutes", [60, 120, 180, 240]),
+        step_allocation=trial.suggest_categorical("step_allocation", [0.33, 0.5, 0.66, 1.0]),
+        max_position=trial.suggest_categorical("max_position", [0.6, 0.8, 1.0]),
+        
+        # Gates
+        gate_window_days=trial.suggest_categorical("gate_window_days", [30, 60, 90]),
+        gate_roc_threshold=trial.suggest_categorical("gate_roc_threshold", [0.0, 0.01, 0.02]),
+        
+        # Funding Rate Filters
+        funding_limit_long=trial.suggest_float("funding_limit_long", 0.01, 0.10),
+        funding_limit_short=trial.suggest_float("funding_limit_short", -0.10, -0.01),
+        
+        # Anti-Churn defaults
+        rebalance_threshold_w=trial.suggest_categorical("rebalance_threshold_w", [0.0, 0.01]),
+        min_trade_btc=0.0,
+        
+        # --- THE SHORTING SWITCH ---
+        # True = Only Buy ETH. False = Buy & Sell Short.
+        long_only=trial.suggest_categorical("long_only", [True, False])
     )
 
-def score_rows(df, lam_turns=2.0, gap_penalty=0.35, turns_scale=800.0, lam_fees=2.0, lam_turnover=1.0):
-    df = df.copy()
-    if {"train_final_btc","test_final_btc"}.issubset(df.columns):
-        df["gen_gap"] = df["train_final_btc"] - df["test_final_btc"]
-    else:
-        df["gen_gap"] = 0.0
-    df["turns_test"] = df.get("turns_test", 0.0).astype(float)
-    fees = df.get("fees_btc", 0.0).astype(float)
-    tnov = df.get("turnover_btc", 0.0).astype(float)
-    df["robust_score"] = (
-        df["test_final_btc"].astype(float)
-        - lam_turns * (df["turns_test"] / float(turns_scale))
-        - gap_penalty * np.maximum(0.0, df["gen_gap"].astype(float))
-        - lam_fees * fees
-        - lam_turnover * tnov
-    )
-    return df
+class Objective:
+    def __init__(self, args, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test):
+        self.args = args
+        self.fee = fee
+        self.train_close = train_close
+        self.test_close = test_close
+        self.bnb_train = bnb_train
+        self.bnb_test = bnb_test
+        self.funding_train = funding_train
+        self.funding_test = funding_test
 
-def select_from_top(df, top_quantile=0.95):
-    if df.empty: raise ValueError("No rows to select from.")
-    thr = df["test_final_btc"].quantile(top_quantile)
-    pool = df[df["test_final_btc"] >= thr].copy()
-    if pool.empty: pool = df.copy()
-    pool = pool.sort_values(["robust_score","turns_test","test_final_btc"], ascending=[False,True,False])
-    return pool.iloc[0]
+    def __call__(self, trial):
+        t0 = time.time()
+        tid = trial.number
+        
+        try:
+            # 1. Sample
+            p = suggest_params(trial)
+            
+            # 2. Run Simulation (Train)
+            bt = Backtester(self.fee)
+            res_tr = bt.simulate(
+                self.train_close, EthBtcStrategy(p), 
+                funding_series=self.funding_train, bnb_price_series=self.bnb_train
+            )
+            # 3. Run Simulation (Test)
+            res_te = bt.simulate(
+                self.test_close, EthBtcStrategy(p), 
+                funding_series=self.funding_test, bnb_price_series=self.bnb_test
+            )
+            
+            # 4. Calculate Metrics
+            summ_tr = res_tr["summary"]
+            summ_te = res_te["summary"]
+            
+            test_final = float(summ_te["final_btc"])
+            train_final = float(summ_tr["final_btc"])
+            turns = float(summ_te["turns"])
+            fees = float(summ_te["fees_btc"])
+            turnover = float(summ_te["turnover_btc"])
+            
+            gen_gap = max(0.0, train_final - test_final)
+            
+            robust_score = (
+                test_final
+                - self.args.lambda_turns * (turns / self.args.turns_scale)
+                - self.args.gap_penalty * gen_gap
+                - self.args.lambda_fees * fees
+                - self.args.lambda_turnover * turnover
+            )
+            
+            # 5. Store Attributes for CSV export
+            trial.set_user_attr("train_final_btc", train_final)
+            trial.set_user_attr("test_final_btc", test_final)
+            trial.set_user_attr("turns_test", turns)
+            trial.set_user_attr("fees_btc", fees)
+            trial.set_user_attr("turnover_btc", turnover)
+            trial.set_user_attr("robust_score", robust_score)
+            
+            for k, v in p.__dict__.items():
+                trial.set_user_attr(k, v)
 
-def _eval_one(arg):
-    # Updated signature to accept funding data
-    (params_dict, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test) = arg
-    
-    p = StratParams(**params_dict)
-    bt = Backtester(fee)
-    
-    # Pass funding series to the simulation
-    res_tr = bt.simulate(train_close, EthBtcStrategy(p), funding_series=funding_train, bnb_price_series=bnb_train)
-    res_te = bt.simulate(test_close,  EthBtcStrategy(p), funding_series=funding_test,  bnb_price_series=bnb_test)
-    
-    return {
-        "params": p.__dict__,
-        "train_final_btc": res_tr["summary"]["final_btc"],
-        "test_final_btc":  res_te["summary"]["final_btc"],
-        "turns_test":      res_te["summary"]["turns"],
-        "fees_btc":        res_te["summary"]["fees_btc"],
-        "turnover_btc":    res_te["summary"]["turnover_btc"],
-        "score":           res_te["summary"]["final_btc"],
-    }
+            log.info(f"Trial {tid} DONE: Score={robust_score:.4f} (Profit={test_final:.4f}) in {time.time()-t0:.2f}s")
+            return robust_score
+
+        except Exception as e:
+            log.error(f"Trial {tid} CRASHED: {e}", exc_info=True)
+            return -float('inf')
 
 def main():
-    ap = argparse.ArgumentParser(description="Fast Optimizer (parallel + early stop)")
+    ap = argparse.ArgumentParser(description="Bayesian Optimizer (Optuna)")
     ap.add_argument("--data", required=True)
-    ap.add_argument("--funding-data", help="Path to funding rates CSV (Time, Rate)")
+    ap.add_argument("--funding-data", help="Path to funding rates CSV")
     ap.add_argument("--bnb-data")
     ap.add_argument("--config")
     ap.add_argument("--train-start", required=True)
     ap.add_argument("--train-end", required=True)
     ap.add_argument("--test-start", required=True)
     ap.add_argument("--test-end", required=True)
-    ap.add_argument("--n-random", type=int, default=400)
+    ap.add_argument("--n-trials", type=int, default=200)
+    
+    # Fees
     ap.add_argument("--maker-fee", type=float, default=0.0002)
     ap.add_argument("--taker-fee", type=float, default=0.0004)
     ap.add_argument("--bnb-discount", type=float, default=0.25)
     ap.add_argument("--no-bnb", action="store_true")
     ap.add_argument("--slippage-bps", type=float, default=1.0)
-    ap.add_argument("--out", default="opt_results_fast.csv")
-    ap.add_argument("--excel-out")
+    
+    # Scoring weights
     ap.add_argument("--lambda-turns", type=float, default=2.0)
     ap.add_argument("--gap-penalty", type=float, default=0.35)
     ap.add_argument("--turns-scale", type=float, default=800.0)
     ap.add_argument("--lambda-fees", type=float, default=2.0)
     ap.add_argument("--lambda-turnover", type=float, default=1.0)
+    
+    # Output
+    ap.add_argument("--out", default="results/opt_results_smart.csv")
+    ap.add_argument("--jobs", type=int, default=1, help="Parallel jobs")
+    ap.add_argument("--storage", default="sqlite:///data/db/optuna.db")
+    ap.add_argument("--study-name", default="ethbtc_study")
     ap.add_argument("--top-quantile", type=float, default=0.95)
     ap.add_argument("--emit-config")
-    # Fast controls
-    ap.add_argument("--threads", type=int, default=0, help="0=auto (cpu count)")
-    ap.add_argument("--chunk-size", type=int, default=32, help="tasks batched per worker fetch")
-    ap.add_argument("--early-stop", type=int, default=120, help="stop after this many evals if not improving")
-    ap.add_argument("--patience", type=int, default=3, help="checks without improvement before stop")
-    ap.add_argument("--min-improve", type=float, default=0.005, help="relative improvement needed (0.5% default)")
     ap.add_argument("--no-excel", action="store_true")
+    
+    # Compatibility args (ignored but accepted so old scripts don't break)
+    ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--chunk-size", type=int, default=32)
+    ap.add_argument("--early-stop", type=int, default=120)
+    ap.add_argument("--patience", type=int, default=3)
+    ap.add_argument("--min-improve", type=float, default=0.005)
+    
     args = ap.parse_args()
 
     cfg = load_json_config(args.config)
@@ -121,76 +190,64 @@ def main():
         pay_fees_in_bnb=bool(cfg.get("pay_fees_in_bnb", not args.no_bnb)),
     )
 
-    # 1. Load Price Data
+    log.info(f"Loading price data from {args.data}...")
     df = load_vision_csv(args.data); close = df["close"]
     train_close = close.loc[args.train_start:args.train_end].dropna()
     test_close  = close.loc[args.test_start:args.test_end].dropna()
 
-    # 2. Load BNB Data (Optional)
     bnb_train = bnb_test = None
-    bnb_path = cfg.get("bnb_data", args.bnb_data)
-    if bnb_path:
-        df_bnb = load_vision_csv(bnb_path)["close"]
+    if cfg.get("bnb_data", args.bnb_data):
+        df_bnb = load_vision_csv(cfg.get("bnb_data", args.bnb_data))["close"]
         bnb_train = df_bnb.reindex(train_close.index, method="ffill")
         bnb_test  = df_bnb.reindex(test_close.index,  method="ffill")
 
-    # 3. Load Funding Data (New)
     funding_train = funding_test = None
     if args.funding_data:
+        log.info(f"Loading funding data from {args.funding_data}...")
         f_df = pd.read_csv(args.funding_data)
-        # Handle Mixed formats robustly
         f_df["time"] = pd.to_datetime(f_df["time"], format="mixed", utc=True)
         f_df = f_df.set_index("time").sort_index()
         funding_series = f_df["rate"]
-        
-        # Align to price candles (ffill)
         funding_train = funding_series.reindex(train_close.index, method="ffill").fillna(0.0)
         funding_test  = funding_series.reindex(test_close.index, method="ffill").fillna(0.0)
-        print(f"Loaded Funding Data: {len(funding_series)} records.")
 
-    # 4. Build Tasks
-    tasks = []
-    for _ in range(args.n_random):
-        p = sample_params()
-        # Pass funding slices to the task
-        tasks.append((p.__dict__, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test))
+    log.info(f"Starting Optuna study '{args.study_name}' with {args.n_trials} trials...")
+    
+    study = optuna.create_study(
+        study_name=args.study_name, 
+        direction="maximize",
+        storage=args.storage,
+        load_if_exists=True
+    )
+    
+    obj = Objective(args, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test)
+    
+    try:
+        study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
+    except KeyboardInterrupt:
+        log.warning("Stopping optimization early...")
 
-    # 5. Execute
-    threads = (os.cpu_count() or 2) if args.threads == 0 else args.threads
-    results = []
-    best_score = -1e9
-    stale_checks = 0
-    t0 = time.time()
+    log.info(f"Exporting results to {args.out}...")
+    
+    rows = []
+    for t in study.trials:
+        if t.state != optuna.trial.TrialState.COMPLETE:
+            continue
+        row = t.user_attrs.copy()
+        row.update(t.params) 
+        rows.append(row)
+        
+    df_out = pd.DataFrame(rows)
+    if "robust_score" not in df_out.columns and "value" in df_out.columns:
+        df_out.rename(columns={"value": "robust_score"}, inplace=True)
 
-    print(f"Starting optimization with {args.n_random} iterations on {threads} threads...")
-
-    with cf.ProcessPoolExecutor(max_workers=threads) as ex:
-        for i, res in enumerate(ex.map(_eval_one, tasks, chunksize=args.chunk_size), 1):
-            results.append(res)
-            if res["score"] > best_score * (1.0 + args.min_improve):
-                best_score = res["score"]
-                stale_checks = 0
-            if i % args.early_stop == 0:
-                stale_checks += 1
-                if stale_checks >= args.patience:
-                    print(f"Early stopping at iteration {i} (no improvement).")
-                    break
-
-    df_out = pd.DataFrame(results).sort_values("score", ascending=False)
-    scored = score_rows(df_out, args.lambda_turns, args.gap_penalty, args.turns_scale,
-                        args.lambda_fees, args.lambda_turnover)
-    best = select_from_top(scored, args.top_quantile)
-
-    scored.to_csv(args.out, index=False)
-    print(f"Saved → {args.out}  | evaluated={len(df_out)}  | threads={threads}  | elapsed={time.time()-t0:.1f}s")
-
-    if args.excel_out and not args.no_excel:
-        _write_excel(args.excel_out, {"Optimization": scored})
-        print(f"Wrote → {args.excel_out}")
-
-    if args.emit_config:
-        with open(args.emit_config, "w") as f: json.dump(best["params"], f, indent=2)
-        print(f"Wrote selected params → {args.emit_config}")
+    if not df_out.empty:
+        df_out = df_out.sort_values("robust_score", ascending=False)
+        df_out.to_csv(args.out, index=False)
+        log.info(f"Done. Best score: {study.best_value:.4f}")
+        print(json.dumps(study.best_trial.params, indent=2))
+    else:
+        log.warning("No successful trials found.")
 
 if __name__ == "__main__":
     main()

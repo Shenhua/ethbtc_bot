@@ -4,6 +4,10 @@ from urllib.parse import urljoin
 import requests
 import pandas as pd
 
+# --- MAGIC PATH FIX ---
+# Allow importing 'core' even if running from tools/ folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 BASE = "https://data.binance.vision/"
 
 def month_range(start: datetime, end: datetime):

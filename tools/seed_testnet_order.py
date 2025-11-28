@@ -28,6 +28,10 @@ except Exception as e:
     print("Error: binance-connector not installed. Try: pip install binance-connector", file=sys.stderr)
     raise
 
+# --- MAGIC PATH FIX ---
+# Allow importing 'core' even if running from tools/ folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 DEF_BASE_URL = "https://testnet.binance.vision"
 
 def make_client(api_key: str, api_secret: str, base_url: str) -> Spot:

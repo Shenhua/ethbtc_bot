@@ -2,6 +2,11 @@
 from __future__ import annotations
 import argparse, subprocess, json, tempfile, os, sys
 
+
+# --- MAGIC PATH FIX ---
+# Allow importing 'core' even if running from tools/ folder
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 try:
     import optuna
 except Exception:
