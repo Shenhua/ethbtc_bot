@@ -1,4 +1,3 @@
-version: "3.8"
 services:
   # --- INSTANCE 1: ETH/BTC ---
   bot_eth:
