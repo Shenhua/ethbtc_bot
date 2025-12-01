@@ -455,7 +455,7 @@ def main():
                 elif strat_type == "meta":
                     # META Strategy with Overrides
                     # 1. Base Global Params
-                    base_params = cfg.strategy.dict()
+                    base_params = cfg.strategy.model_dump()
                     
                     # 2. Extract Overrides
                     mr_opts = base_params.get("mean_reversion_overrides", {})
