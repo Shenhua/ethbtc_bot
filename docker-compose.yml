@@ -5,7 +5,7 @@ services:
     container_name: ethbtc_bot
     restart: unless-stopped
     networks:
-      - default  # (Optional, if you want it on the default net too)
+      - default 
       - trading-net
     environment:
       - BINANCE_KEY=${BINANCE_KEY}
@@ -31,7 +31,7 @@ services:
     container_name: bnbusdc_bot
     restart: unless-stopped
     networks:
-      - default  # (Optional, if you want it on the default net too)
+      - default  
       - trading-net
     environment:
       - BINANCE_KEY=${BINANCE_KEY}
@@ -65,6 +65,38 @@ services:
     volumes:
       - .:/app
     command: python /app/tools/dust_sweeper.py --mode auto --schedule weekly
+
+
+  grafana:
+    image: grafana/grafana-enterprise
+    container_name: grafana
+    restart: unless-stopped
+    networks:
+      - default   
+      - trading-net
+    user: "0"
+    ports:
+      - '3000:3000'
+    volumes:
+      - ${DOCKERCONFDIR}/grafana-data:/var/lib/grafana
+      - ${DOCKERCONFDIR}/grafana-provisioning:/etc/grafana/provisioning
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    ports:
+      - "9999:9090"
+    networks:
+      - default  
+      - trading-net    
+    user: "65534"
+    volumes:
+      - ${DOCKERCONFDIR}/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${DOCKERCONFDIR}/prometheus/data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    restart: unless-stopped
 
 networks:
   trading-net:
