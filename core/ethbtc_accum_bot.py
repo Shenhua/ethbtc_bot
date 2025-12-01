@@ -130,7 +130,7 @@ class EthBtcStrategy:
         else:
             ratio = (close / close.shift(self.p.trend_lookback)) - 1.0
             
-        ret = close.pct_change().fillna(0)
+        ret = close.pct_change(fill_method=None).fillna(0)
         bars_per_year = (365 * 24 * 60) / float(self.p.bar_interval_minutes)
         vol = ret.rolling(self.p.vol_window).std() * math.sqrt(bars_per_year)
         
@@ -141,7 +141,7 @@ class EthBtcStrategy:
         # 2. Gate Logic (Pre-calculated Vectorized)
         if self.p.gate_window_days > 0:
             daily = close.resample("1D").last()
-            roc_daily = daily.pct_change(self.p.gate_window_days)
+            roc_daily = daily.pct_change(self.p.gate_window_days, fill_method=None)            
             # Reindex to match close (15m), ffill to propagate daily value forward
             roc = roc_daily.reindex(close.index).ffill().fillna(0.0)
             
