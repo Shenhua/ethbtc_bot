@@ -27,9 +27,9 @@
       "slow_period": 200,
       "ma_type": "ema",
       "cooldown_minutes": 180,
-      "step_allocation": 1.0,
+      "step_allocation": 0.5,
       "max_position": 0.6,
-      "long_only": 0,
+      "long_only": 1,
       "rebalance_threshold_w": 0.01,
       "funding_limit_long": 0.0452338029637061,
       "funding_limit_short": -0.051559053460622,
@@ -44,7 +44,7 @@
       "funding_limit_long": 0.0811467046637683,
       "funding_limit_short": -0.05801178648804923,
       "long_only": true,
-      "step_allocation": 1.0,
+      "step_allocation": 0.5,
       "max_position": 1.0
     }
   },
