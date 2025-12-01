@@ -108,26 +108,28 @@ def reasonable_filter(df, q_fee=0.75, q_turnover=0.75):
 def make_family_key(row, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
     """
     Polymorphic Grouping:
-    - If Trend Strategy (has fast/slow): Group by (Fast, Slow, MA, Cooldown)
-    - If Mean Reversion: Group by (Entry, Exit, Lookback, Cooldown)
+    - If Trend Strategy (has fast/slow): Group by (Fast, Slow, MA, Cooldown, LongOnly)
+    - If Mean Reversion: Group by (Entry, Exit, Lookback, Cooldown, LongOnly)
     """
     # 1. Check for Trend Strategy
     fast = row.get("fast_period", np.nan)
     slow = row.get("slow_period", np.nan)
-    
+    long_only = bool(row.get("long_only", True))  # <--- NEW
+
     if pd.notna(fast) and pd.notna(slow) and float(slow) > 0:
         # TREND FAMILY
         ma = row.get("ma_type", "ema")
         cd = row.get("cooldown_minutes", np.nan)
-        
+
         def _bucket(v, b):
-            if pd.isna(v) or b <= 1: return v
+            if pd.isna(v) or b <= 1:
+                return v
             return int(round(float(v) / b) * b)
-        
+
         cd_key = _bucket(cd, cd_bucket) if not pd.isna(cd) else 0
-        
-        # Tuple: (Type="Trend", Fast, Slow, MA, Cooldown)
-        return ("Trend", int(fast), int(slow), ma, cd_key)
+
+        # Tuple now includes long_only
+        return ("Trend", int(fast), int(slow), ma, cd_key, long_only)
 
     else:
         # MEAN REVERSION FAMILY
@@ -137,7 +139,8 @@ def make_family_key(row, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60)
         cd  = row.get("cooldown_minutes", np.nan)
 
         def _bucket(v, b):
-            if pd.isna(v) or b <= 1: return v
+            if pd.isna(v) or b <= 1:
+                return v
             return int(round(float(v) / b) * b)
 
         e_key = round(float(e), band_round) if not pd.isna(e) else None
@@ -145,8 +148,8 @@ def make_family_key(row, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60)
         tlb_key = _bucket(tlb, lb_bucket) if not pd.isna(tlb) else None
         cd_key  = _bucket(cd,  cd_bucket) if not pd.isna(cd)  else None
 
-        # Tuple: (Type="MR", Entry, Exit, Lookback, Cooldown)
-        return ("MR", e_key, x_key, tlb_key, cd_key)
+        # Tuple now includes long_only
+        return ("MR", e_key, x_key, tlb_key, cd_key, long_only)
 
 def rank_families(df, penalty_turns=0.0, penalty_fees=1.0, penalty_turnover=0.5, disp_weight=0.25,
                   band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
@@ -255,11 +258,20 @@ def main():
     ap.add_argument("--penalty-fees", type=float, default=0.0)
     ap.add_argument("--penalty-turnover", type=float, default=0.0)
     ap.add_argument("--disp-weight", type=float, default=0.0)
-    
+    ap.add_argument(
+        "--force-long-only",
+        action="store_true",
+        help="Drop all trials with long_only = False before ranking families."
+    )
+
     args = ap.parse_args()
 
     df_all = load_and_flatten(args.runs)
     print("Preflight:", preflight(df_all))
+
+    if args.force_long_only and "long_only" in df_all.columns:
+        df_all = df_all[df_all["long_only"].astype(bool)]
+        print(f"Filtered to long_only=True: {len(df_all)} rows remaining.")
 
     df = reasonable_filter(df_all, q_fee=args.q_fees, q_turnover=args.q_turnover)
     

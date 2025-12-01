@@ -333,8 +333,11 @@ def cmd_backtest(args):
         funding_series = f_df["rate"]
 
     cfg = load_json_config(args.config)
-    
-    risk_cfg = cfg.get("risk", {})
+    exec_cfg = cfg.get("execution", {})
+    interval_str = exec_cfg.get("interval", cfg.get("interval", "15m"))
+    bar_minutes = _interval_to_minutes(str(interval_str))
+
+    risk_cfg = cfg.get("risk") or cfg
     basis = float(risk_cfg.get("basis_btc", 1.0))
     max_daily_loss_btc = float(risk_cfg.get("max_daily_loss_btc", 0.0))
     max_dd_btc = float(risk_cfg.get("max_dd_btc", 0.0))
@@ -342,8 +345,19 @@ def cmd_backtest(args):
     max_dd_frac = float(risk_cfg.get("max_dd_frac", 0.0))
     risk_mode = risk_cfg.get("risk_mode", "fixed_basis")
 
+    # Fees: nested "fees" block if present, otherwise flat keys
+    fee_cfg = cfg.get("fees") or cfg
+    fee = FeeParams(
+        maker_fee=float(fee_cfg.get("maker_fee", 0.0002)),
+        taker_fee=float(fee_cfg.get("taker_fee", 0.0004)),
+        slippage_bps=float(fee_cfg.get("slippage_bps", 1.0)),
+        bnb_discount=float(fee_cfg.get("bnb_discount", 0.25)),
+        pay_fees_in_bnb=bool(fee_cfg.get("pay_fees_in_bnb", True)),
+    )
+
     strat_params = cfg.get("strategy", {})
     clean_params = {k: v for k, v in strat_params.items() if not k.startswith("_")}
+    clean_params.setdefault("bar_interval_minutes", bar_minutes)
     s_type = clean_params.get("strategy_type", "mean_reversion")
     
     if s_type == "meta":
@@ -414,6 +428,14 @@ def cmd_backtest(args):
             
         df_out.to_csv(args.out)
         print(f"Saved detailed diagnostics to {args.out}")
+
+def _interval_to_minutes(interval: str) -> int:
+    mapping = {
+        "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
+        "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
+        "12h": 720, "1d": 1440,
+    }
+    return mapping.get(interval, 15)
 
 def cmd_dummy(args):
     print("Optimize/Selftest moved to tools/")

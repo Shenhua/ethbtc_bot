@@ -82,7 +82,7 @@ def main():
         bt = Backtester(fee)
         
         # Run Simulation
-        res = bt.simulate(df["close"], strat, funding_series=funding_series, full_df=df)
+        res = bt.simulate(df["close"], strat, funding_series=funding_aligned, full_df=df)
         
         summ = res["summary"]
         res_row = {
