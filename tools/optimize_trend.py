@@ -92,11 +92,18 @@ class Objective:
                 funding_series=self.funding_test, bnb_price_series=self.bnb_test
             )
             
-            summ = res_te["summary"]
-            profit = float(summ["final_btc"])
-            turns = float(summ["n_trades"])
-            dd = float(summ["max_drawdown_pct"])
+            summ_te = res_te["summary"]
+            summ_tr = res_tr["summary"]  
+            # Test Metrics
+            profit = float(summ_te["final_btc"])
+            turns = float(summ_te["n_trades"])
+            dd = float(summ_te["max_drawdown_pct"])
+            fees = float(summ_te.get("fees_btc", 0.0))
+            turnover = float(summ_te.get("turnover_btc", 0.0))
             
+            # Train Metrics (The missing piece)
+            train_profit = float(summ_tr["final_btc"])
+
             # Score: Profit penalized by Drawdown and Excessive Trading
             # Goal: High Profit, Low DD, Low Turns
             
@@ -112,14 +119,18 @@ class Objective:
             if turns > 50:
                 score -= 0.2 * (turns - 50) / 50
 
-            # Export Stats
-            trial.set_user_attr("test_profit", profit)
+            # 5. Save Attributes for Analysis
+            trial.set_user_attr("test_final_btc", profit)   # Alias for consistency
+            trial.set_user_attr("train_final_btc", train_profit) # <--- SAVED NOW
             trial.set_user_attr("test_dd", dd)
             trial.set_user_attr("turns", turns)
+            trial.set_user_attr("fees_btc", fees)
+            trial.set_user_attr("turnover_btc", turnover)
+            
             for k, v in p.__dict__.items():
                 trial.set_user_attr(k, v)
 
-            log.info(f"Trial {tid}: Profit={profit:.4f} DD={dd:.2%} (Fast={p.fast_period} Slow={p.slow_period})")
+            log.info(f"Trial {tid}: Profit={profit:.4f} (Train={train_profit:.4f}) DD={dd:.2%} (Fast={p.fast_period} Slow={p.slow_period})")
             return score
 
         except optuna.TrialPruned:

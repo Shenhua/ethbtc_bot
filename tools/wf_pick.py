@@ -111,13 +111,13 @@ def make_family_key(row, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60)
     - If Trend Strategy (has fast/slow): Group by (Fast, Slow, MA, Cooldown, LongOnly)
     - If Mean Reversion: Group by (Entry, Exit, Lookback, Cooldown, LongOnly)
     """
+    long_only = bool(row.get("long_only", True))
+
     # 1. Check for Trend Strategy
     fast = row.get("fast_period", np.nan)
     slow = row.get("slow_period", np.nan)
-    long_only = bool(row.get("long_only", True))  # <--- NEW
 
     if pd.notna(fast) and pd.notna(slow) and float(slow) > 0:
-        # TREND FAMILY
         ma = row.get("ma_type", "ema")
         cd = row.get("cooldown_minutes", np.nan)
 
@@ -128,28 +128,25 @@ def make_family_key(row, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60)
 
         cd_key = _bucket(cd, cd_bucket) if not pd.isna(cd) else 0
 
-        # Tuple now includes long_only
         return ("Trend", int(fast), int(slow), ma, cd_key, long_only)
 
-    else:
-        # MEAN REVERSION FAMILY
-        e = row.get("flip_band_entry", np.nan)
-        x = row.get("flip_band_exit", np.nan)
-        tlb = row.get("trend_lookback", np.nan)
-        cd  = row.get("cooldown_minutes", np.nan)
+    # 2. Mean Reversion family
+    e = row.get("flip_band_entry", np.nan)
+    x = row.get("flip_band_exit", np.nan)
+    tlb = row.get("trend_lookback", np.nan)
+    cd  = row.get("cooldown_minutes", np.nan)
 
-        def _bucket(v, b):
-            if pd.isna(v) or b <= 1:
-                return v
-            return int(round(float(v) / b) * b)
+    def _bucket(v, b):
+        if pd.isna(v) or b <= 1:
+            return v
+        return int(round(float(v) / b) * b)
 
-        e_key = round(float(e), band_round) if not pd.isna(e) else None
-        x_key = round(float(x), band_round) if not pd.isna(x) else None
-        tlb_key = _bucket(tlb, lb_bucket) if not pd.isna(tlb) else None
-        cd_key  = _bucket(cd,  cd_bucket) if not pd.isna(cd)  else None
+    e_key = round(float(e), band_round) if not pd.isna(e) else None
+    x_key = round(float(x), band_round) if not pd.isna(x) else None
+    tlb_key = _bucket(tlb, lb_bucket) if not pd.isna(tlb) else None
+    cd_key  = _bucket(cd,  cd_bucket) if not pd.isna(cd)  else None
 
-        # Tuple now includes long_only
-        return ("MR", e_key, x_key, tlb_key, cd_key, long_only)
+    return ("MR", e_key, x_key, tlb_key, cd_key, long_only)
 
 def rank_families(df, penalty_turns=0.0, penalty_fees=1.0, penalty_turnover=0.5, disp_weight=0.25,
                   band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
@@ -263,7 +260,14 @@ def main():
         action="store_true",
         help="Drop all trials with long_only = False before ranking families."
     )
-
+    ap.add_argument(
+        "--sanity-data",
+        help="If provided, run a full backtest on this OHLC CSV using the emitted config.",
+    )
+    ap.add_argument(
+        "--sanity-funding",
+        help="Optional funding CSV with 'time' and 'rate' for sanity backtest.",
+    )
     args = ap.parse_args()
 
     df_all = load_and_flatten(args.runs)
@@ -280,6 +284,11 @@ def main():
         args.penalty_turns, args.penalty_fees, args.penalty_turnover, args.disp_weight,
         args.band_round, args.step_round, args.lb_bucket, args.cd_bucket
     )
+    
+    # --- NEW: Kill Zombie Strategies ---
+    # A strategy with 0 trades is mathematically "safe" (score 1.0) but useless.
+    # We insist on at least 1 trade on average.
+    fam = fam[fam["turns"] >= 1.0]
     
     fam = fam[fam["n"] >= args.min_occurs]
     
@@ -302,16 +311,27 @@ def main():
     )
     
     cfg = build_config_from_row(best_row)
-    cfg.update({
-        "_generated_by": "wf_pick.py",
-        "_generated_at": datetime.now(timezone.utc).isoformat(),
-        "_family": str(fam_tuple),
-    })
-    
+
     with open(args.emit_config, "w") as f:
         json.dump(cfg, f, indent=2)
-    
+
     print(f"Wrote config → {args.emit_config}")
+
+    # Optional: run full sanity backtest
+    if args.sanity_data:
+        try:
+            from sanity_check_config import run_sanity_check
+        except ImportError:
+            print("Warning: sanity_check_config not importable; skipping sanity backtest.")
+        else:
+            print("Running sanity backtest on full data...")
+            summary = run_sanity_check(
+                data_path=args.sanity_data,
+                config_path=args.emit_config,
+                funding_path=args.sanity_funding,
+            )
+            print("Sanity backtest summary:")
+            print(json.dumps(summary, indent=2))
 
 if __name__ == "__main__":
     main()

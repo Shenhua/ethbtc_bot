@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 import sys
 import os
+import argparse
+import json
+import logging
+import pandas as pd
+
 
 # --- MAGIC PATH FIX ---
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Calculate the root directory (one level up from 'tools')
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(ROOT_DIR)
 # ----------------------
 
-import argparse, json, logging
-import pandas as pd
-import numpy as np
-from core.ethbtc_accum_bot import (
-    load_vision_csv, FeeParams, StratParams, Backtester
-)
+from core.ethbtc_accum_bot import load_vision_csv, FeeParams, StratParams, Backtester
 from core.trend_strategy import TrendParams
 from core.meta_strategy import MetaStrategy
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [META-OPT] %(message)s', datefmt='%H:%M:%S')
 log = logging.getLogger("meta_opt")
+
+def clean_params(params_dict, cls):
+    """Filters dict keys to only those accepted by the dataclass"""
+    valid_keys = cls.__annotations__.keys()
+    return {k: v for k, v in params_dict.items() if k in valid_keys}
 
 def main():
     ap = argparse.ArgumentParser()
@@ -31,49 +38,38 @@ def main():
     log.info("Loading data...")
     df = load_vision_csv(args.data)
     
-    funding_series = None
+    funding_aligned = None
     if args.funding_data:
         f_df = pd.read_csv(args.funding_data)
         f_df["time"] = pd.to_datetime(f_df["time"], format="mixed", utc=True)
         f_df = f_df.set_index("time").sort_index()
-        funding_series = f_df["rate"]
-        # Align
-        funding_aligned = funding_series.reindex(df.index).ffill().fillna(0.0)
-    else:
-        funding_aligned = None
+        funding_aligned = f_df["rate"].reindex(df.index).ffill().fillna(0.0)
 
-    # 2. Load Base Configs
-    with open(args.mr_config) as f: mr_json = json.load(f)
-    with open(args.trend_config) as f: tr_json = json.load(f)
+    # 2. Load and Sanitize Configs
+    with open(args.mr_config) as f: mr_raw = json.load(f)
+    with open(args.trend_config) as f: tr_raw = json.load(f)
     
-    # Flatten if needed (handle 'strategy' key)
-    mr_dict = mr_json.get("strategy", mr_json)
-    tr_dict = tr_json.get("strategy", tr_json)
+    # Handle nested "strategy" keys if present
+    mr_dict = mr_raw.get("strategy", mr_raw)
+    tr_dict = tr_raw.get("strategy", tr_raw)
 
-    mr_p = StratParams(
-        trend_kind=mr_dict.get("trend_kind", "sma"),
-        trend_lookback=int(mr_dict.get("trend_lookback", 200)),
-        flip_band_entry=float(mr_dict.get("flip_band_entry", 0.025)),
-        flip_band_exit=float(mr_dict.get("flip_band_exit", 0.015)),
-        vol_window=int(mr_dict.get("vol_window", 60)),
-        vol_adapt_k=float(mr_dict.get("vol_adapt_k", 0.0)),
-        funding_limit_long=float(mr_dict.get("funding_limit_long", 0.05)),
-        funding_limit_short=float(mr_dict.get("funding_limit_short", -0.05))
-    )
+    # Clean params to prevent "unexpected keyword" errors
+    mr_clean = clean_params(mr_dict, StratParams)
+    tr_clean = clean_params(tr_dict, TrendParams)
+
+    # Ensure required defaults if missing
+    mr_clean.setdefault("trend_kind", "sma")
+    tr_clean.setdefault("ma_type", "ema")
+
+    mr_p = StratParams(**mr_clean)
+    tr_p = TrendParams(**tr_clean)
     
-    tr_p = TrendParams(
-        fast_period=int(tr_dict.get("fast_period", 50)),
-        slow_period=int(tr_dict.get("slow_period", 200)),
-        ma_type=tr_dict.get("ma_type", "ema"),
-        funding_limit_long=float(tr_dict.get("funding_limit_long", 0.05)),
-        funding_limit_short=float(tr_dict.get("funding_limit_short", -0.05))
-    )
-    
-    fee = FeeParams() # Default fees
+    fee = FeeParams() 
 
     # 3. Grid Search ADX Thresholds
     results = []
-    thresholds = [15, 20, 25, 30, 35, 40, 45, 50]
+    # Test a realistic range for ADX (usually 15-30)
+    thresholds = [10, 15, 20, 25, 30, 35, 40]
     
     log.info("Testing Meta-Strategy across ADX thresholds...")
     

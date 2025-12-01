@@ -19,6 +19,8 @@ from core.ethbtc_accum_bot import (
     FeeParams, StratParams, EthBtcStrategy, Backtester
 )
 
+LONG_ONLY_MODE = "both"  # "true", "false", or "both"
+
 # 1. Setup Logging
 logging.basicConfig(
     level=logging.INFO, 
@@ -34,6 +36,15 @@ def suggest_params(trial):
     """
     Define the search space for Optuna.
     """
+        # --- THE SHORTING SWITCH ---
+    # Choices depend on global LONG_ONLY_MODE
+    if LONG_ONLY_MODE == "true":
+        long_only_choices = [True]
+    elif LONG_ONLY_MODE == "false":
+        long_only_choices = [False]
+    else:  # "both"
+        long_only_choices = [True, False]
+    
     return StratParams(
         trend_kind=trial.suggest_categorical("trend_kind", ["sma", "roc"]),
         trend_lookback=trial.suggest_categorical("trend_lookback", [120, 160, 200, 240, 300]),
@@ -66,7 +77,7 @@ def suggest_params(trial):
         
         # --- THE SHORTING SWITCH ---
         # True = Only Buy ETH. False = Buy & Sell Short.
-        long_only=trial.suggest_categorical("long_only", [True, False])
+        long_only=trial.suggest_categorical("long_only", long_only_choices),
     )
 
 class Objective:
@@ -179,7 +190,15 @@ def main():
     ap.add_argument("--turns-scale", type=float, default=800.0)
     ap.add_argument("--lambda-fees", type=float, default=2.0)
     ap.add_argument("--lambda-turnover", type=float, default=1.0)
-    
+
+    # Long-only search mode
+    ap.add_argument(
+        "--long-only-mode",
+        choices=["true", "false", "both"],
+        default="both",
+        help="Control search over long_only: 'true' (only long), 'false' (only short+long), 'both'.",
+    )
+
     # Output
     ap.add_argument("--out", default="results/opt_results_smart.csv")
     ap.add_argument("--jobs", type=int, default=1, help="Parallel jobs")
@@ -197,6 +216,10 @@ def main():
     ap.add_argument("--min-improve", type=float, default=0.005)
     
     args = ap.parse_args()
+
+    # Wire CLI flag into global used by suggest_params
+    global LONG_ONLY_MODE
+    LONG_ONLY_MODE = args.long_only_mode
 
     cfg = load_json_config(args.config)
     fee = FeeParams(
