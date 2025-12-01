@@ -46,7 +46,7 @@ def main():
     ap.add_argument("--symbol", required=True, help="Futures Symbol (e.g. ETHUSDT, BNBUSDT)")
     ap.add_argument("--start", required=True, help="Start Date (YYYY-MM-DD)")
     ap.add_argument("--end", required=True, help="End Date (YYYY-MM-DD)")
-    ap.add_argument("--out", default=None, help="Output CSV file")
+    ap.add_argument("--out", default="data/raw/", help="Output CSV file")
     args = ap.parse_args()
 
     if not args.out:

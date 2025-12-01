@@ -156,13 +156,21 @@ def main():
     # Fees defaults
     ap.add_argument("--maker-fee", type=float, default=0.0002)
     ap.add_argument("--taker-fee", type=float, default=0.0004)
+
+    # --- NEW: Persistence Arguments ---
+    ap.add_argument("--storage", default="sqlite:///data/db/optuna.db", help="Database URL")
+    ap.add_argument("--study-name", default="trend_study", help="Unique name for this optimization")
     
     args = ap.parse_args()
+
+    # Ensure DB directory exists
+    if args.storage.startswith("sqlite:///"):
+        path = args.storage.replace("sqlite:///", "")
+        os.makedirs(os.path.dirname(path), exist_ok=True)
 
     # Load Data
     print(f"Loading Data: {args.data}")
     df = load_vision_csv(args.data)
-    # Fix index issues
     df = df[df.index.notna()]
     df = df.sort_index()
     df = df[~df.index.duplicated(keep='first')]
@@ -189,14 +197,23 @@ def main():
     # Fee Params
     fee = FeeParams(maker_fee=args.maker_fee, taker_fee=args.taker_fee)
 
-    # Optuna
-    study = optuna.create_study(direction="maximize")
+    # --- UPDATED: Create Persistent Study ---
+    print(f"Connecting to storage: {args.storage}")
+    print(f"Resuming study: {args.study_name}")
+    
+    study = optuna.create_study(
+        study_name=args.study_name,
+        direction="maximize",
+        storage=args.storage,
+        load_if_exists=True  # <--- This tells it to RESUME instead of overwrite
+    )
+    
     obj = Objective(args, fee, train_close, test_close, None, None, f_tr, f_te)
     
     print("Starting Optimization...")
     study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
     
-    # Save
+    # Save Results to CSV
     print(f"Saving results to {args.out}")
     rows = []
     for t in study.trials:
@@ -208,6 +225,11 @@ def main():
     
     if rows:
         df_out = pd.DataFrame(rows)
+        # Ensure fees/turnover columns exist even if not present in all trials
+        for col in ["fees_btc", "turnover_btc"]:
+            if col not in df_out.columns:
+                df_out[col] = 0.0
+                
         sort_col = "test_profit" if "test_profit" in df_out.columns else "score"
         df_out.sort_values(sort_col, ascending=False).to_csv(args.out, index=False)
     else:
