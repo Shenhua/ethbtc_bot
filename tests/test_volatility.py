@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from ethbtc_accum_bot import StratParams, EthBtcStrategy
+from core.ethbtc_accum_bot import StratParams, EthBtcStrategy
 
 
 def test_realized_vol_scales_with_interval():
@@ -132,7 +132,7 @@ def test_backtester_summary_metrics_present_and_finite():
     with the extended metrics, and those values should be finite numbers for
     a simple, well-behaved price series.
     """
-    from ethbtc_accum_bot import Backtester, FeeParams
+    from core.ethbtc_accum_bot import Backtester, FeeParams
 
     idx = pd.date_range("2024-01-01", periods=100, freq="15min")
     # Mild upward drift with tiny noise

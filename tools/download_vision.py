@@ -98,7 +98,7 @@ def main():
     ap.add_argument("--intervals", default="1m,15m,30m", help="Comma-separated intervals")
     ap.add_argument("--start", required=True, help="YYYY-MM or YYYY-MM-DD")
     ap.add_argument("--end", required=True, help="YYYY-MM or YYYY-MM-DD")
-    ap.add_argument("--out-dir", default="vision_data")
+    ap.add_argument("--out-dir", default="data/raw/")
     ap.add_argument("--prefer-daily", action="store_true", help="Use daily files first (default monthly first)")
     args = ap.parse_args()
 

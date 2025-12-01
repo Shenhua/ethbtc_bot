@@ -24,7 +24,17 @@ from core.metrics import (
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 
-from core.twap_maker import maker_chase
+# --- STRATEGIES (Safe Import) ---
+from core.ethbtc_accum_bot import EthBtcStrategy, StratParams
+from core.trend_strategy import TrendStrategy, TrendParams
+from core.meta_strategy import MetaStrategy
+
+# --- MAKER LOGIC ---
+try:
+    from core.twap_maker import maker_chase
+except ImportError:
+    maker_chase = None
+    print("WARNING: core.twap_maker not found. Maker/Post-Only logic disabled.")
 
 # --- Simple JSON /status on :9110 ------------------------------------------------
 
@@ -75,13 +85,6 @@ def start_status_server(port: int = 9110):
     log.info("Human status on :%d/status", port)
 
     return update_status
-
-# --- Strategy parity import ---------------------------------------------------
-try:
-    from core.ethbtc_accum_bot import EthBtcStrategy, StratParams  # source of truth
-except Exception:
-    EthBtcStrategy = None
-    StratParams = None
 
 def inc_rejection(reason: str = "error") -> None:
     try:
@@ -346,7 +349,6 @@ def main():
             BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
             BAL_FREE.labels(base_asset.lower()).set(float(base_bal))
 
-            # Generic USD Prices
             q_usd, b_usd = 0.0, 0.0
             try:
                 if quote_asset == "USDT":
@@ -364,6 +366,7 @@ def main():
             log.debug("Wallet: %s=%.8f, %s=%.8f, W=%.8f, cur_w=%.4f", 
                       quote_asset, quote_bal, base_asset, base_bal, W, cur_w)
 
+            # --- INDICATORS (Common) ---
             L = int(cfg.strategy.trend_lookback)
             ser_close = df["close"].astype(float)
             if cfg.strategy.trend_kind == "sma":
@@ -376,10 +379,12 @@ def main():
             entry = cfg.strategy.flip_band_entry + cfg.strategy.vol_adapt_k * (rv if rv == rv else 0.0)
             exitb = cfg.strategy.flip_band_exit + cfg.strategy.vol_adapt_k * (rv if rv == rv else 0.0)
 
+            # --- GATE & FUNDING CHECKS ---
             gate_ok = True
             gate_reason = "open"
             funding_rate = 0.0
             
+            # 1. Trend Gate (Legacy)
             if cfg.strategy.gate_window_days and cfg.strategy.gate_roc_threshold:
                 day_close = ser_close.resample("1D").last()
                 if len(day_close) > cfg.strategy.gate_window_days:
@@ -388,28 +393,102 @@ def main():
                         gate_ok = False
                         gate_reason = "trend_weak"
 
+            # 2. Funding Gate
             funding_ticker = f"{base_asset}USDT"
             try:
                 funding_rate = adapter.get_funding_rate(funding_ticker)  
                 mark_funding_rate(funding_rate)
                 
                 if funding_rate > cfg.strategy.funding_limit_long:
-                    if cur_ratio <= -entry:
+                    # Don't block here, just mark the reason. Strategy logic will handle direction.
+                    # But for safety, we flag it.
+                    if cur_ratio <= -entry: # Only care if we might buy
                         gate_ok = False
                         gate_reason = f"funding_high ({funding_rate:.4f}%)"
                         log.warning("Gate CLOSE: Market Euphoria! Funding=%.4f%%", funding_rate)
 
                 if funding_rate < cfg.strategy.funding_limit_short:
-                    if cur_ratio >= entry:
+                    if cur_ratio >= entry: # Only care if we might sell
                         gate_ok = False
                         gate_reason = f"funding_low ({funding_rate:.4f}%)"
                         log.warning("Gate CLOSE: Market Panic! Funding=%.4f%%", funding_rate)
             except Exception as e:
                 log.warning("Funding check warning: %s", e)
 
+
+            # --- STRATEGY EXECUTION ---
             target_w = None
-            if EthBtcStrategy and StratParams:
-                try:
+            strat_type = getattr(cfg.strategy, "strategy_type", "mean_reversion")
+
+            try:
+                if strat_type == "trend":
+                    # TREND Strategy
+                    tp = TrendParams(
+                        fast_period=cfg.strategy.fast_period,
+                        slow_period=cfg.strategy.slow_period,
+                        ma_type=cfg.strategy.ma_type,
+                        cooldown_minutes=cfg.strategy.cooldown_minutes,
+                        step_allocation=cfg.strategy.step_allocation,
+                        max_position=cfg.strategy.max_position,
+                        long_only=cfg.strategy.long_only,
+                        funding_limit_long=cfg.strategy.funding_limit_long,
+                        funding_limit_short=cfg.strategy.funding_limit_short
+                    )
+                    strat = TrendStrategy(tp)
+                    plan = strat.generate_positions(df) # Requires OHLC
+                    target_w = float(plan["target_w"].iloc[-1])
+                    if "regime_score" in plan.columns:
+                        # We get the last value. The 'metrics' module needs this Gauge defined.
+                        current_score = float(plan["regime_score"].iloc[-1])
+                        # You need to define REGIME_SCORE in core/metrics.py first!
+                        metrics.REGIME_SCORE.set(current_score)
+                elif strat_type == "meta":
+                    # META Strategy with Overrides
+                    # 1. Base Global Params
+                    base_params = cfg.strategy.dict()
+                    
+                    # 2. Extract Overrides
+                    mr_opts = base_params.get("mean_reversion_overrides", {})
+                    tr_opts = base_params.get("trend_overrides", {})
+
+                    # 3. Construct Mean Reversion Params (Merge Base + Overrides)
+                    mr_merged = {**base_params, **mr_opts}
+                    mr_p = StratParams(
+                        trend_kind=mr_merged.get("trend_kind", "roc"),
+                        trend_lookback=int(mr_merged.get("trend_lookback", 200)),
+                        flip_band_entry=float(mr_merged.get("flip_band_entry", 0.025)),
+                        flip_band_exit=float(mr_merged.get("flip_band_exit", 0.015)),
+                        vol_window=int(mr_merged.get("vol_window", 60)),
+                        vol_adapt_k=float(mr_merged.get("vol_adapt_k", 0.0)),
+                        cooldown_minutes=int(mr_merged.get("cooldown_minutes", 60)), # Individual Cooldown
+                        step_allocation=float(mr_merged.get("step_allocation", 0.5)),
+                        max_position=float(mr_merged.get("max_position", 1.0)),
+                        long_only=bool(mr_merged.get("long_only", True)),
+                        funding_limit_long=float(mr_merged.get("funding_limit_long", 0.05)),
+                        funding_limit_short=float(mr_merged.get("funding_limit_short", -0.05))
+                    )
+
+                    # 4. Construct Trend Params (Merge Base + Overrides)
+                    tr_merged = {**base_params, **tr_opts}
+                    tr_p = TrendParams(
+                        fast_period=int(tr_merged.get("fast_period", 50)),
+                        slow_period=int(tr_merged.get("slow_period", 200)),
+                        ma_type=tr_merged.get("ma_type", "ema"),
+                        cooldown_minutes=int(tr_merged.get("cooldown_minutes", 180)), # Trend usually needs longer cooldown
+                        step_allocation=float(tr_merged.get("step_allocation", 1.0)),
+                        max_position=float(tr_merged.get("max_position", 1.0)),
+                        long_only=bool(tr_merged.get("long_only", True)),
+                        funding_limit_long=float(tr_merged.get("funding_limit_long", 0.05)),
+                        funding_limit_short=float(tr_merged.get("funding_limit_short", -0.05))
+                    )
+                    
+                    strat = MetaStrategy(mr_p, tr_p, adx_threshold=cfg.strategy.adx_threshold)
+                    # Pass the dataframe (requires OHLC) logic handled by generate_positions
+                    plan = strat.generate_positions(df) 
+                    target_w = float(plan["target_w"].iloc[-1])
+
+                else:
+                    # DEFAULT: Mean Reversion
                     sp = StratParams(
                         trend_kind=cfg.strategy.trend_kind,
                         trend_lookback=cfg.strategy.trend_lookback,
@@ -426,24 +505,32 @@ def main():
                         gate_window_days=cfg.strategy.gate_window_days,
                         gate_roc_threshold=cfg.strategy.gate_roc_threshold,
                         long_only=getattr(cfg.strategy, "long_only", True),
+                        funding_limit_long=cfg.strategy.funding_limit_long,
+                        funding_limit_short=cfg.strategy.funding_limit_short
                     )
                     strat = EthBtcStrategy(sp)
-                    plan = strat.generate_positions(ser_close)
+                    # Note: EthBtcStrategy usually takes 'close' series. 
+                    # The new one we updated takes (close, funding).
+                    # Live execution logic for funding is handled via gate_ok mostly, 
+                    # but let's pass None to generate_positions and rely on safety override below.
+                    plan = strat.generate_positions(ser_close) 
                     target_w = float(plan["target_w"].iloc[-1])
-                    target_w = max(0.0, min(1.0, target_w))
-                except Exception as e:
-                    log.warning("Parity strategy import failed (%s); using inline logic.", e)
-                    target_w = cur_w
 
-            if target_w is None:
-                target_w = 0.0
-                if gate_ok:
-                    if cur_ratio > entry:
-                        target_w = min(cfg.strategy.max_position, 1.0)
-                    elif cur_ratio < -exitb:
-                        target_w = 0.0
-                    else:
-                        target_w = float(state.get("last_target_w", 0.0))
+            except Exception as e:
+                log.error("Strategy calculation failed (%s): %s", strat_type, e)
+                target_w = cur_w # Hold position on error
+
+            # --- SAFETY OVERRIDE ---
+            # If the "Global Gate" is closed (due to funding or trend check in main loop),
+            # we must prevent BUYING.
+            if not gate_ok:
+                # If strategy wants to increase exposure, block it.
+                if target_w > cur_w:
+                    log.warning("Safety Override: Strategy wants %.2f, but Gate is CLOSED. Holding %.2f.", target_w, cur_w)
+                    target_w = cur_w
+            # -----------------------
+
+            target_w = max(0.0, min(1.0, target_w))
 
             reset_trade_decision()
 
@@ -474,6 +561,7 @@ def main():
             action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
             step = cfg.strategy.step_allocation
 
+            # --- SNAP-TO-ZERO (Generic) ---
             if target_w == 0.0 and base_bal > 0:
                 total_val_quote = base_bal * price
                 min_trade_quote = max(cfg.execution.min_trade_floor_btc,
@@ -487,7 +575,7 @@ def main():
                 z = cur_ratio / max(rv, 1e-6)
                 step = min(1.0, max(0.1, step * min(2.0, abs(z))))
 
-            target_w = max(0.0, min(1.0, target_w))
+            # Final target calculation with smoothing
             new_w_ideal = cur_w + step * (target_w - cur_w)
             new_w = max(0.0, min(1.0, new_w_ideal))
 
@@ -536,7 +624,6 @@ def main():
                     "pos_exit":   exitb,
                     "pos_entry":  entry,
                 },
-                # CORRECTED GENERIC VALUES
                 "quote_usd": q_usd,
                 "base_usd": b_usd,
                 "funding_rate": funding_rate,

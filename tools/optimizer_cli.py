@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import os
+import math
 
 # --- MAGIC PATH FIX ---
 # Allows running this script from the root or tools/ folder without PYTHONPATH errors
@@ -17,6 +18,8 @@ from core.ethbtc_accum_bot import (
     load_vision_csv, load_json_config, _write_excel,
     FeeParams, StratParams, EthBtcStrategy, Backtester
 )
+
+LONG_ONLY_MODE = "both"  # "true", "false", or "both"
 
 # 1. Setup Logging
 logging.basicConfig(
@@ -33,6 +36,15 @@ def suggest_params(trial):
     """
     Define the search space for Optuna.
     """
+        # --- THE SHORTING SWITCH ---
+    # Choices depend on global LONG_ONLY_MODE
+    if LONG_ONLY_MODE == "true":
+        long_only_choices = [True]
+    elif LONG_ONLY_MODE == "false":
+        long_only_choices = [False]
+    else:  # "both"
+        long_only_choices = [True, False]
+    
     return StratParams(
         trend_kind=trial.suggest_categorical("trend_kind", ["sma", "roc"]),
         trend_lookback=trial.suggest_categorical("trend_lookback", [120, 160, 200, 240, 300]),
@@ -65,7 +77,7 @@ def suggest_params(trial):
         
         # --- THE SHORTING SWITCH ---
         # True = Only Buy ETH. False = Buy & Sell Short.
-        long_only=trial.suggest_categorical("long_only", [True, False])
+        long_only=trial.suggest_categorical("long_only", long_only_choices),
     )
 
 class Objective:
@@ -105,19 +117,35 @@ class Objective:
             
             test_final = float(summ_te["final_btc"])
             train_final = float(summ_tr["final_btc"])
-            turns = float(summ_te["turns"])
+            turns = float(summ_te["n_trades"])
             fees = float(summ_te["fees_btc"])
             turnover = float(summ_te["turnover_btc"])
             
             gen_gap = max(0.0, train_final - test_final)
+            if turns < 0: turns = 0
+            if fees < 0: fees = 0
             
-            robust_score = (
-                test_final
-                - self.args.lambda_turns * (turns / self.args.turns_scale)
-                - self.args.gap_penalty * gen_gap
-                - self.args.lambda_fees * fees
-                - self.args.lambda_turnover * turnover
-            )
+            # Prevent division by zero if turns_scale is 0 (unlikely but safe)
+            t_scale = self.args.turns_scale if self.args.turns_scale > 0 else 1.0
+            
+            # CRITICAL FIX: Penalize strategies that don't trade at all
+            # If the strategy doesn't trade (turns=0), it gets a terrible score
+            if turns == 0:
+                robust_score = -1000.0  # Massive penalty for not trading
+            else:
+                robust_score = (
+                    test_final
+                    - self.args.lambda_turns * (turns / t_scale)
+                    - self.args.gap_penalty * gen_gap
+                    - self.args.lambda_fees * fees
+                    - self.args.lambda_turnover * turnover
+                )
+            
+            # Check for valid float
+            if not math.isfinite(robust_score):
+                log.warning(f"Trial {tid}: Non-finite score {robust_score}. Profit={test_final}")
+                return -1e9 # Return a bad finite number instead of -inf
+            
             
             # 5. Store Attributes for CSV export
             trial.set_user_attr("train_final_btc", train_final)
@@ -162,7 +190,15 @@ def main():
     ap.add_argument("--turns-scale", type=float, default=800.0)
     ap.add_argument("--lambda-fees", type=float, default=2.0)
     ap.add_argument("--lambda-turnover", type=float, default=1.0)
-    
+
+    # Long-only search mode
+    ap.add_argument(
+        "--long-only-mode",
+        choices=["true", "false", "both"],
+        default="both",
+        help="Control search over long_only: 'true' (only long), 'false' (only short+long), 'both'.",
+    )
+
     # Output
     ap.add_argument("--out", default="results/opt_results_smart.csv")
     ap.add_argument("--jobs", type=int, default=1, help="Parallel jobs")
@@ -181,6 +217,10 @@ def main():
     
     args = ap.parse_args()
 
+    # Wire CLI flag into global used by suggest_params
+    global LONG_ONLY_MODE
+    LONG_ONLY_MODE = args.long_only_mode
+
     cfg = load_json_config(args.config)
     fee = FeeParams(
         maker_fee=float(cfg.get("maker_fee", args.maker_fee)),
@@ -191,7 +231,14 @@ def main():
     )
 
     log.info(f"Loading price data from {args.data}...")
-    df = load_vision_csv(args.data); close = df["close"]
+    df = load_vision_csv(args.data)
+    # Drop NaT index if any
+    df = df[df.index.notna()]
+    df = df.sort_index()
+    df = df[~df.index.duplicated(keep='first')]
+    close = df["close"]
+    
+    print(f"Index Monotonic: {close.index.is_monotonic_increasing}")
     train_close = close.loc[args.train_start:args.train_end].dropna()
     test_close  = close.loc[args.test_start:args.test_end].dropna()
 

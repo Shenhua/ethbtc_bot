@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Optional, Literal, Any, Dict
 from pydantic import BaseModel, Field
+import json
 
 Interval = Literal["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d"]
 
@@ -12,31 +13,46 @@ class Fees(BaseModel):
     pay_fees_in_bnb: bool = True
 
 class Strategy(BaseModel):
+    # --- Strategy Selector ---
+    # "mean_reversion" (default), "trend", or "meta"
+    strategy_type: Literal["mean_reversion", "trend", "meta"] = "mean_reversion"
+
+    # --- Mean Reversion Params ---
     trend_kind: Literal["sma","roc"] = "roc"
-    trend_lookback: int = Field(..., ge=1, le=10000)
-    flip_band_entry: float = Field(..., ge=0.0, le=1.0)
-    flip_band_exit: float = Field(..., ge=0.0, le=1.0)
+    trend_lookback: int = Field(200, ge=1, le=10000)
+    flip_band_entry: float = Field(0.025, ge=0.0, le=1.0)
+    flip_band_exit: float = Field(0.015, ge=0.0, le=1.0)
     vol_window: int = Field(45, ge=1, le=10000)
     vol_adapt_k: float = Field(0.0, ge=0.0, le=1.0)
     target_vol: float = Field(0.0, ge=0.0, le=10.0)
     min_mult: float = Field(0.5, ge=0.0, le=10.0)
     max_mult: float = Field(1.5, ge=0.0, le=10.0)
+    gate_window_days: int = Field(0, ge=0, le=3660)
+    gate_roc_threshold: float = Field(0.0, ge=0.0, le=1.0)
+    
+    # --- Trend Strategy Params ---
+    fast_period: int = Field(50, ge=1)
+    slow_period: int = Field(200, ge=1)
+    ma_type: Literal["sma", "ema"] = "ema"
+    
+    # --- Meta Strategy Params ---
+    adx_threshold: float = Field(25.0, ge=0.0, le=100.0)
+
+    # --- Shared / Global ---
     cooldown_minutes: int = Field(0, ge=0, le=100000)
     step_allocation: float = Field(0.33, ge=0.0, le=1.0)
     max_position: float = Field(1.0, ge=0.0, le=1.0)
-    gate_window_days: int = Field(0, ge=0, le=3660)
-    gate_roc_threshold: float = Field(0.0, ge=0.0, le=1.0)
-    rebalance_threshold_w: float = Field(0.0, ge=0.0, le=1.0)
-    vol_scaled_step: bool = False
-    profit_lock_dd: float = Field(0.0, ge=0.0, le=1.0)
     long_only: bool = True
-    # 0.05 means 0.05% funding rate (very bullish sentiment)
-    # If funding > 0.05, we forbid BUYING (too expensive/risky)
-    funding_limit_long: float = Field(0.05, ge=0.0, le=1.0)
+    rebalance_threshold_w: float = Field(0.0, ge=0.0, le=1.0)
+    profit_lock_dd: float = Field(0.0, ge=0.0, le=1.0)
+    vol_scaled_step: bool = False
     
-    # -0.05 means -0.05% funding rate (very bearish sentiment)
-    # If funding < -0.05, we forbid SELLING (expecting a short squeeze bounce)
+    funding_limit_long: float = Field(0.05, ge=0.0, le=1.0)
     funding_limit_short: float = Field(-0.05, ge=-1.0, le=0.0)
+    
+    # --- Overrides for Meta Strategy ---
+    mean_reversion_overrides: Dict[str, Any] = {}
+    trend_overrides: Dict[str, Any] = {}
 
 class Execution(BaseModel):
     interval: Interval = "15m"
@@ -51,19 +67,11 @@ class Execution(BaseModel):
     min_trade_btc: Optional[float] = None
 
 class Risk(BaseModel):
-    basis_btc: float = Field(0.0, ge=0.0, le=1000.0)
-
-    # Absolute caps in BTC (0.0 = disabled)
+    basis_btc: float = Field(0.0, ge=0.0, le=100000.0)
     max_daily_loss_btc: float = Field(0.0, ge=0.0, le=100.0)
     max_dd_btc: float = Field(0.0, ge=0.0, le=100.0)
-
-    # Fractional caps (0.02 = 2%; 0.0 = disabled)
     max_daily_loss_frac: float = Field(0.0, ge=0.0, le=1.0)
     max_dd_frac: float = Field(0.0, ge=0.0, le=1.0)
-
-    # How to interpret the caps:
-    # - "fixed_basis": BTC caps anchored to basis_btc
-    # - "dynamic": fractions of current / peak equity
     risk_mode: Literal["fixed_basis", "dynamic"] = "fixed_basis"
 
 class AppConfig(BaseModel):
@@ -71,129 +79,40 @@ class AppConfig(BaseModel):
     strategy: Strategy
     execution: Execution
     risk: Risk
-
+    
+    # Legacy Coercion Logic
     @staticmethod
     def coerce_legacy(d: Dict[str, Any]) -> Dict[str, Any]:
         out: Dict[str, Any] = {}
+        # Full legacy logic preserved for compatibility with old configs
         fees_keys = {"maker_fee","taker_fee","slippage_bps","bnb_discount","pay_fees_in_bnb"}
         strat_keys = {"trend_kind","trend_lookback","flip_band_entry","flip_band_exit","vol_window","vol_adapt_k",
                       "target_vol","min_mult","max_mult","cooldown_minutes","step_allocation","max_position",
-                      "gate_window_days","gate_roc_threshold","rebalance_threshold_w","vol_scaled_step","profit_lock_dd","long_only"}
+                      "gate_window_days","gate_roc_threshold","rebalance_threshold_w","vol_scaled_step","profit_lock_dd","long_only",
+                      "fast_period","slow_period","ma_type","adx_threshold","strategy_type","funding_limit_long","funding_limit_short"}
         exec_keys = {"interval","poll_sec","ttl_sec","taker_fallback","max_taker_btc","max_spread_bps_for_taker",
                      "min_trade_frac","min_trade_floor_btc","min_trade_cap_btc","min_trade_btc"}
-        risk_keys = {
-            "basis_btc",
-            "max_daily_loss_btc",
-            "max_dd_btc",
-            "max_daily_loss_frac",
-            "max_dd_frac",
-            "risk_mode",
-        }
+        risk_keys = {"basis_btc","max_daily_loss_btc","max_dd_btc","max_daily_loss_frac","max_dd_frac","risk_mode"}
+        
         out["fees"] = {k: d[k] for k in fees_keys if k in d}
         out["strategy"] = {k: d[k] for k in strat_keys if k in d}
         out["execution"] = {k: d[k] for k in exec_keys if k in d}
         out["risk"] = {k: d[k] for k in risk_keys if k in d}
-        if "maker_fee" not in out["fees"]:
-            out["fees"]["maker_fee"] = d.get("maker_fee", 0.0002)
-        if "taker_fee" not in out["fees"]:
-            out["fees"]["taker_fee"] = d.get("taker_fee", 0.0004)
-
-        if "basis_btc" not in out["risk"]:
-            out["risk"]["basis_btc"] = d.get("basis_btc", 0.1)
-        if "max_daily_loss_frac" not in out["risk"]:
-            out["risk"]["max_daily_loss_frac"] = d.get("max_daily_loss_frac", 0.0)
-        if "max_dd_frac" not in out["risk"]:
-            out["risk"]["max_dd_frac"] = d.get("max_dd_frac", 0.0)
-        if "risk_mode" not in out["risk"]:
-            out["risk"]["risk_mode"] = d.get("risk_mode", "fixed_basis")
-
-        if "interval" not in out["execution"]:
-            out["execution"]["interval"] = d.get("interval","15m")
+        
+        # Defaults
+        if "maker_fee" not in out["fees"]: out["fees"]["maker_fee"] = d.get("maker_fee", 0.0002)
+        if "taker_fee" not in out["fees"]: out["fees"]["taker_fee"] = d.get("taker_fee", 0.0004)
+        if "basis_btc" not in out["risk"]: out["risk"]["basis_btc"] = d.get("basis_btc", 0.1)
+        if "interval" not in out["execution"]: out["execution"]["interval"] = d.get("interval","15m")
+        
         return out
-INTERVAL_FROM_MINUTES = {
-    1: "1m",
-    3: "3m",
-    5: "5m",
-    15: "15m",
-    30: "30m",
-    60: "1h",
-    120: "2h",
-    240: "4h",
-    360: "6h",
-    480: "8h",
-    720: "12h",
-    1440: "1d",
-}
+
 def load_config(path: str) -> AppConfig:
-    import json
-    with open(path, "r", encoding="utf-8") as f:
-        raw = json.load(f)
-
-    # --- Case 1: full new-style nested config (fees/strategy/execution/risk) ----
-    if isinstance(raw, dict):
-        # Already nested and has a proper strategy block
-        if isinstance(raw.get("strategy"), dict):
-            return AppConfig(**raw)
-
-        # Backwards compatibility: explicit blocks already present
-        if {"fees", "strategy", "execution", "risk"}.issubset(raw.keys()):
-            return AppConfig(**raw)
-
-        # --- Case 2: backtest-style config with "params" ------------------------
-        # Shape like:
-        # {
-        #   "params": { trend_kind, trend_lookback, flip_band_entry, ... },
-        #   "fees":   { ... },
-        #   "risk":   { ... }
-        # }
-        if isinstance(raw.get("params"), dict):
-            p = raw["params"]
-
-            # Build a Strategy dict from params, ignoring fields that Strategy doesn't know
-            strat_dict = {
-                "trend_kind":          p.get("trend_kind", "roc"),
-                "trend_lookback":      p["trend_lookback"],
-                "flip_band_entry":     p["flip_band_entry"],
-                "flip_band_exit":      p["flip_band_exit"],
-                "vol_window":          p.get("vol_window", 45),
-                "vol_adapt_k":         p.get("vol_adapt_k", 0.0),
-                "target_vol":          p.get("target_vol", 0.0),
-                "min_mult":            p.get("min_mult", 0.5),
-                "max_mult":            p.get("max_mult", 1.5),
-                "cooldown_minutes":    p.get("cooldown_minutes", 0),
-                "step_allocation":     p.get("step_allocation", 0.33),
-                "max_position":        p.get("max_position", 1.0),
-                "gate_window_days":    p.get("gate_window_days", 0),
-                "gate_roc_threshold":  p.get("gate_roc_threshold", 0.0),
-                "rebalance_threshold_w": p.get("rebalance_threshold_w", 0.0),
-                "vol_scaled_step":     p.get("vol_scaled_step", False),
-                "profit_lock_dd":      p.get("profit_lock_dd", 0.0),
-            }
-
-            # Map bar_interval_minutes → Execution.interval
-            bar_min = int(p.get("bar_interval_minutes", 15))
-            interval = INTERVAL_FROM_MINUTES.get(bar_min, "15m")
-
-            exec_dict = {
-                "interval":                 interval,
-                "poll_sec":                 5,
-                "ttl_sec":                  30,
-                "taker_fallback":           False,
-                "max_taker_btc":            0.002,
-                "max_spread_bps_for_taker": 2.0,
-                "min_trade_frac":           0.0015,
-                "min_trade_floor_btc":      0.0,
-                "min_trade_cap_btc":        0.0,
-                "min_trade_btc":            None,
-            }
-
-            app_raw = {
-                "fees":     raw.get("fees", {}),
-                "strategy": strat_dict,
-                "execution": exec_dict,
-                "risk":     raw.get("risk", {}),
-            }
-            return AppConfig(**app_raw)
-
-    # --- Case 3: legacy flat config (top-level keys) ------------------------------
-    return AppConfig(**AppConfig.coerce_legacy(raw))
+    with open(path, "r") as f:
+        data = json.load(f)
+    
+    # Check if it's legacy flat structure
+    if "strategy" not in data or "execution" not in data:
+        data = AppConfig.coerce_legacy(data)
+        
+    return AppConfig(**data)
