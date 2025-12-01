@@ -1,21 +1,25 @@
-# Dockerfile for ETHBTC bot v4
-FROM python:3.12-slim
+# Dockerfile for ETHBTC bot v5
+FROM python:3.11-slim
 
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1
-# MAGIC FIX: Allows scripts in tools/ to import from core/
 ENV PYTHONPATH="${PYTHONPATH}:/app"
 
+# Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl tini && \
     rm -rf /var/lib/apt/lists/*
 
+# Install Python deps
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the entire structure
+# Copy Code
 COPY . .
+
+# CLEANUP: Remove any local __pycache__ that might have been copied
+RUN find . -type d -name "__pycache__" -exec rm -rf {} +
 
 ENV METRICS_PORT=9109
 ENV STATUS_PORT=9110
@@ -23,7 +27,6 @@ ENV STATUS_PORT=9110
 EXPOSE 9109 9110
 
 RUN chmod +x /app/entrypoint.sh
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "./entrypoint.sh"]
 
-# Command stays the same (live_executor is still in root)
-CMD ["python", "/app/live_executor.py", "--params", "configs/prod_dynamic_15m_016btc.json", "--symbol", "ETHBTC", "--mode", "testnet"]
+CMD ["python", "live_executor.py", "--params", "configs/prod_meta_live.json", "--symbol", "ETHBTC", "--mode", "testnet"]

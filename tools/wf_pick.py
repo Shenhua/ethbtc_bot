@@ -1,40 +1,39 @@
 #!/usr/bin/env python3
-"""
-wf_pick.py — Walk-forward family picker (stable, cost-aware)
-Version: 1.4.0 (2025-11-24) - Funding Rate Support
+import sys
+import os
 
-Key features
-- Robust "params" parsing (JSON first, then ast.literal_eval)
-- Reasonable fee/turnover filter (quantiles)
-- Family definition: (flip_band_entry, flip_band_exit, trend_lookback, cooldown_minutes, step_allocation)
-- Ranking uses mean test_final_btc, cost penalties, dispersion, and a tie-break on fewer turns
-- Emits selected_params.json with rich fields including Funding Limits
-"""
+# --- MAGIC PATH FIX ---
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# ----------------------
 
-import argparse, json, ast, os, sys
+import argparse, json, ast
 from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 
-# --- MAGIC PATH FIX ---
-# Allow importing 'core' even if running from tools/ folder
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# ----------------------
-# --- UPDATED: Added funding limits to the list of keys to preserve ---
+# Keys to preserve in the final JSON config
 RICH_PARAM_KEYS = [
-    "trend_kind","trend_lookback",
-    "flip_band_entry","flip_band_exit",
-    "vol_window","vol_adapt_k","target_vol","min_mult","max_mult",
-    "cooldown_minutes","step_allocation","max_position",
-    "gate_window_days","gate_roc_threshold",
-    "funding_limit_long", "funding_limit_short"
+    # Mean Reversion
+    "trend_kind", "trend_lookback",
+    "flip_band_entry", "flip_band_exit",
+    "vol_window", "vol_adapt_k", "target_vol",
+    "min_mult", "max_mult", "gate_window_days", "gate_roc_threshold",
+    
+    # Trend
+    "fast_period", "slow_period", "ma_type",
+    
+    # Shared
+    "cooldown_minutes", "step_allocation", "max_position",
+    "long_only", "rebalance_threshold_w",
+    "funding_limit_long", "funding_limit_short", "strategy_type"
 ]
-FEE_KEYS = ["maker_fee","taker_fee","slippage_bps","bnb_discount","pay_fees_in_bnb"]
+
+FEE_KEYS = ["maker_fee", "taker_fee", "slippage_bps", "bnb_discount", "pay_fees_in_bnb"]
 
 def _to_native(v):
-    if isinstance(v, (np.integer,)): return int(v)
-    if isinstance(v, (np.floating,)): return float(v)
-    if isinstance(v, (np.bool_,)): return bool(v)
+    if isinstance(v, (np.integer, int)): return int(v)
+    if isinstance(v, (np.floating, float)): return float(v)
+    if isinstance(v, (np.bool_, bool)): return bool(v)
     return v
 
 def _parse_params_series(ser: pd.Series) -> pd.DataFrame:
@@ -55,70 +54,99 @@ def _parse_params_series(ser: pd.Series) -> pd.DataFrame:
 def load_and_flatten(paths):
     frames = []
     for p in paths:
-        df = pd.read_csv(p)
-        df["__source"] = os.path.basename(p)
-        if "params" in df.columns:
-            pexp = _parse_params_series(df["params"])
-            for c in pexp.columns:
-                if c not in df.columns:
-                    df[c] = pexp[c]
-        frames.append(df)
-    out = pd.concat(frames, ignore_index=True)
-
-    # Ensure columns exist (Updated with funding keys)
-    expected_cols = [
-        "flip_band_entry","flip_band_exit","flip_band","trend_lookback",
-        "cooldown_minutes","step_allocation","max_position",
-        "vol_window","vol_adapt_k","target_vol",
-        "gate_window_days","gate_roc_threshold","trend_kind",
-        "funding_limit_long", "funding_limit_short"
-    ]
-    
-    for k in expected_cols:
-        if k not in out.columns: out[k] = np.nan
+        try:
+            df = pd.read_csv(p)
+            df["__source"] = os.path.basename(p)
+            
+            # Handle nested "params" column if it exists (Optuna JSON style)
+            if "params" in df.columns:
+                pexp = _parse_params_series(df["params"])
+                for c in pexp.columns:
+                    if c not in df.columns:
+                        df[c] = pexp[c]
+            
+            frames.append(df)
+        except Exception as e:
+            print(f"Error loading {p}: {e}")
+            
+    if not frames:
+        return pd.DataFrame()
         
-    for k in ["fees_btc","turnover_btc","turns_test","test_final_btc","train_final_btc"]:
-        if k not in out.columns: out[k] = np.nan
+    out = pd.concat(frames, ignore_index=True)
+    
+    # --- FIX: Normalize Column Aliases ---
+    # Different optimizers output different names. We standardize them here.
+    aliases = {
+        "test_profit": "test_final_btc",
+        "train_profit": "train_final_btc",
+        "turns": "turns_test",
+        "final_btc": "test_final_btc"
+    }
+    out.rename(columns=aliases, inplace=True)
+    
+    # Ensure required columns exist (fill with NaN/0 if missing)
+    expected_cols = RICH_PARAM_KEYS + FEE_KEYS + [
+        "test_final_btc", "train_final_btc", "fees_btc", "turnover_btc", "turns_test"
+    ]
+    for c in expected_cols:
+        if c not in out.columns:
+            out[c] = np.nan
+            
     return out
 
 def reasonable_filter(df, q_fee=0.75, q_turnover=0.75):
     df = df.copy()
     filt = pd.Series(True, index=df.index)
-    if "fees_btc" in df.columns and df["fees_btc"].notna().any():
+    
+    # Only filter if we actually have fee data
+    if df["fees_btc"].notna().sum() > 5:
         thr_fees = df["fees_btc"].quantile(q_fee)
         filt &= (df["fees_btc"] <= thr_fees) | df["fees_btc"].isna()
-    if "turnover_btc" in df.columns and df["turnover_btc"].notna().any():
-        thr_t = df["turnover_btc"].quantile(q_turnover)
-        filt &= (df["turnover_btc"] <= thr_t) | df["turnover_btc"].isna()
+        
     return df[filt].copy()
 
 def make_family_key(row, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
     """
-    Groups strategies by their 'Core Logic'.
-    We intentionally exclude Funding Limits from the family key.
-    This allows the picker to find the 'Best Funding Limit' for a given Trend/Band strategy.
+    Polymorphic Grouping:
+    - If Trend Strategy (has fast/slow): Group by (Fast, Slow, MA, Cooldown, LongOnly)
+    - If Mean Reversion: Group by (Entry, Exit, Lookback, Cooldown, LongOnly)
     """
+    long_only = bool(row.get("long_only", True))
+
+    # 1. Check for Trend Strategy
+    fast = row.get("fast_period", np.nan)
+    slow = row.get("slow_period", np.nan)
+
+    if pd.notna(fast) and pd.notna(slow) and float(slow) > 0:
+        ma = row.get("ma_type", "ema")
+        cd = row.get("cooldown_minutes", np.nan)
+
+        def _bucket(v, b):
+            if pd.isna(v) or b <= 1:
+                return v
+            return int(round(float(v) / b) * b)
+
+        cd_key = _bucket(cd, cd_bucket) if not pd.isna(cd) else 0
+
+        return ("Trend", int(fast), int(slow), ma, cd_key, long_only)
+
+    # 2. Mean Reversion family
     e = row.get("flip_band_entry", np.nan)
     x = row.get("flip_band_exit", np.nan)
-    fb = row.get("flip_band", np.nan)
-    if (pd.isna(e) or pd.isna(x)) and not pd.isna(fb):
-        if pd.isna(e): e = fb
-        if pd.isna(x): x = fb
     tlb = row.get("trend_lookback", np.nan)
     cd  = row.get("cooldown_minutes", np.nan)
-    sa  = row.get("step_allocation", np.nan)
 
     def _bucket(v, b):
-        if pd.isna(v) or b <= 1: return v
+        if pd.isna(v) or b <= 1:
+            return v
         return int(round(float(v) / b) * b)
 
     e_key = round(float(e), band_round) if not pd.isna(e) else None
     x_key = round(float(x), band_round) if not pd.isna(x) else None
     tlb_key = _bucket(tlb, lb_bucket) if not pd.isna(tlb) else None
     cd_key  = _bucket(cd,  cd_bucket) if not pd.isna(cd)  else None
-    sa_key  = round(float(sa), step_round) if not pd.isna(sa) else None
 
-    return (e_key, x_key, tlb_key, cd_key, sa_key)
+    return ("MR", e_key, x_key, tlb_key, cd_key, long_only)
 
 def rank_families(df, penalty_turns=0.0, penalty_fees=1.0, penalty_turnover=0.5, disp_weight=0.25,
                   band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
@@ -127,19 +155,28 @@ def rank_families(df, penalty_turns=0.0, penalty_fees=1.0, penalty_turnover=0.5,
         lambda row: make_family_key(row, band_round, step_round, lb_bucket, cd_bucket), axis=1
     )
     g = df.groupby("__family", dropna=False)
-    agg = g.agg(mean_test_btc=("test_final_btc","mean"),
-                mean_train_btc=("train_final_btc","mean"),
-                fees=("fees_btc","mean"),
-                turnover=("turnover_btc","mean"),
-                turns=("turns_test","mean"),
-                n=("test_final_btc","size"),
-                std_test=("test_final_btc","std")).reset_index()
-    agg["score"] = (agg["mean_test_btc"]
-                    - penalty_turns * (agg["turns"].fillna(0) / 800.0)
-                    - penalty_fees * agg["fees"].fillna(0)
-                    - penalty_turnover * agg["turnover"].fillna(0)
-                    - disp_weight * agg["std_test"].fillna(0))
-    agg = agg.sort_values(["score","mean_test_btc","n","turns"], ascending=[False,False,False,True])
+    
+    # Aggregation
+    agg = g.agg(
+        mean_test_btc=("test_final_btc","mean"),
+        mean_train_btc=("train_final_btc","mean"),
+        fees=("fees_btc","mean"),
+        turnover=("turnover_btc","mean"),
+        turns=("turns_test","mean"),
+        n=("test_final_btc","size"),
+        std_test=("test_final_btc","std")
+    ).reset_index()
+
+    # Scoring
+    agg["score"] = (
+        agg["mean_test_btc"]
+        - penalty_turns * (agg["turns"].fillna(0) / 800.0)
+        - penalty_fees * agg["fees"].fillna(0)
+        - penalty_turnover * agg["turnover"].fillna(0)
+        - disp_weight * agg["std_test"].fillna(0)
+    )
+    
+    agg = agg.sort_values(["score", "mean_test_btc", "n"], ascending=[False, False, False])
     return agg
 
 def pick_representative(df_all, family_tuple, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
@@ -149,28 +186,32 @@ def pick_representative(df_all, family_tuple, band_round=4, step_round=2, lb_buc
     )
     pool = df[df["__family"] == family_tuple].copy()
     if pool.empty: return None
-    for c in ["fees_btc","turnover_btc"]:
+    
+    for c in ["fees_btc", "turnover_btc"]:
         if c not in pool.columns: pool[c] = 0.0
         pool[c] = pool[c].fillna(0.0)
-    
-    # Pick the best row within the family. 
-    # This is where the best 'funding_limit' for this family is selected.
-    pool["__row_score"] = pool["test_final_btc"].fillna(-1e9) - 1.0*pool["fees_btc"] - 0.5*pool["turnover_btc"]
-    best = pool.sort_values(["__row_score","test_final_btc","turns_test"], ascending=[False,False,True]).iloc[0]
+
+    # Pick best row based on raw profit
+    pool["__row_score"] = pool["test_final_btc"].fillna(-1e9)
+    best = pool.sort_values("__row_score", ascending=False).iloc[0]
     return best.to_dict()
 
-def build_config_from_row(row: dict, include_fees=True, mirror_legacy=True):
+def build_config_from_row(row: dict, include_fees=True):
     cfg = {}
+    
+    # 1. Copy Strategy Params
     for k in RICH_PARAM_KEYS:
         v = row.get(k)
-        if v is not None and v == v:
+        if v is not None and v == v: # not NaN
             cfg[k] = _to_native(v)
-    fb = row.get("flip_band")
-    if ("flip_band_entry" not in cfg or "flip_band_exit" not in cfg) and fb is not None and fb == fb:
-        cfg.setdefault("flip_band_entry", _to_native(fb))
-        cfg.setdefault("flip_band_exit",  _to_native(fb))
-    if mirror_legacy and "flip_band_entry" in cfg and "flip_band" not in cfg:
-        cfg["flip_band"] = _to_native(cfg["flip_band_entry"])
+
+    # 2. Infer Strategy Type if missing
+    if "fast_period" in cfg:
+        cfg["strategy_type"] = "trend"
+    elif "trend_kind" in cfg:
+        cfg["strategy_type"] = "mean_reversion"
+            
+    # 3. Copy Fees
     if include_fees:
         for k in FEE_KEYS:
             v = row.get(k)
@@ -187,100 +228,110 @@ def parse_family_literal(s):
         pass
     return s
 
-def preflight(df_all, require_costs=False, require_var=False):
-    msgs = []
+def preflight(df_all):
+    # Basic checks
     tfb_u = df_all["test_final_btc"].dropna().nunique() if "test_final_btc" in df_all.columns else 0
-    fees_u = df_all["fees_btc"].dropna().nunique() if "fees_btc" in df_all.columns else 0
-    turn_u = df_all["turnover_btc"].dropna().nunique() if "turnover_btc" in df_all.columns else 0
-    if tfb_u <= 1:
-        msg = "WARNING: test_final_btc has ≤1 unique value across rows."
-        if require_var: msg = "ERROR: " + msg
-        msgs.append(msg)
-    if (fees_u <= 1 or turn_u <= 1):
-        msg = "WARNING: fees_btc/turnover_btc missing or constant."
-        if require_costs: msg = "ERROR: " + msg
-        msgs.append(msg)
-    return msgs, {"test_final_btc_uniq": tfb_u, "fees_btc_uniq": fees_u, "turnover_btc_uniq": turn_u}
+    return {"test_final_btc_uniq": tfb_u}
 
 def main():
-    ap = argparse.ArgumentParser(description="Pick stable optimizer configs across multiple runs and emit selected_params.json")
+    ap = argparse.ArgumentParser()
     ap.add_argument("--runs", nargs="+", required=True)
-    ap.add_argument("--q-fees", type=float, default=0.75)
-    ap.add_argument("--q-turnover", type=float, default=0.75)
-    ap.add_argument("--penalty-turns", type=float, default=0.0)
-    ap.add_argument("--penalty-fees", type=float, default=1.0)
-    ap.add_argument("--penalty-turnover", type=float, default=0.5)
-    ap.add_argument("--disp-weight", type=float, default=0.25)
+    ap.add_argument("--top-k", type=int, default=5)
+    ap.add_argument("--out-csv", default="results/wf_ranked_families.csv")
+    ap.add_argument("--emit-config", default="configs/selected_params.json")
+    ap.add_argument("--min-occurs", type=int, default=1)
+    ap.add_argument("--family-index", type=int, default=0)
+    
+    # Coarsening defaults
     ap.add_argument("--band-round", type=int, default=4)
     ap.add_argument("--step-round", type=int, default=2)
-    ap.add_argument("--lb-bucket", type=int, default=40, help="Bucket size for trend_lookback")
-    ap.add_argument("--cd-bucket", type=int, default=60, help="Bucket size (minutes) for cooldown_minutes")
-    ap.add_argument("--min-occurs", type=int, default=2, help="Require families to appear in at least N rows")
-    ap.add_argument("--require-costs", action="store_true", help="Fail if costs are missing/constant")
-    ap.add_argument("--require-var", action="store_true", help="Fail if test_final_btc lacks variation")
-    ap.add_argument("--top-k", type=int, default=12)
-    ap.add_argument("--out-csv", default="results/wf_ranked_families.csv")
-    ap.add_argument("--excel-out")
-    ap.add_argument("--emit-config", default="configs/selected_params.json")
-    ap.add_argument("--family-index", type=int, default=0)
+    ap.add_argument("--lb-bucket", type=int, default=40)
+    ap.add_argument("--cd-bucket", type=int, default=60)
+    
+    # Scoring penalties (defaults)
+    ap.add_argument("--q-fees", type=float, default=1.0)
+    ap.add_argument("--q-turnover", type=float, default=1.0)
+    ap.add_argument("--penalty-turns", type=float, default=0.0)
+    ap.add_argument("--penalty-fees", type=float, default=0.0)
+    ap.add_argument("--penalty-turnover", type=float, default=0.0)
+    ap.add_argument("--disp-weight", type=float, default=0.0)
+    ap.add_argument(
+        "--force-long-only",
+        action="store_true",
+        help="Drop all trials with long_only = False before ranking families."
+    )
+    ap.add_argument(
+        "--sanity-data",
+        help="If provided, run a full backtest on this OHLC CSV using the emitted config.",
+    )
+    ap.add_argument(
+        "--sanity-funding",
+        help="Optional funding CSV with 'time' and 'rate' for sanity backtest.",
+    )
     args = ap.parse_args()
 
     df_all = load_and_flatten(args.runs)
-    msgs, metrics = preflight(df_all, require_costs=args.require_costs, require_var=args.require_var)
-    print("Preflight:", metrics)
-    for m in msgs: print(m)
-    if any(m.startswith("ERROR:") for m in msgs):
-        sys.exit(2)
+    print("Preflight:", preflight(df_all))
 
-    base_n = len(df_all)
+    if args.force_long_only and "long_only" in df_all.columns:
+        df_all = df_all[df_all["long_only"].astype(bool)]
+        print(f"Filtered to long_only=True: {len(df_all)} rows remaining.")
+
     df = reasonable_filter(df_all, q_fee=args.q_fees, q_turnover=args.q_turnover)
-    print(f"Loaded rows: {base_n} | after reasonable filter: {len(df)}")
-    print(f"Coarsening → band_round={args.band_round}, step_round={args.step_round}, lb_bucket={args.lb_bucket}, cd_bucket={args.cd_bucket}")
-
+    
     fam = rank_families(
         df,
         args.penalty_turns, args.penalty_fees, args.penalty_turnover, args.disp_weight,
         args.band_round, args.step_round, args.lb_bucket, args.cd_bucket
     )
-    before = len(fam)
+    
+    # --- NEW: Kill Zombie Strategies ---
+    # A strategy with 0 trades is mathematically "safe" (score 1.0) but useless.
+    # We insist on at least 1 trade on average.
+    fam = fam[fam["turns"] >= 1.0]
+    
     fam = fam[fam["n"] >= args.min_occurs]
-    print(f"Families kept with n >= {args.min_occurs}: {len(fam)} (dropped {before - len(fam)})")
-
+    
     if fam.empty:
-        print("No families to choose from after n>=min-occurs filter.", file=sys.stderr)
+        print("No families found.", file=sys.stderr)
         sys.exit(3)
 
     fam.to_csv(args.out_csv, index=False)
-    print(f"Wrote family ranking → {args.out_csv}\n")
-    print("Top families:")
+    print(f"Top Families saved to {args.out_csv}")
     print(fam.head(args.top_k).to_string(index=False))
 
+    # Pick best config
     idx = max(0, min(int(args.family_index), len(fam)-1))
     fam_tuple = parse_family_literal(fam.iloc[idx]["__family"])
+    
+    print(f"\nSelecting Family: {fam_tuple}")
 
     best_row = pick_representative(df, fam_tuple,
         args.band_round, args.step_round, args.lb_bucket, args.cd_bucket
     )
-    if best_row is None:
-        print("Could not pick a representative row; aborting.", file=sys.stderr)
-        sys.exit(4)
+    
+    cfg = build_config_from_row(best_row)
 
-    cfg = build_config_from_row(best_row, include_fees=True, mirror_legacy=True)
-    cfg.update({
-        "_generated_by": "wf_pick.py",
-        "_generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "_source_runs": [os.path.basename(p) for p in args.runs],
-        "_family": str(fam_tuple),
-    })
     with open(args.emit_config, "w") as f:
         json.dump(cfg, f, indent=2)
-    print(f"\nWrote recommended config → {args.emit_config}")
 
-    if args.excel_out:
-        with pd.ExcelWriter(args.excel_out) as w:
-            fam.to_excel(w, sheet_name="family_rank", index=False)
-            df.to_excel(w, sheet_name="filtered_rows", index=False)
-        print(f"Wrote Excel → {args.excel_out}")
+    print(f"Wrote config → {args.emit_config}")
+
+    # Optional: run full sanity backtest
+    if args.sanity_data:
+        try:
+            from sanity_check_config import run_sanity_check
+        except ImportError:
+            print("Warning: sanity_check_config not importable; skipping sanity backtest.")
+        else:
+            print("Running sanity backtest on full data...")
+            summary = run_sanity_check(
+                data_path=args.sanity_data,
+                config_path=args.emit_config,
+                funding_path=args.sanity_funding,
+            )
+            print("Sanity backtest summary:")
+            print(json.dumps(summary, indent=2))
 
 if __name__ == "__main__":
     main()

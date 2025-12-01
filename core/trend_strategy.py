@@ -1,0 +1,104 @@
+from __future__ import annotations
+from dataclasses import dataclass
+import pandas as pd
+import numpy as np
+
+@dataclass
+class TrendParams:
+    # Core Trend Params
+    fast_period: int = 50    # e.g. 50-bar EMA
+    slow_period: int = 200   # e.g. 200-bar EMA
+    ma_type: str = "ema"     # 'ema' or 'sma'
+    
+    # Risk / Execution
+    cooldown_minutes: int = 60
+    step_allocation: float = 1.0  # Trend followers usually go "All In" on breakout
+    max_position: float = 1.0
+    long_only: bool = True       
+    
+    # Funding Rate Filters
+    funding_limit_long: float = 0.05
+    funding_limit_short: float = -0.05
+
+    # Legacy compatibility (ignored but prevents config crashes)
+    trend_kind: str = "trend"
+    trend_lookback: int = 0
+    flip_band_entry: float = 0.0
+    flip_band_exit: float = 0.0
+    vol_window: int = 0
+    vol_adapt_k: float = 0.0
+    bar_interval_minutes: int = 15
+    target_vol: float = 0.0
+    min_mult: float = 1.0
+    max_mult: float = 1.0
+    rebalance_threshold_w: float = 0.0
+    min_trade_btc: float = 0.0
+    gate_window_days: int = 0
+    gate_roc_threshold: float = 0.0
+
+class TrendStrategy:
+    def __init__(self, p: TrendParams): 
+        self.p = p
+
+    def generate_positions(self, df: pd.DataFrame | pd.Series, funding: pd.Series = None) -> pd.DataFrame:
+        # Support both Series (just close) and DataFrame (OHLC)
+        if isinstance(df, pd.Series):
+            close = df
+        else:
+            close = df["close"]
+
+        # 1. Calculate Moving Averages
+        if self.p.ma_type == "sma":
+            fast = close.rolling(self.p.fast_period).mean()
+            slow = close.rolling(self.p.slow_period).mean()
+        else:
+            # EMA is generally more responsive/standard for crypto
+            fast = close.ewm(span=self.p.fast_period, adjust=False).mean()
+            slow = close.ewm(span=self.p.slow_period, adjust=False).mean()
+
+        # 2. Generate Signal (Crossover)
+        # Signal = 1 if Fast > Slow (Golden Cross)
+        # Signal = -1 if Fast < Slow (Death Cross)
+        raw_sig = np.where(fast > slow, 1.0, -1.0)
+        sig = pd.Series(raw_sig, index=close.index)
+
+        # 3. Apply Cooldown & Hysteresis
+        # Prevents "whipsaw" if lines are tangled
+        clean_sig = pd.Series(0.0, index=close.index)
+        state = 0.0
+        last_flip_ts = close.index[0]
+        min_delta = pd.Timedelta(minutes=self.p.cooldown_minutes)
+        
+        for t in close.index:
+            s = sig.loc[t]
+            
+            # Only flip if cooldown passed
+            if s != state:
+                if (t - last_flip_ts) >= min_delta:
+                    state = s
+                    last_flip_ts = t
+                else:
+                    # Keep previous state
+                    pass
+            
+            clean_sig.loc[t] = state
+
+        # 4. Funding Filter (Safety)
+        if funding is not None:
+            # Align funding if lengths differ
+            if len(funding) != len(close):
+                funding = funding.reindex(close.index).ffill().fillna(0.0)
+                
+            mask_long = (funding > self.p.funding_limit_long)
+            mask_short = (funding < self.p.funding_limit_short)
+            
+            # If Euphoria -> No Longs
+            clean_sig.loc[mask_long & (clean_sig > 0)] = 0.0
+            # If Panic -> No Shorts
+            clean_sig.loc[mask_short & (clean_sig < 0)] = 0.0
+
+        # 5. Allocation
+        lo = 0.0 if self.p.long_only else -self.p.max_position
+        target_w = clean_sig.clip(lo, self.p.max_position)
+        
+        return pd.DataFrame({"target_w": target_w})
