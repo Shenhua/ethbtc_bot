@@ -200,106 +200,22 @@ python3 tools/optimize_meta.py \
 echo "✓ Meta optimization complete"
 
 # =============================================
-# Step 6: Generate Final Unified Config
+# Step 6: Generate Final Unified Config (V2 Format)
 # =============================================
 echo ""
-echo "Generating final unified Meta config..."
-python3 - <<'PYTHON'
-import pandas as pd
-import json
+echo "[6/6] Generating Final V2 Config..."
 
-# Load best meta result
-df = pd.read_csv("results/opt_meta_results.csv")
-best_meta = df.sort_values("final_btc", ascending=False).iloc[0]
-best_adx = int(best_meta["adx_threshold"])
+python3 tools/assemble_v2_config.py \
+  --mr configs/best_mr.json \
+  --trend configs/best_trend.json \
+  --meta-results results/opt_meta_results.csv \
+  --out configs/meta_optimized_v2.json
 
-# Load MR and Trend configs
-with open("configs/best_mr.json") as f:
-    mr_cfg = json.load(f)
-with open("configs/best_trend.json") as f:
-    tr_cfg = json.load(f)
-
-# Create unified meta config
-config = {
-    "fees": mr_cfg["fees"],
-    "strategy": {
-        "strategy_type": "meta",
-        "adx_threshold": float(best_adx),
-        
-        # Mean Reversion params
-        "trend_kind": mr_cfg["strategy"]["trend_kind"],
-        "trend_lookback": mr_cfg["strategy"]["trend_lookback"],
-        "flip_band_entry": mr_cfg["strategy"]["flip_band_entry"],
-        "flip_band_exit": mr_cfg["strategy"]["flip_band_exit"],
-        "vol_window": mr_cfg["strategy"]["vol_window"],
-        "vol_adapt_k": mr_cfg["strategy"]["vol_adapt_k"],
-        "target_vol": mr_cfg["strategy"].get("target_vol", 0.5),
-        "min_mult": 0.5,
-        "max_mult": 1.5,
-        "gate_window_days": mr_cfg["strategy"]["gate_window_days"],
-        "gate_roc_threshold": mr_cfg["strategy"]["gate_roc_threshold"],
-        
-        # Trend params
-        "fast_period": tr_cfg["strategy"]["fast_period"],
-        "slow_period": tr_cfg["strategy"]["slow_period"],
-        "ma_type": tr_cfg["strategy"]["ma_type"],
-        
-        # Shared params (use MR as baseline)
-        "cooldown_minutes": mr_cfg["strategy"]["cooldown_minutes"],
-        "step_allocation": mr_cfg["strategy"]["step_allocation"],
-        "max_position": mr_cfg["strategy"]["max_position"],
-        "long_only": mr_cfg["strategy"]["long_only"],
-        "rebalance_threshold_w": mr_cfg["strategy"]["rebalance_threshold_w"],
-        "funding_limit_long": mr_cfg["strategy"]["funding_limit_long"],
-        "funding_limit_short": mr_cfg["strategy"]["funding_limit_short"],
-        "bar_interval_minutes": 15
-    },
-    "execution": {
-        "interval": "15m",
-        "poll_sec": 5,
-        "ttl_sec": 30,
-        "min_trade_floor_btc": 0.0001,
-        "min_trade_btc": 0.0001,
-        "min_trade_frac": 0.0,
-        "min_trade_cap_btc": 1.0,
-        "taker_fallback": True
-    },
-    "risk": {
-        "basis_btc": 1.0,
-        "max_daily_loss_btc": 0.0,
-        "max_dd_btc": 0.0,
-        "risk_mode": "fixed_basis"
-    }
-}
-
-with open("configs/meta_optimized.json", "w") as f:
-    json.dump(config, f, indent=2)
-
-print(f"✓ Final Meta config saved to configs/meta_optimized.json")
-print(f"  ADX Threshold: {best_adx}")
-print(f"  Final BTC: {best_meta['final_btc']:.4f}")
-PYTHON
-
-# =============================================
-# Summary
-# =============================================
 echo ""
 echo "========================================"
 echo "✓ Optimization Workflow Complete!"
 echo "========================================"
 echo ""
-echo "Generated files:"
-echo "  - configs/best_mr.json         (Mean Reversion)"
-echo "  - configs/best_trend.json      (Trend Following)"
-echo "  - configs/meta_optimized.json  (Unified Meta)"
-echo ""
-echo "Results:"
-echo "  - results/opt_mr_results.csv"
-echo "  - results/opt_trend_results.csv"
-echo "  - results/opt_meta_results.csv"
-echo ""
-echo "Next steps:"
-echo "  1. Review configs/meta_optimized.json"
-echo "  2. Backtest with: ./run_meta_test.sh (update config path)"
-echo "  3. Deploy to live/testnet if satisfied"
+echo "New Config: configs/meta_optimized_v2.json"
+echo "Usage: python live_executor.py --params configs/meta_optimized_v2.json ..."
 echo ""
