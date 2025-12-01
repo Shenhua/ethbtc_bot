@@ -4,6 +4,9 @@ services:
     build: .
     container_name: ethbtc_bot
     restart: unless-stopped
+    networks:
+      - default  # (Optional, if you want it on the default net too)
+      - trading-net
     environment:
       - BINANCE_KEY=${BINANCE_KEY}
       - BINANCE_SECRET=${BINANCE_SECRET}
@@ -27,6 +30,9 @@ services:
     build: .
     container_name: bnbusdc_bot
     restart: unless-stopped
+    networks:
+      - default  # (Optional, if you want it on the default net too)
+      - trading-net
     environment:
       - BINANCE_KEY=${BINANCE_KEY}
       - BINANCE_SECRET=${BINANCE_SECRET}
@@ -59,3 +65,7 @@ services:
     volumes:
       - .:/app
     command: python /app/tools/dust_sweeper.py --mode auto --schedule weekly
+
+networks:
+  trading-net:
+    external: true
