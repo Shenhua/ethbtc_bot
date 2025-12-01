@@ -437,43 +437,54 @@ def main():
                     strat = TrendStrategy(tp)
                     plan = strat.generate_positions(df) # Requires OHLC
                     target_w = float(plan["target_w"].iloc[-1])
-                    
+                    if "regime_score" in plan.columns:
+                        # We get the last value. The 'metrics' module needs this Gauge defined.
+                        current_score = float(plan["regime_score"].iloc[-1])
+                        # You need to define REGIME_SCORE in core/metrics.py first!
+                        metrics.REGIME_SCORE.set(current_score)
                 elif strat_type == "meta":
-                    # META Strategy
-                    # 1. Extract Mean Reversion Params
+                    # META Strategy with Overrides
+                    # 1. Base Global Params
+                    base_params = cfg.strategy.dict()
+                    
+                    # 2. Extract Overrides
+                    mr_opts = base_params.get("mean_reversion_overrides", {})
+                    tr_opts = base_params.get("trend_overrides", {})
+
+                    # 3. Construct Mean Reversion Params (Merge Base + Overrides)
+                    mr_merged = {**base_params, **mr_opts}
                     mr_p = StratParams(
-                        trend_kind=cfg.strategy.trend_kind,
-                        trend_lookback=cfg.strategy.trend_lookback,
-                        flip_band_entry=cfg.strategy.flip_band_entry,
-                        flip_band_exit=cfg.strategy.flip_band_exit,
-                        vol_window=cfg.strategy.vol_window,
-                        vol_adapt_k=cfg.strategy.vol_adapt_k,
-                        target_vol=getattr(cfg.strategy, "target_vol", 0.5),
-                        cooldown_minutes=cfg.strategy.cooldown_minutes,
-                        step_allocation=cfg.strategy.step_allocation,
-                        max_position=cfg.strategy.max_position,
-                        rebalance_threshold_w=cfg.strategy.rebalance_threshold_w,
-                        min_trade_btc=getattr(cfg.strategy, "min_trade_btc", 0.0),
-                        gate_window_days=cfg.strategy.gate_window_days,
-                        gate_roc_threshold=cfg.strategy.gate_roc_threshold,
-                        long_only=getattr(cfg.strategy, "long_only", True),
-                        funding_limit_long=cfg.strategy.funding_limit_long,
-                        funding_limit_short=cfg.strategy.funding_limit_short
+                        trend_kind=mr_merged.get("trend_kind", "roc"),
+                        trend_lookback=int(mr_merged.get("trend_lookback", 200)),
+                        flip_band_entry=float(mr_merged.get("flip_band_entry", 0.025)),
+                        flip_band_exit=float(mr_merged.get("flip_band_exit", 0.015)),
+                        vol_window=int(mr_merged.get("vol_window", 60)),
+                        vol_adapt_k=float(mr_merged.get("vol_adapt_k", 0.0)),
+                        cooldown_minutes=int(mr_merged.get("cooldown_minutes", 60)), # Individual Cooldown
+                        step_allocation=float(mr_merged.get("step_allocation", 0.5)),
+                        max_position=float(mr_merged.get("max_position", 1.0)),
+                        long_only=bool(mr_merged.get("long_only", True)),
+                        funding_limit_long=float(mr_merged.get("funding_limit_long", 0.05)),
+                        funding_limit_short=float(mr_merged.get("funding_limit_short", -0.05))
                     )
-                    # 2. Extract Trend Params
+
+                    # 4. Construct Trend Params (Merge Base + Overrides)
+                    tr_merged = {**base_params, **tr_opts}
                     tr_p = TrendParams(
-                        fast_period=cfg.strategy.fast_period,
-                        slow_period=cfg.strategy.slow_period,
-                        ma_type=cfg.strategy.ma_type,
-                        cooldown_minutes=cfg.strategy.cooldown_minutes,
-                        step_allocation=cfg.strategy.step_allocation,
-                        max_position=cfg.strategy.max_position,
-                        long_only=cfg.strategy.long_only,
-                        funding_limit_long=cfg.strategy.funding_limit_long,
-                        funding_limit_short=cfg.strategy.funding_limit_short
+                        fast_period=int(tr_merged.get("fast_period", 50)),
+                        slow_period=int(tr_merged.get("slow_period", 200)),
+                        ma_type=tr_merged.get("ma_type", "ema"),
+                        cooldown_minutes=int(tr_merged.get("cooldown_minutes", 180)), # Trend usually needs longer cooldown
+                        step_allocation=float(tr_merged.get("step_allocation", 1.0)),
+                        max_position=float(tr_merged.get("max_position", 1.0)),
+                        long_only=bool(tr_merged.get("long_only", True)),
+                        funding_limit_long=float(tr_merged.get("funding_limit_long", 0.05)),
+                        funding_limit_short=float(tr_merged.get("funding_limit_short", -0.05))
                     )
+                    
                     strat = MetaStrategy(mr_p, tr_p, adx_threshold=cfg.strategy.adx_threshold)
-                    plan = strat.generate_positions(df) # OHLC
+                    # Pass the dataframe (requires OHLC) logic handled by generate_positions
+                    plan = strat.generate_positions(df) 
                     target_w = float(plan["target_w"].iloc[-1])
 
                 else:

@@ -123,6 +123,7 @@ class EthBtcStrategy:
     def __init__(self, p: StratParams): self.p = p
 
     def generate_positions(self, close: pd.Series, funding: Optional[pd.Series] = None) -> pd.DataFrame:
+        # 1. Indicators
         if self.p.trend_kind == "sma":
             ma = close.rolling(self.p.trend_lookback).mean()
             ratio = close / ma - 1.0
@@ -137,40 +138,70 @@ class EthBtcStrategy:
         band_entry = self.p.flip_band_entry + adj
         band_exit  = self.p.flip_band_exit + adj
 
+        # 2. Gate Logic (Pre-calculated Vectorized)
         if self.p.gate_window_days > 0:
             daily = close.resample("1D").last()
-            roc = daily.pct_change(self.p.gate_window_days).reindex(close.index).ffill()
+            roc_daily = daily.pct_change(self.p.gate_window_days)
+            # Reindex to match close (15m), ffill to propagate daily value forward
+            roc = roc_daily.reindex(close.index).ffill().fillna(0.0)
+            
+            gate_buy_mask = roc <= -self.p.gate_roc_threshold
+            gate_sell_mask = roc >= self.p.gate_roc_threshold
         else:
-            roc = pd.Series(1.0, index=close.index)
+            # Gate Disabled: Always True
+            gate_buy_mask = pd.Series(True, index=close.index)
+            gate_sell_mask = pd.Series(True, index=close.index)
 
+        # 3. Funding Logic (Vectorized)
+        allow_buy = pd.Series(True, index=close.index)
+        allow_sell = pd.Series(True, index=close.index)
+        
+        if funding is not None:
+            # Align funding to close index
+            f_aligned = funding.reindex(close.index).ffill().fillna(0.0)
+            allow_buy = f_aligned <= self.p.funding_limit_long
+            allow_sell = f_aligned >= self.p.funding_limit_short
+
+        # 4. Loop State Machine
         sig = pd.Series(0.0, index=close.index)
         state = -1.0
         last_flip_ts = close.index[0]
         min_delta = pd.Timedelta(minutes=self.p.cooldown_minutes)
 
-        for t in close.index:
+        # Pre-convert to numpy for speed & safety
+        idx_arr = close.index
+        r_arr = ratio.values
+        be_arr = band_entry.values
+        bx_arr = band_exit.values
+        gb_arr = gate_buy_mask.values
+        gs_arr = gate_sell_mask.values
+        ab_arr = allow_buy.values
+        as_arr = allow_sell.values
+        
+        out_sig = np.zeros(len(close))
+
+        for i in range(len(close)):
+            t = idx_arr[i]
+            
+            # Cooldown check
             if (t - last_flip_ts) < min_delta:
-                sig.loc[t] = state
+                out_sig[i] = state
                 continue
 
-            r = ratio.loc[t]
-            be = float(band_entry.loc[t]); bx = float(band_exit.loc[t])
-            g = roc.loc[t] if roc is not None else 0.0
+            r = r_arr[i]
+            be = be_arr[i]
+            bx = bx_arr[i]
             
-            f_ok_buy = True
-            f_ok_sell = True
-            if funding is not None:
-                f_rate = funding.loc[t] if t in funding.index else 0.0
-                if pd.notna(f_rate):
-                    if f_rate > self.p.funding_limit_long: f_ok_buy = False
-                    if f_rate < self.p.funding_limit_short: f_ok_sell = False
-
             desired = state
+            
+            # Buy Logic
             if state <= 0:
-                if r < -be and g <= -self.p.gate_roc_threshold and f_ok_buy:
+                if r < -be and gb_arr[i] and ab_arr[i]:
                     desired = 1.0
+            
+            # Sell Logic
             if state >= 0:
-                if r > be and g >= self.p.gate_roc_threshold and f_ok_sell:
+                if r > be and gs_arr[i] and as_arr[i]:
                      desired = -1.0 
                 elif r > -bx and state > 0:
                      desired = -1.0
@@ -178,16 +209,23 @@ class EthBtcStrategy:
             if desired != state:
                 state = desired
                 last_flip_ts = t
-            sig.loc[t] = state
+            
+            out_sig[i] = state
 
+        # 5. Volatility Scaling
         if self.p.target_vol > 0:
             vol_adj = vol.replace(0, np.nan)
             mult = (self.p.target_vol / vol_adj).clip(self.p.min_mult, self.p.max_mult).fillna(self.p.min_mult)
         else:
             mult = 1.0
 
+        # 6. Final Allocation
+        # Convert numpy array back to Series for alignment
+        sig_series = pd.Series(out_sig, index=close.index)
+        
         lo = 0.0 if self.p.long_only else -self.p.max_position
-        target_w = (sig * mult).clip(lo, self.p.max_position)
+        target_w = (sig_series * mult).clip(lo, self.p.max_position)
+        
         return pd.DataFrame({"target_w": target_w})
 
 class Backtester:
@@ -338,6 +376,7 @@ def cmd_backtest(args):
     bar_minutes = _interval_to_minutes(str(interval_str))
 
     risk_cfg = cfg.get("risk") or cfg
+
     basis = float(risk_cfg.get("basis_btc", 1.0))
     max_daily_loss_btc = float(risk_cfg.get("max_daily_loss_btc", 0.0))
     max_dd_btc = float(risk_cfg.get("max_dd_btc", 0.0))
@@ -345,7 +384,7 @@ def cmd_backtest(args):
     max_dd_frac = float(risk_cfg.get("max_dd_frac", 0.0))
     risk_mode = risk_cfg.get("risk_mode", "fixed_basis")
 
-    # Fees: nested "fees" block if present, otherwise flat keys
+    # --- Fees: nested "fees" block if present, otherwise flat keys ---
     fee_cfg = cfg.get("fees") or cfg
     fee = FeeParams(
         maker_fee=float(fee_cfg.get("maker_fee", 0.0002)),
@@ -365,18 +404,33 @@ def cmd_backtest(args):
             from core.meta_strategy import MetaStrategy
             from core.trend_strategy import TrendParams
             
-            mr_p = StratParams(**clean_params)
-            tr_p = TrendParams(
-                fast_period=int(clean_params.get("fast_period", 50)),
-                slow_period=int(clean_params.get("slow_period", 200)),
-                ma_type=clean_params.get("ma_type", "ema"),
-                cooldown_minutes=int(clean_params.get("cooldown_minutes", 60)),
-                step_allocation=float(clean_params.get("step_allocation", 1.0)),
-                max_position=float(clean_params.get("max_position", 1.0)),
-                long_only=bool(clean_params.get("long_only", True)),
-                funding_limit_long=float(clean_params.get("funding_limit_long", 0.05)),
-                funding_limit_short=float(clean_params.get("funding_limit_short", -0.05))
-            )
+            # 1. Create a clean base by removing the container keys
+            # We use .copy() to avoid affecting other logic
+            base = clean_params.copy()
+            mr_opts = base.pop("mean_reversion_overrides", {})
+            tr_opts = base.pop("trend_overrides", {})
+            
+            # 2. Clean out metadata like "comment" which might cause errors too
+            base.pop("comment", None)
+            mr_opts.pop("comment", None)
+            tr_opts.pop("comment", None)
+            
+            # 3. Merge: Base + Overrides
+            mr_merged = {**base, **mr_opts}
+            tr_merged = {**base, **tr_opts}
+
+            # 4. Filter against StratParams fields to be 100% safe
+            # (This prevents crashes if you add comments or new keys later)
+            valid_mr_keys = StratParams.__annotations__.keys()
+            mr_final = {k: v for k, v in mr_merged.items() if k in valid_mr_keys}
+
+            valid_tr_keys = TrendParams.__annotations__.keys()
+            tr_final = {k: v for k, v in tr_merged.items() if k in valid_tr_keys}
+
+            # 5. Initialize
+            mr_p = StratParams(**mr_final)
+            tr_p = TrendParams(**tr_final)
+            
             strat = MetaStrategy(mr_p, tr_p, adx_threshold=float(clean_params.get("adx_threshold", 25.0)))
         except ImportError:
             print("Error: core.meta_strategy not found.")
@@ -405,7 +459,7 @@ def cmd_backtest(args):
         p = StratParams(**clean_params)
         strat = EthBtcStrategy(p)
 
-    bt = Backtester(FeeParams())
+    bt = Backtester(fee)
     
     res = bt.simulate(
         df["close"], 

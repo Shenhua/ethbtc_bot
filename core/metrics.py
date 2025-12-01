@@ -58,6 +58,7 @@ FUNDING_RATE = Gauge("funding_rate_pct", "Current funding rate percentage")
 TRADE_READY = Gauge("trade_ready", "Overall trade readiness (1=OK, 0=Blocked)")
 TRADE_READY_COND = Gauge("trade_ready_condition", "Sub-condition readiness", ["cond"])
 
+REGIME_SCORE = Gauge("regime_score", "Current Trend Consensus Score (0-100)")
 # ---- Helper functions -----------------------------------------------------
 
 def start_metrics_server(port: int) -> None:

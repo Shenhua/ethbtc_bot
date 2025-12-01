@@ -49,6 +49,10 @@ class Strategy(BaseModel):
     
     funding_limit_long: float = Field(0.05, ge=0.0, le=1.0)
     funding_limit_short: float = Field(-0.05, ge=-1.0, le=0.0)
+    
+    # --- Overrides for Meta Strategy ---
+    mean_reversion_overrides: Dict[str, Any] = {}
+    trend_overrides: Dict[str, Any] = {}
 
 class Execution(BaseModel):
     interval: Interval = "15m"
