@@ -61,3 +61,4 @@ coverage.xml
 #.env
 run_state/state.json
 run_state/
+results/
