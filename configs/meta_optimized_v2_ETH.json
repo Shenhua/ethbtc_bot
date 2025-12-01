@@ -1,0 +1,63 @@
+{
+  "fees": {
+    "maker_fee": 0.0002,
+    "taker_fee": 0.0004,
+    "slippage_bps": 1.0,
+    "bnb_discount": 0.25,
+    "pay_fees_in_bnb": true
+  },
+  "strategy": {
+    "strategy_type": "meta",
+    "adx_threshold": 10.0,
+    "bar_interval_minutes": 15,
+    "mean_reversion_overrides": {
+      "comment": "Optimized MR Settings",
+      "trend_kind": "sma",
+      "trend_lookback": 160,
+      "flip_band_entry": 0.0569142504727076,
+      "flip_band_exit": 0.0110039686871961,
+      "vol_window": 45,
+      "vol_adapt_k": 0.005,
+      "target_vol": 0.5,
+      "min_mult": 0.5,
+      "max_mult": 1.5,
+      "gate_window_days": 30,
+      "gate_roc_threshold": 0.0,
+      "fast_period": 50,
+      "slow_period": 200,
+      "ma_type": "ema",
+      "cooldown_minutes": 240,
+      "step_allocation": 0.5,
+      "max_position": 1.0,
+      "long_only": 0,
+      "rebalance_threshold_w": 0.0,
+      "funding_limit_long": 0.0218657041061889,
+      "funding_limit_short": -0.0923469845857912,
+      "bar_interval_minutes": 15
+    },
+    "trend_overrides": {
+      "comment": "Optimized Trend Settings",
+      "fast_period": 120,
+      "slow_period": 160,
+      "ma_type": "sma",
+      "cooldown_minutes": 360,
+      "funding_limit_long": 0.07945378392941857,
+      "funding_limit_short": -0.04801407273286289,
+      "long_only": true,
+      "step_allocation": 1.0,
+      "max_position": 1.0
+    }
+  },
+  "execution": {
+    "interval": "15m",
+    "poll_sec": 5,
+    "ttl_sec": 30,
+    "taker_fallback": true,
+    "min_trade_btc": 0.0001
+  },
+  "risk": {
+    "basis_btc": 1.0,
+    "risk_mode": "dynamic",
+    "max_dd_frac": 0.2
+  }
+}

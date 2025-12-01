@@ -437,11 +437,21 @@ def main():
                     strat = TrendStrategy(tp)
                     plan = strat.generate_positions(df) # Requires OHLC
                     target_w = float(plan["target_w"].iloc[-1])
+                    # --- Broadcast Meta-Strategy Brain ---
                     if "regime_score" in plan.columns:
-                        # We get the last value. The 'metrics' module needs this Gauge defined.
+                        # 1. The Score
                         current_score = float(plan["regime_score"].iloc[-1])
-                        # You need to define REGIME_SCORE in core/metrics.py first!
                         metrics.REGIME_SCORE.set(current_score)
+                        
+                        # 2. The Threshold (Read from Config)
+                        # Fallback to 25.0 if not found (e.g. legacy config)
+                        adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
+                        metrics.REGIME_THRESHOLD.set(adx_thresh)
+                        
+                        # 3. The Active Mode (0 = MR, 1 = Trend)
+                        # If Score > Threshold, we are in Trend Mode
+                        is_trend = 1.0 if current_score > adx_thresh else 0.0
+                        metrics.STRATEGY_MODE.set(is_trend)
                 elif strat_type == "meta":
                     # META Strategy with Overrides
                     # 1. Base Global Params
