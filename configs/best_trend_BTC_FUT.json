@@ -11,12 +11,13 @@
     "slow_period": 340,
     "ma_type": "ema",
     "cooldown_minutes": 240,
-    "funding_limit_long": 0.0393398516125051,
-    "funding_limit_short": -0.010488705645880923,
-    "long_only": true,
+    "funding_limit_long": 0.0824052151077247,
+    "funding_limit_short": -0.013332680463618699,
+    "long_only": false,
     "strategy_type": "trend",
     "step_allocation": 1.0,
-    "max_position": 1.0
+    "max_position": 1.0,
+    "rebalance_threshold_w": 0.03
   },
   "execution": {
     "interval": "15m",

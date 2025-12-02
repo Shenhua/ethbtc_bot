@@ -1,0 +1,9 @@
+{
+  "fast_period": 130,
+  "slow_period": 200,
+  "ma_type": "ema",
+  "cooldown_minutes": 360,
+  "funding_limit_long": 0.0940610732735708,
+  "funding_limit_short": -0.0123698459276532,
+  "strategy_type": "trend"
+}

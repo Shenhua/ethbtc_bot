@@ -1,6 +1,6 @@
 #!/bin/bash
-# Meta Strategy Complete Optimization Workflow (Generic + WFO Support)
-# Usage: ./run_complete_optimization.sh [PRICE_CSV] [FUNDING_CSV] [TAG] [--wfo]
+# Meta Strategy Complete Optimization Workflow (Generic + WFO + Dates)
+# Usage: ./run_complete_optimization.sh [PRICE_CSV] [FUNDING_CSV] [TAG] [--wfo] [--train-start YYYY-MM-DD] ...
 
 set -e  # Exit on error
 
@@ -10,6 +10,12 @@ set -e  # Exit on error
 DEFAULT_PRICE="data/raw/ETHBTC_15m_2021-2025_vision.csv"
 DEFAULT_FUND="data/raw/ETHUSDT_funding_2021-2025.csv"
 DEFAULT_TAG="ETH"
+
+# Default Dates (Full History)
+TRAIN_START="2021-01-01"
+TRAIN_END="2024-06-30"
+TEST_START="2024-07-01"
+TEST_END="2025-06-01"
 
 # Variables
 PRICE_DATA=$DEFAULT_PRICE
@@ -22,7 +28,23 @@ while [[ $# -gt 0 ]]; do
   case $1 in
     --wfo)
       USE_WFO=true
-      shift # past argument
+      shift
+      ;;
+    --train-start)
+      TRAIN_START="$2"
+      shift 2
+      ;;
+    --train-end)
+      TRAIN_END="$2"
+      shift 2
+      ;;
+    --test-start)
+      TEST_START="$2"
+      shift 2
+      ;;
+    --test-end)
+      TEST_END="$2"
+      shift 2
       ;;
     *.csv)
       if [[ -z "$FOUND_PRICE" ]]; then
@@ -41,12 +63,6 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
-
-# Dates (Static Mode)
-TRAIN_START="2021-01-01"
-TRAIN_END="2024-06-30"
-TEST_START="2024-07-01"
-TEST_END="2025-06-01"
 
 # WFO Settings (Rolling Mode)
 WINDOW_DAYS=180
@@ -74,18 +90,16 @@ FINAL_CONFIG="configs/meta_optimized_v2_${TAG}.json"
 echo "========================================"
 echo "Optimization Workflow: ${TAG}"
 echo "Mode: $( [ "$USE_WFO" = true ] && echo "Walk-Forward (Rolling)" || echo "Static" )"
+echo "----------------------------------------"
+echo "Train: $TRAIN_START -> $TRAIN_END"
+echo "Test:  $TEST_START -> $TEST_END"
 echo "========================================"
-echo "Price Data:   ${PRICE_DATA}"
-echo "Funding Data: ${FUNDING_DATA}"
-echo "Output Config: ${FINAL_CONFIG}"
-echo ""
 
 mkdir -p results configs
 
 # =============================================
 # Step 1: Optimize Mean Reversion (Static)
 # =============================================
-# Note: MR is usually best optimized statically on long timeframes to find universal "chop" params.
 echo ""
 echo "[1/6] Optimizing Mean Reversion..."
 python3 tools/optimizer_cli.py \
@@ -129,6 +143,8 @@ echo "[3/6] Optimizing Trend..."
 
 if [ "$USE_WFO" = true ]; then
     # --- WFO PATH ---
+    # Note: WFO ignores train/test dates because it slices the whole file.
+    # We pass them anyway for consistency but the script handles slicing.
     echo "Running Walk-Forward Optimization (Window=${WINDOW_DAYS}d, Step=${STEP_DAYS}d)..."
     python3 tools/optimize_trend.py \
       --data "$PRICE_DATA" \
@@ -142,8 +158,7 @@ if [ "$USE_WFO" = true ]; then
       --study-name "trend_${TAG}_wfo" \
       --out "$OUT_TR_WFO_CSV"
 
-echo "[4/6] Extracting Latest WFO Params..."
-    # Extract the params from the LAST window in the CSV (The most recent market regime)
+    echo "[4/6] Extracting Latest WFO Params..."
     python3 - <<PYTHON
 import pandas as pd
 import json
@@ -151,17 +166,14 @@ import sys
 
 try:
     df = pd.read_csv("$OUT_TR_WFO_CSV")
-    latest = df.iloc[-1] # Get the last row
+    latest = df.iloc[-1] 
     print(f"Selected Window ending: {latest['window_end']}")
     print(f"OOS Profit: {latest['oos_profit']}")
 
-    # FIX: Use json.loads because the generator uses json.dumps
-    # (ast.literal_eval fails on 'true'/'false' from JSON)
     params_str = latest["best_params"]
     try:
         params = json.loads(params_str)
     except json.JSONDecodeError:
-        # Fallback if somehow it wasn't valid JSON (e.g. single quotes)
         import ast
         params = ast.literal_eval(params_str)
 
@@ -195,7 +207,7 @@ else
       --family-index 0 --min-occurs 1
 fi
 
-# Wrap Trend Config (Common)
+# Wrap Trend Config
 python3 - <<PYTHON
 import json
 with open("$OUT_TR_PARAMS") as f: params = json.load(f)
@@ -209,13 +221,11 @@ config = {
 }
 config["strategy"]["strategy_type"] = "trend"
 
-# IMPORTANT: Do NOT force long_only=True here. 
-# Allow the optimizer's choice (which is inside 'params') to prevail.
-# Only set defaults if missing.
 if "long_only" not in config["strategy"]: config["strategy"]["long_only"] = True
 if "step_allocation" not in config["strategy"]: config["strategy"]["step_allocation"] = 1.0
 if "max_position" not in config["strategy"]: config["strategy"]["max_position"] = 1.0
 if "rebalance_threshold_w" not in config["strategy"]: config["strategy"]["rebalance_threshold_w"] = 0.03
+
 with open("$OUT_TR_CONF", "w") as f: json.dump(config, f, indent=2)
 PYTHON
 

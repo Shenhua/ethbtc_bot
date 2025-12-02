@@ -1,9 +1,0 @@
-{
-  "fast_period": 60,
-  "slow_period": 240,
-  "ma_type": "sma",
-  "cooldown_minutes": 360,
-  "funding_limit_long": 0.09297547882526376,
-  "funding_limit_short": -0.01814886369439214,
-  "long_only": false
-}

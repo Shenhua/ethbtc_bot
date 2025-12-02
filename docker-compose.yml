@@ -57,6 +57,34 @@ services:
     ports:
       - "9101:9109" # Maps Host 9101 -> Container 9109
 
+  bot_btc:
+    build: .
+    container_name: btcusdt_bot
+    restart: unless-stopped
+    environment:
+      - BINANCE_KEY=${BINANCE_KEY}
+      - BINANCE_SECRET=${BINANCE_SECRET}
+      - BINANCE_BASE_URL=${BINANCE_BASE_URL}
+      - MODE=${MODE}
+      - SYMBOL=BTCUSDT
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+    volumes:
+      - ./run_state/btc:/data
+      - .:/app
+    command: >
+      python /app/live_executor.py 
+      --params configs/prod_btc_meta_live.json 
+      --mode ${MODE} 
+      --symbol BTCUSDT
+      --state /data/state.json
+    ports:
+      - "9102:9109"
+    networks:
+      - default
+      - trading-net
+
   # --- UTILITIES ---
   sweeper:
     build: .

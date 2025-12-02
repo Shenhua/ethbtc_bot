@@ -25,12 +25,20 @@ try:
 except ImportError:
     pass
 
+from core.config_schema import load_config, AppConfig
+
 # ------------------ Loaders ------------------
+
 def load_json_config(path: Optional[str]) -> Dict:
+    """
+    Legacy helper: Loads a JSON file and flattens the structure for easy access.
+    Required by optimizer_cli.py and other tools.
+    """
     if not path: return {}
     with open(path, "r") as f: data = json.load(f)
     if not isinstance(data, dict): return {}
     flat: Dict[str, Any] = dict(data)
+    # Flatten specific blocks for legacy script compatibility
     for block in ("params", "fees", "strategy", "execution", "risk"):
         block_dict = data.get(block)
         if isinstance(block_dict, dict): flat.update(block_dict)
@@ -63,6 +71,7 @@ def load_vision_csv(path: str) -> pd.DataFrame:
     return df.dropna(subset=["close"]).set_index("close_time").sort_index()
 
 def _write_excel(path: str, sheets: dict):
+    """Helper for multi-interval summary tools."""
     import pandas as _pd
     with _pd.ExcelWriter(path, engine="xlsxwriter") as w:
         for name, obj in sheets.items():
@@ -95,7 +104,7 @@ class StratParams:
     cooldown_minutes: int = 180
     step_allocation: float = 0.5
     max_position: float = 1.0
-    long_only: bool = True       
+    long_only: bool = True        
     rebalance_threshold_w: float = 0.0
     min_trade_btc: float = 0.0
     gate_window_days: int = 60
@@ -139,26 +148,23 @@ class EthBtcStrategy:
         band_entry = self.p.flip_band_entry + adj
         band_exit  = self.p.flip_band_exit + adj
 
-        # 2. Gate Logic (Pre-calculated Vectorized)
+        # 2. Gate Logic
         if self.p.gate_window_days > 0:
             daily = close.resample("1D").last()
             roc_daily = daily.pct_change(self.p.gate_window_days, fill_method=None)            
-            # Reindex to match close (15m), ffill to propagate daily value forward
             roc = roc_daily.reindex(close.index).ffill().fillna(0.0)
             
             gate_buy_mask = roc <= -self.p.gate_roc_threshold
             gate_sell_mask = roc >= self.p.gate_roc_threshold
         else:
-            # Gate Disabled: Always True
             gate_buy_mask = pd.Series(True, index=close.index)
             gate_sell_mask = pd.Series(True, index=close.index)
 
-        # 3. Funding Logic (Vectorized)
+        # 3. Funding Logic
         allow_buy = pd.Series(True, index=close.index)
         allow_sell = pd.Series(True, index=close.index)
         
         if funding is not None:
-            # Align funding to close index
             f_aligned = funding.reindex(close.index).ffill().fillna(0.0)
             allow_buy = f_aligned <= self.p.funding_limit_long
             allow_sell = f_aligned >= self.p.funding_limit_short
@@ -169,7 +175,7 @@ class EthBtcStrategy:
         last_flip_ts = close.index[0]
         min_delta = pd.Timedelta(minutes=self.p.cooldown_minutes)
 
-        # Pre-convert to numpy for speed & safety
+        # Pre-convert to numpy
         idx_arr = close.index
         r_arr = ratio.values
         be_arr = band_entry.values
@@ -184,7 +190,6 @@ class EthBtcStrategy:
         for i in range(len(close)):
             t = idx_arr[i]
             
-            # Cooldown check
             if (t - last_flip_ts) < min_delta:
                 out_sig[i] = state
                 continue
@@ -221,9 +226,7 @@ class EthBtcStrategy:
             mult = 1.0
 
         # 6. Final Allocation
-        # Convert numpy array back to Series for alignment
         sig_series = pd.Series(out_sig, index=close.index)
-        
         lo = 0.0 if self.p.long_only else -self.p.max_position
         target_w = (sig_series * mult).clip(lo, self.p.max_position)
         
@@ -239,24 +242,21 @@ class Backtester:
                  bnb_price_series: Optional[pd.Series] = None,
                  max_daily_loss_btc=0.0, max_dd_btc=0.0,
                  max_daily_loss_frac=0.0, max_dd_frac=0.0, risk_mode="fixed_basis",
-                 # --- NEW ARGS for Phoenix ---
                  drawdown_reset_days=0.0, drawdown_reset_score=0.0, 
                  full_df: Optional[pd.DataFrame] = None):
         
         px = close.astype(float).copy()
         
-        # Align Funding for Gates AND PnL Calculation
+        # Align Funding
         aligned_funding = None
         if funding_series is not None:
-            # fillna(0.0) is important so we don't crash on missing data
             aligned_funding = funding_series.reindex(close.index).ffill().fillna(0.0)
 
-        # Generate Positions based on Strategy Type
+        # Generate Positions
         if hasattr(strat, 'adx_threshold'): # MetaStrategy
             if full_df is None: raise ValueError("MetaStrategy requires full OHLC dataframe (full_df).")
             plan = strat.generate_positions(full_df, funding=aligned_funding)
         elif hasattr(strat, 'generate_positions'):
-            # Trend or Mean Reversion
             if isinstance(strat, EthBtcStrategy):
                 plan = strat.generate_positions(px, funding=aligned_funding)
             else:
@@ -265,19 +265,42 @@ class Backtester:
         
         target_w = plan["target_w"]
 
+        # --- PARAMETER SETUP (DYNAMIC) ---
+        # Default to MR values
+        step_mr = 1.0
+        thresh_mr = 0.0
+        step_trend = 1.0
+        thresh_trend = 0.0
+        adx_cutoff = 25.0
+        is_meta = False
+
+        if hasattr(strat, 'adx_threshold'): # MetaStrategy
+            is_meta = True
+            adx_cutoff = strat.adx_threshold
+            # Extract MR Params
+            step_mr = getattr(strat.mr.p, 'step_allocation', 1.0)
+            thresh_mr = getattr(strat.mr.p, 'rebalance_threshold_w', 0.0)
+            # Extract Trend Params
+            step_trend = getattr(strat.trend.p, 'step_allocation', 1.0)
+            thresh_trend = getattr(strat.trend.p, 'rebalance_threshold_w', 0.0)
+        elif hasattr(strat, 'p'):
+             # Single Strategy
+             step_mr = getattr(strat.p, 'step_allocation', 1.0)
+             thresh_mr = getattr(strat.p, 'rebalance_threshold_w', 0.0)
+             step_trend = step_mr
+             thresh_trend = thresh_mr
+
         # --- Execution Loop ---
         btc = np.zeros(len(px))
         eth = np.zeros(len(px))
         bnb = np.zeros(len(px))
         
-        # For Futures: 'btc' array represents Quote Balance (USDT)
-        # 'eth' array represents Position Size (Contracts)
         btc[0] = initial_btc 
         bnb[0] = start_bnb
         
         equity_high = initial_btc
         maxdd_hit = False
-        maxdd_hit_ts = None  # Track when we crashed
+        maxdd_hit_ts = None
         
         taker_fee = self.fee.taker_fee
         fee_disc = (1.0 - self.fee.bnb_discount) if self.fee.pay_fees_in_bnb else 1.0
@@ -288,17 +311,6 @@ class Backtester:
 
         cur_w = 0.0
         
-        # Try to extract step/thresh
-        step = 1.0
-        thresh = 0.0
-        if hasattr(strat, 'p'):
-            step = getattr(strat.p, 'step_allocation', 1.0)
-            thresh = getattr(strat.p, 'rebalance_threshold_w', 0.0)
-        elif hasattr(strat, 'mr'):
-            # MetaStrategy defaults
-            step = getattr(strat.mr.p, 'step_allocation', 1.0)
-            thresh = getattr(strat.mr.p, 'rebalance_threshold_w', 0.0)
-
         for i in range(1, len(px)):
             price = float(px.iat[i])
             timestamp = px.index[i]
@@ -308,50 +320,51 @@ class Backtester:
             eth[i] = eth[i-1]
             bnb[i] = bnb[i-1]
             
-            # --- Funding Fees (Futures Mode Approximation) ---
-            # Binance funding pays every 8 hours (00:00, 08:00, 16:00 UTC).
+            # Funding Fees
             if aligned_funding is not None and abs(eth[i-1]) > 0:
                 if timestamp.hour % 8 == 0 and timestamp.minute == 0:
                     rate = float(aligned_funding.iat[i])
-                    # Cost = Position * Price * Rate
                     funding_cost = eth[i-1] * price * rate
                     btc[i] -= funding_cost
 
             # Wealth Calculation
             wealth = btc[i] + eth[i] * price
             
-            # --- Risk Logic: MaxDD & Auto-Reset (Smart Phoenix) ---
-            # 1. Update High Water Mark (unless we are currently in penalty box)
+            # Risk Logic
             if not maxdd_hit:
-                if wealth > equity_high: 
-                    equity_high = wealth
+                if wealth > equity_high: equity_high = wealth
             
-            # 2. Check for Max Drawdown Hit
             if not maxdd_hit and max_dd_frac > 0.0 and equity_high > 0:
                 dd = (equity_high - wealth) / equity_high
                 if dd >= max_dd_frac: 
                     maxdd_hit = True
-                    maxdd_hit_ts = timestamp # Record time of crash
+                    maxdd_hit_ts = timestamp
             
-            # 3. Check for Auto-Reset (The Upgrade)
+            # Phoenix Reset
             if maxdd_hit and drawdown_reset_days > 0:
-                # A. Time Check
                 time_passed = timestamp - maxdd_hit_ts
-                
-                # B. Trend Check (Regime Score)
                 current_score = 0.0
                 if "regime_score" in plan.columns:
                     current_score = float(plan["regime_score"].iat[i])
                 
-                # C. Decision: Wait Time + Strong Trend
                 if (time_passed.total_seconds() >= (drawdown_reset_days * 86400)) and (current_score >= drawdown_reset_score):
                     maxdd_hit = False
-                    equity_high = wealth # Reset HWM to Current Wealth
-                    # We are back in the game!
-            
-            # 4. Set Target Weight
+                    equity_high = wealth
+
+            # Target Weight
             tw = 0.0 if maxdd_hit else float(target_w.iat[i])
             
+            # --- DYNAMIC PARAM SELECTION ---
+            step = step_mr
+            thresh = thresh_mr
+            
+            if is_meta and "regime_score" in plan.columns:
+                score = float(plan["regime_score"].iat[i])
+                if score > adx_cutoff:
+                    step = step_trend
+                    thresh = thresh_trend
+            # -------------------------------
+
             # Rebalance Logic
             new_w = cur_w + step * (tw - cur_w)
             if abs(new_w - cur_w) < thresh:
@@ -366,7 +379,6 @@ class Backtester:
                 f_rate = taker_fee * fee_disc 
                 fee_val = notional * f_rate
                 
-                # Fee Deduction
                 if self.fee.pay_fees_in_bnb and bnb_price_series is not None:
                     bnb_px = bnb_price_series.iat[i]
                     if bnb_px > 0:
@@ -391,7 +403,6 @@ class Backtester:
                 total_fees_btc += fee_val
                 total_turnover += notional
 
-            # Recalculate current weight for next iteration
             cur_w = (eth[i] * price) / max(wealth, 1e-12)
 
         final_btc = btc[-1] + eth[-1] * float(px.iat[-1])
@@ -413,136 +424,7 @@ class Backtester:
             "diagnostics": plan if hasattr(strat, 'generate_positions') else None
         }
 
-
 # ------------------ CLI ------------------
-def cmd_backtest(args):
-    df = load_vision_csv(args.data)
-    
-    funding_series = None
-    if args.funding_data:
-        f_df = pd.read_csv(args.funding_data)
-        f_df["time"] = pd.to_datetime(f_df["time"], format="mixed", utc=True)
-        f_df = f_df.set_index("time").sort_index()
-        funding_series = f_df["rate"]
-
-    cfg = load_json_config(args.config)
-    exec_cfg = cfg.get("execution", {})
-    interval_str = exec_cfg.get("interval", cfg.get("interval", "15m"))
-    bar_minutes = _interval_to_minutes(str(interval_str))
-
-    risk_cfg = cfg.get("risk") or cfg
-
-    basis = float(risk_cfg.get("basis_btc", 1.0))
-    max_daily_loss_btc = float(risk_cfg.get("max_daily_loss_btc", 0.0))
-    max_dd_btc = float(risk_cfg.get("max_dd_btc", 0.0))
-    max_daily_loss_frac = float(risk_cfg.get("max_daily_loss_frac", 0.0))
-    max_dd_frac = float(risk_cfg.get("max_dd_frac", 0.0))
-    risk_mode = risk_cfg.get("risk_mode", "fixed_basis")
-
-    reset_days = float(risk_cfg.get("drawdown_reset_days", 0.0))
-    reset_score = float(risk_cfg.get("drawdown_reset_score", 30.0))
-
-    # --- Fees: nested "fees" block if present, otherwise flat keys ---
-    fee_cfg = cfg.get("fees") or cfg
-    fee = FeeParams(
-        maker_fee=float(fee_cfg.get("maker_fee", 0.0002)),
-        taker_fee=float(fee_cfg.get("taker_fee", 0.0004)),
-        slippage_bps=float(fee_cfg.get("slippage_bps", 1.0)),
-        bnb_discount=float(fee_cfg.get("bnb_discount", 0.25)),
-        pay_fees_in_bnb=bool(fee_cfg.get("pay_fees_in_bnb", True)),
-    )
-
-    strat_params = cfg.get("strategy", {})
-    clean_params = {k: v for k, v in strat_params.items() if not k.startswith("_")}
-    clean_params.setdefault("bar_interval_minutes", bar_minutes)
-    s_type = clean_params.get("strategy_type", "mean_reversion")
-    
-    if s_type == "meta":
-        try:
-            from core.meta_strategy import MetaStrategy
-            from core.trend_strategy import TrendParams
-            
-            # 1. Create a clean base by removing the container keys
-            # We use .copy() to avoid affecting other logic
-            base = clean_params.copy()
-            mr_opts = base.pop("mean_reversion_overrides", {})
-            tr_opts = base.pop("trend_overrides", {})
-            
-            # 2. Clean out metadata like "comment" which might cause errors too
-            base.pop("comment", None)
-            mr_opts.pop("comment", None)
-            tr_opts.pop("comment", None)
-            
-            # 3. Merge: Base + Overrides
-            mr_merged = {**base, **mr_opts}
-            tr_merged = {**base, **tr_opts}
-
-            # 4. Filter against StratParams fields to be 100% safe
-            # (This prevents crashes if you add comments or new keys later)
-            valid_mr_keys = StratParams.__annotations__.keys()
-            mr_final = {k: v for k, v in mr_merged.items() if k in valid_mr_keys}
-
-            valid_tr_keys = TrendParams.__annotations__.keys()
-            tr_final = {k: v for k, v in tr_merged.items() if k in valid_tr_keys}
-
-            # 5. Initialize
-            mr_p = StratParams(**mr_final)
-            tr_p = TrendParams(**tr_final)
-            
-            strat = MetaStrategy(mr_p, tr_p, adx_threshold=float(clean_params.get("adx_threshold", 25.0)))
-        except ImportError:
-            print("Error: core.meta_strategy not found.")
-            return
-
-    elif s_type == "trend":
-        try:
-            from core.trend_strategy import TrendStrategy, TrendParams
-            tr_p = TrendParams(
-                fast_period=int(clean_params.get("fast_period", 50)),
-                slow_period=int(clean_params.get("slow_period", 200)),
-                ma_type=clean_params.get("ma_type", "ema"),
-                cooldown_minutes=int(clean_params.get("cooldown_minutes", 60)),
-                step_allocation=float(clean_params.get("step_allocation", 1.0)),
-                max_position=float(clean_params.get("max_position", 1.0)),
-                long_only=bool(clean_params.get("long_only", True)),
-                funding_limit_long=float(clean_params.get("funding_limit_long", 0.05)),
-                funding_limit_short=float(clean_params.get("funding_limit_short", -0.05))
-            )
-            strat = TrendStrategy(tr_p)
-        except ImportError:
-            print("Error: core.trend_strategy not found.")
-            return
-        
-    else:
-        p = StratParams(**clean_params)
-        strat = EthBtcStrategy(p)
-
-    bt = Backtester(fee)
-    
-    res = bt.simulate(
-        df["close"], 
-        strat, 
-        funding_series=funding_series,
-        full_df=df,
-        initial_btc=basis,
-        max_daily_loss_btc=max_daily_loss_btc,
-        max_dd_btc=max_dd_btc,
-        max_daily_loss_frac=max_daily_loss_frac,
-        max_dd_frac=max_dd_frac,
-        risk_mode=risk_mode,
-        drawdown_reset_days=reset_days,
-        drawdown_reset_score=reset_score
-    )
-    print(json.dumps(res["summary"], indent=2))
-    if args.out:
-        # Merge Wealth with Diagnostics for Analysis
-        df_out = res["portfolio"]
-        if "diagnostics" in res:
-            df_out = df_out.join(res["diagnostics"], how="left")
-            
-        df_out.to_csv(args.out)
-        print(f"Saved detailed diagnostics to {args.out}")
-
 def _interval_to_minutes(interval: str) -> int:
     mapping = {
         "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
@@ -551,8 +433,136 @@ def _interval_to_minutes(interval: str) -> int:
     }
     return mapping.get(interval, 15)
 
-def cmd_dummy(args):
-    print("Optimize/Selftest moved to tools/")
+def load_funding_series(path: Optional[str], ref_index: pd.DatetimeIndex) -> Optional[pd.Series]:
+    if not path: return None
+    f_df = pd.read_csv(path)
+    if "time" not in f_df.columns: raise ValueError("Funding CSV must have 'time'")
+    f_df["time"] = pd.to_datetime(f_df["time"], utc=True, format="mixed")
+    f_df = f_df.set_index("time").sort_index()
+    if "rate" not in f_df.columns: raise ValueError("Funding CSV must have 'rate'")
+    funding = f_df["rate"].reindex(ref_index).ffill().fillna(0.0)
+    return funding
+
+def cmd_backtest(args):
+    df = load_vision_csv(args.data)
+    
+    # Date Slicing
+    if args.start or args.end:
+        s = args.start if args.start else df.index[0]
+        e = args.end if args.end else df.index[-1]
+        df = df.loc[s:e]
+    df = df.sort_index()
+
+    app_cfg = load_config(args.config)
+    strat = build_strategy_from_config(app_cfg, df)
+    
+    fees_cfg = app_cfg.fees
+    fee = FeeParams(
+        maker_fee=fees_cfg.maker_fee, taker_fee=fees_cfg.taker_fee,
+        slippage_bps=fees_cfg.slippage_bps, bnb_discount=fees_cfg.bnb_discount,
+        pay_fees_in_bnb=fees_cfg.pay_fees_in_bnb,
+    )
+
+    risk_cfg = app_cfg.risk
+    basis = args.basis_btc if args.basis_btc is not None else (risk_cfg.basis_btc if risk_cfg.basis_btc > 0 else 1.0)
+    
+    reset_days = getattr(risk_cfg, 'drawdown_reset_days', 0.0)
+    reset_score = getattr(risk_cfg, 'drawdown_reset_score', 30.0)
+
+    funding_series = load_funding_series(args.funding_data, df.index)
+    bnb_series = None
+    if args.bnb_data:
+        bnb_df = load_vision_csv(args.bnb_data)
+        bnb_series = bnb_df["close"].reindex(df.index, method="ffill")
+
+    bt = Backtester(fee)
+    res = bt.simulate(
+        df["close"], strat, funding_series=funding_series, full_df=df,
+        initial_btc=basis, bnb_price_series=bnb_series,
+        max_daily_loss_btc=risk_cfg.max_daily_loss_btc,
+        max_dd_btc=risk_cfg.max_dd_btc,
+        max_daily_loss_frac=risk_cfg.max_daily_loss_frac,
+        max_dd_frac=risk_cfg.max_dd_frac,
+        risk_mode=risk_cfg.risk_mode,
+        drawdown_reset_days=reset_days,
+        drawdown_reset_score=reset_score
+    )
+    
+    print(json.dumps(res["summary"], indent=2))
+    if args.out:
+        df_out = res["portfolio"]
+        if "diagnostics" in res: df_out = df_out.join(res["diagnostics"], how="left")
+        df_out.to_csv(args.out)
+        print(f"Saved detailed diagnostics to {args.out}")
+
+# Copied from earlier response, ensure this exists in file
+def build_strategy_from_config(app_cfg, df: pd.DataFrame):
+    strat_cfg = app_cfg.strategy
+    exec_cfg = app_cfg.execution
+    interval_str = str(strat_cfg.strategy_type and exec_cfg.interval)
+    bar_minutes = _interval_to_minutes(interval_str)
+    
+    # (Same helper logic as before, just ensure it is included)
+    common_kwargs = dict(
+        trend_kind=strat_cfg.trend_kind, trend_lookback=strat_cfg.trend_lookback,
+        flip_band_entry=strat_cfg.flip_band_entry, flip_band_exit=strat_cfg.flip_band_exit,
+        vol_window=strat_cfg.vol_window, vol_adapt_k=strat_cfg.vol_adapt_k,
+        bar_interval_minutes=bar_minutes, target_vol=strat_cfg.target_vol,
+        min_mult=strat_cfg.min_mult, max_mult=strat_cfg.max_mult,
+        cooldown_minutes=strat_cfg.cooldown_minutes, step_allocation=strat_cfg.step_allocation,
+        max_position=strat_cfg.max_position, long_only=strat_cfg.long_only,
+        rebalance_threshold_w=strat_cfg.rebalance_threshold_w,
+        min_trade_btc=exec_cfg.min_trade_btc or 0.0,
+        gate_window_days=strat_cfg.gate_window_days, gate_roc_threshold=strat_cfg.gate_roc_threshold,
+        profit_lock_dd=strat_cfg.profit_lock_dd, vol_scaled_step=strat_cfg.vol_scaled_step,
+        funding_limit_long=strat_cfg.funding_limit_long, funding_limit_short=strat_cfg.funding_limit_short,
+        fast_period=strat_cfg.fast_period, slow_period=strat_cfg.slow_period,
+        ma_type=strat_cfg.ma_type, adx_threshold=strat_cfg.adx_threshold,
+        strategy_type=strat_cfg.strategy_type,
+    )
+    
+    if strat_cfg.strategy_type == "trend":
+        tp = TrendParams(
+            fast_period=strat_cfg.fast_period, slow_period=strat_cfg.slow_period,
+            ma_type=strat_cfg.ma_type, cooldown_minutes=strat_cfg.cooldown_minutes,
+            step_allocation=strat_cfg.step_allocation, max_position=strat_cfg.max_position,
+            long_only=strat_cfg.long_only, funding_limit_long=strat_cfg.funding_limit_long,
+            funding_limit_short=strat_cfg.funding_limit_short,
+            rebalance_threshold_w=strat_cfg.rebalance_threshold_w
+        )
+        return TrendStrategy(tp)
+
+    if strat_cfg.strategy_type == "meta":
+        mr_p = StratParams(**common_kwargs)
+        # Ensure overrides are applied via StratParams constructor if using config_schema correctly
+        # But for this builder, we assume app_cfg is already populated.
+        # Wait, the config_schema load doesn't automatically apply overrides to the base object.
+        # We need to manually handle overrides here if we want exact parity with live_executor.
+        
+        # For simplicity in this fix, we reconstruct TrendParams from the config's trend_overrides
+        # which config_schema doesn't fully expose as a separate object property easily without dict access.
+        # Actually, config_schema.py defines overrides as Dict.
+        
+        tr_opts = strat_cfg.trend_overrides
+        mr_opts = strat_cfg.mean_reversion_overrides
+        
+        # Helper to merge
+        def merge(base, over): return {**base, **over}
+        
+        # We need the base dictionary from the Strategy object
+        base_dict = strat_cfg.dict()
+        
+        tr_dict = merge(base_dict, tr_opts)
+        mr_dict = merge(base_dict, mr_opts)
+        
+        mr_p = StratParams(**{k:v for k,v in mr_dict.items() if k in StratParams.__annotations__})
+        tr_p = TrendParams(**{k:v for k,v in tr_dict.items() if k in TrendParams.__annotations__})
+        
+        return MetaStrategy(mr_p, tr_p, adx_threshold=strat_cfg.adx_threshold)
+
+    return EthBtcStrategy(StratParams(**common_kwargs))
+
+def cmd_dummy(args): print("Optimize/Selftest moved to tools/")
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
@@ -560,13 +570,13 @@ if __name__ == "__main__":
     
     bt = sub.add_parser("backtest")
     bt.add_argument("--data", required=True)
-    bt.add_argument("--funding-data", help="Path to funding rates CSV")
+    bt.add_argument("--funding-data")
     bt.add_argument("--config", required=True)
     bt.add_argument("--out")
-    
-    # Overrides
-    bt.add_argument("--rebalance-threshold-w", type=float, default=None)
-    bt.add_argument("--strategy", choices=["mean_reversion", "trend", "meta"], default=None)
+    bt.add_argument("--start")
+    bt.add_argument("--end")
+    bt.add_argument("--bnb-data")
+    bt.add_argument("--basis-btc", type=float)
     
     bt.set_defaults(func=cmd_backtest)
     
