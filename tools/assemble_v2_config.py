@@ -58,7 +58,9 @@ def main():
         "risk": {
             "basis_btc": 1.0,
             "risk_mode": "dynamic",
-            "max_dd_frac": 0.20
+            "max_dd_frac": 0.20,
+            "drawdown_reset_days": 7.0,   # Wait 7 days after crash
+            "drawdown_reset_score": 30.0  # Restart only if ADX > 30
         }
     }
 

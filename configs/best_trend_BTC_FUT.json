@@ -8,11 +8,11 @@
   },
   "strategy": {
     "fast_period": 30,
-    "slow_period": 360,
+    "slow_period": 340,
     "ma_type": "ema",
-    "cooldown_minutes": 60,
-    "funding_limit_long": 0.019194868710053707,
-    "funding_limit_short": -0.02662976900735183,
+    "cooldown_minutes": 240,
+    "funding_limit_long": 0.0393398516125051,
+    "funding_limit_short": -0.010488705645880923,
     "long_only": true,
     "strategy_type": "trend",
     "step_allocation": 1.0,
@@ -24,6 +24,8 @@
   },
   "risk": {
     "basis_btc": 1.0,
-    "risk_mode": "fixed_basis"
+    "risk_mode": "fixed_basis",
+    "drawdown_reset_days": 7.0,
+    "drawdown_reset_score": 30.0
   }
 }

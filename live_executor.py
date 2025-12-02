@@ -142,12 +142,19 @@ def _ensure_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp) -
         state["risk_maxdd_hit"] = False
 
 def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, cfg) -> None:
+    """
+    Updates the risk state (High Water Mark, Daily Loss, Max Drawdown).
+    Detects crashes but DOES NOT handle resets (Phoenix Protocol).
+    Resets are handled in the main execution loop.
+    """
     risk = cfg.risk
     risk_mode = getattr(risk, "risk_mode", "fixed_basis")
     max_dd_frac = float(getattr(risk, "max_dd_frac", 0.0) or 0.0)
     max_daily_loss_frac = float(getattr(risk, "max_daily_loss_frac", 0.0) or 0.0)
 
+    # 1. Load Current State
     equity_high = float(state.get("risk_equity_high", wealth))
+    
     current_date_str = state.get("risk_current_date")
     if current_date_str:
         try:
@@ -161,23 +168,33 @@ def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, c
     daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
     maxdd_hit = bool(state.get("risk_maxdd_hit", False))
 
-    if wealth > equity_high:
-        equity_high = wealth
+    # 2. Update High Water Mark (Only if we aren't already crashed)
+    # If we are in MaxDD state, we do NOT update HWM (we are in the penalty box)
+    if not maxdd_hit:
+        if wealth > equity_high:
+            equity_high = wealth
+    
     dd_now = equity_high - wealth
 
-    if risk_mode == "dynamic":
-        if max_dd_frac > 0.0:
-            threshold_dd = equity_high * max_dd_frac
+    # 3. Check for Max Drawdown Violation
+    if not maxdd_hit:
+        if risk_mode == "dynamic":
+            if max_dd_frac > 0.0:
+                threshold_dd = equity_high * max_dd_frac
+            else:
+                threshold_dd = float(risk.max_dd_btc)
         else:
             threshold_dd = float(risk.max_dd_btc)
-    else:
-        threshold_dd = float(risk.max_dd_btc)
 
-    if threshold_dd > 0.0 and dd_now >= threshold_dd:
-        maxdd_hit = True
+        if threshold_dd > 0.0 and dd_now >= threshold_dd:
+            maxdd_hit = True
+            # Record Time of Death for Phoenix Protocol
+            state["risk_maxdd_hit_ts"] = ts.isoformat() 
 
+    # 4. Check for Daily Loss Violation
     cur_date = ts.normalize().date()
     if cur_date != current_date:
+        # New Day: Reset Daily Counters
         current_date = cur_date
         daily_start = wealth
         daily_limit_hit = False
@@ -195,6 +212,7 @@ def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, c
     if threshold_loss > 0.0 and daily_pnl <= -threshold_loss:
         daily_limit_hit = True
 
+    # 5. Save State
     state["risk_equity_high"] = equity_high
     state["risk_current_date"] = current_date.isoformat()
     state["risk_daily_start_wealth"] = daily_start
@@ -300,6 +318,8 @@ def main():
                 break
             time.sleep(cfg.execution.poll_sec)
             continue
+
+        active_rebalance_threshold = float(cfg.strategy.rebalance_threshold_w)
 
         with BAR_LATENCY.time():
             try:
@@ -514,6 +534,10 @@ def main():
                     strat = TrendStrategy(tp)
                     plan = strat.generate_positions(df) # Requires OHLC
                     target_w = float(plan["target_w"].iloc[-1])
+
+
+
+
                     # --- Broadcast Meta-Strategy Brain ---
                     # --- ALERT: Regime Switch (Place this here!) ---
                     if "regime_score" in plan.columns:
@@ -606,6 +630,52 @@ def main():
             except Exception as e:
                 log.error("Strategy calculation failed (%s): %s", strat_type, e)
                 target_w = cur_w # Hold position on error
+
+            # --- SMART PHOENIX PROTOCOL (Auto-Recovery) ---
+            # Checks if we should wake up from a MaxDD Crash
+            if maxdd_hit and 'plan' in locals():
+                reset_days = float(getattr(cfg.risk, "drawdown_reset_days", 0.0))
+                reset_score = float(getattr(cfg.risk, "drawdown_reset_score", 30.0))
+                hit_ts_str = state.get("risk_maxdd_hit_ts")
+                
+                if reset_days > 0 and hit_ts_str:
+                    try:
+                        # 1. Check Time
+                        crash_time = pd.to_datetime(hit_ts_str)
+                        if crash_time.tzinfo is None and bar_dt.tzinfo is not None:
+                            crash_time = crash_time.replace(tzinfo=bar_dt.tzinfo)
+                        time_passed = bar_dt - crash_time
+                        
+                        # 2. Check Trend (The "Smart" part)
+                        current_score = 0.0
+                        if "regime_score" in plan.columns:
+                            current_score = float(plan["regime_score"].iloc[-1])
+                            adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
+                            
+                            current_regime = "TREND" if current_score > adx_thresh else "CHOP"
+                            
+                            # Pick the correct threshold based on regime
+                            if current_regime == "TREND":
+                                active_rebalance_threshold = float(tr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                            else:
+                                active_rebalance_threshold = float(mr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                            
+                        # 3. Decision
+                        if (time_passed.total_seconds() >= (reset_days * 86400)) and (current_score >= reset_score):
+                            log.warning(f"🐦 PHOENIX REBIRTH: Cooldown ({reset_days}d) passed AND Trend confirmed (Score {current_score:.1f} >= {reset_score}). Resuming!")
+                            
+                            # Reset Risk State
+                            maxdd_hit = False
+                            state["risk_maxdd_hit"] = False
+                            state["risk_maxdd_hit_ts"] = None
+                            state["risk_equity_high"] = W # Reset High Water Mark to NOW
+                            state["alert_sent_maxdd"] = False
+                            
+                            # Notify User
+                            alerter.send(f"✅ Phoenix Protocol Activated: Market is Trending (Score {current_score:.1f}). Resuming Trading.", level="INFO")
+                            
+                    except Exception as e:
+                        log.error(f"Phoenix logic failed: {e}")
 
             # --- SAFETY OVERRIDE ---
             # If the "Global Gate" is closed (due to funding or trend check in main loop),
@@ -813,12 +883,12 @@ def main():
                 time.sleep(cfg.execution.poll_sec)
                 continue
 
-            if abs_delta < cfg.strategy.rebalance_threshold_w:
+            if abs_delta < active_rebalance_threshold:
                 SKIPS.labels('threshold').inc()
                 mark_decision("skip_threshold")   
                 log.info(
                     "Skip: |Δw|=%.4f < threshold=%.4f (need ≥ %.4f).",
-                    abs_delta, cfg.strategy.rebalance_threshold_w, cfg.strategy.rebalance_threshold_w
+                    abs_delta, active_rebalance_threshold, active_rebalance_threshold
                 )
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts

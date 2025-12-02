@@ -114,7 +114,7 @@ config = {
     "fees": { "maker_fee": 0.0002, "taker_fee": 0.0004, "slippage_bps": 1.0, "bnb_discount": 0.25, "pay_fees_in_bnb": True },
     "strategy": params,
     "execution": { "interval": "15m", "poll_sec": 5 },
-    "risk": { "basis_btc": 1.0, "risk_mode": "fixed_basis" }
+    "risk": { "basis_btc": 1.0, "risk_mode": "fixed_basis", "drawdown_reset_days": 7.0, "drawdown_reset_score": 30.0}
 }
 config["strategy"]["strategy_type"] = "mean_reversion"
 config["strategy"]["bar_interval_minutes"] = 15
@@ -205,7 +205,7 @@ config = {
     "fees": { "maker_fee": 0.0002, "taker_fee": 0.0004, "slippage_bps": 1.0, "bnb_discount": 0.25, "pay_fees_in_bnb": True },
     "strategy": params,
     "execution": { "interval": "15m", "poll_sec": 5 },
-    "risk": { "basis_btc": 1.0, "risk_mode": "fixed_basis" }
+    "risk": { "basis_btc": 1.0, "risk_mode": "fixed_basis", "drawdown_reset_days": 7.0, "drawdown_reset_score": 30.0 }
 }
 config["strategy"]["strategy_type"] = "trend"
 
@@ -215,7 +215,7 @@ config["strategy"]["strategy_type"] = "trend"
 if "long_only" not in config["strategy"]: config["strategy"]["long_only"] = True
 if "step_allocation" not in config["strategy"]: config["strategy"]["step_allocation"] = 1.0
 if "max_position" not in config["strategy"]: config["strategy"]["max_position"] = 1.0
-
+if "rebalance_threshold_w" not in config["strategy"]: config["strategy"]["rebalance_threshold_w"] = 0.03
 with open("$OUT_TR_CONF", "w") as f: json.dump(config, f, indent=2)
 PYTHON
 

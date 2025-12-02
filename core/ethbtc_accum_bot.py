@@ -239,6 +239,8 @@ class Backtester:
                  bnb_price_series: Optional[pd.Series] = None,
                  max_daily_loss_btc=0.0, max_dd_btc=0.0,
                  max_daily_loss_frac=0.0, max_dd_frac=0.0, risk_mode="fixed_basis",
+                 # --- NEW ARGS for Phoenix ---
+                 drawdown_reset_days=0.0, drawdown_reset_score=0.0, 
                  full_df: Optional[pd.DataFrame] = None):
         
         px = close.astype(float).copy()
@@ -275,6 +277,7 @@ class Backtester:
         
         equity_high = initial_btc
         maxdd_hit = False
+        maxdd_hit_ts = None  # Track when we crashed
         
         taker_fee = self.fee.taker_fee
         fee_disc = (1.0 - self.fee.bnb_discount) if self.fee.pay_fees_in_bnb else 1.0
@@ -292,6 +295,7 @@ class Backtester:
             step = getattr(strat.p, 'step_allocation', 1.0)
             thresh = getattr(strat.p, 'rebalance_threshold_w', 0.0)
         elif hasattr(strat, 'mr'):
+            # MetaStrategy defaults
             step = getattr(strat.mr.p, 'step_allocation', 1.0)
             thresh = getattr(strat.mr.p, 'rebalance_threshold_w', 0.0)
 
@@ -306,32 +310,46 @@ class Backtester:
             
             # --- Funding Fees (Futures Mode Approximation) ---
             # Binance funding pays every 8 hours (00:00, 08:00, 16:00 UTC).
-            # If current bar timestamp matches these hours, we pay/receive funding.
-            # Only applies if we hold a position (eth[i] != 0) and have funding data.
             if aligned_funding is not None and abs(eth[i-1]) > 0:
-                # Check if this bar is an 8H funding timestamp
-                # (Simple check: hour % 8 == 0 and minute == 0)
                 if timestamp.hour % 8 == 0 and timestamp.minute == 0:
                     rate = float(aligned_funding.iat[i])
-                    # Funding Cost = Position Value * Rate
-                    # Positive Position (Long) + Positive Rate = Pay Funding (Cost)
-                    # Negative Position (Short) + Positive Rate = Receive Funding (Profit)
                     # Cost = Position * Price * Rate
                     funding_cost = eth[i-1] * price * rate
-                    
-                    # Deduct from Quote Balance (btc array)
                     btc[i] -= funding_cost
 
             # Wealth Calculation
             wealth = btc[i] + eth[i] * price
             
-            # Risk Logic: MaxDD
-            if wealth > equity_high: equity_high = wealth
+            # --- Risk Logic: MaxDD & Auto-Reset (Smart Phoenix) ---
+            # 1. Update High Water Mark (unless we are currently in penalty box)
+            if not maxdd_hit:
+                if wealth > equity_high: 
+                    equity_high = wealth
             
-            if max_dd_frac > 0.0 and equity_high > 0:
+            # 2. Check for Max Drawdown Hit
+            if not maxdd_hit and max_dd_frac > 0.0 and equity_high > 0:
                 dd = (equity_high - wealth) / equity_high
-                if dd >= max_dd_frac: maxdd_hit = True
+                if dd >= max_dd_frac: 
+                    maxdd_hit = True
+                    maxdd_hit_ts = timestamp # Record time of crash
             
+            # 3. Check for Auto-Reset (The Upgrade)
+            if maxdd_hit and drawdown_reset_days > 0:
+                # A. Time Check
+                time_passed = timestamp - maxdd_hit_ts
+                
+                # B. Trend Check (Regime Score)
+                current_score = 0.0
+                if "regime_score" in plan.columns:
+                    current_score = float(plan["regime_score"].iat[i])
+                
+                # C. Decision: Wait Time + Strong Trend
+                if (time_passed.total_seconds() >= (drawdown_reset_days * 86400)) and (current_score >= drawdown_reset_score):
+                    maxdd_hit = False
+                    equity_high = wealth # Reset HWM to Current Wealth
+                    # We are back in the game!
+            
+            # 4. Set Target Weight
             tw = 0.0 if maxdd_hit else float(target_w.iat[i])
             
             # Rebalance Logic
@@ -394,6 +412,8 @@ class Backtester:
             "trades": pd.DataFrame(trades),
             "diagnostics": plan if hasattr(strat, 'generate_positions') else None
         }
+
+
 # ------------------ CLI ------------------
 def cmd_backtest(args):
     df = load_vision_csv(args.data)
@@ -418,6 +438,9 @@ def cmd_backtest(args):
     max_daily_loss_frac = float(risk_cfg.get("max_daily_loss_frac", 0.0))
     max_dd_frac = float(risk_cfg.get("max_dd_frac", 0.0))
     risk_mode = risk_cfg.get("risk_mode", "fixed_basis")
+
+    reset_days = float(risk_cfg.get("drawdown_reset_days", 0.0))
+    reset_score = float(risk_cfg.get("drawdown_reset_score", 30.0))
 
     # --- Fees: nested "fees" block if present, otherwise flat keys ---
     fee_cfg = cfg.get("fees") or cfg
@@ -506,7 +529,9 @@ def cmd_backtest(args):
         max_dd_btc=max_dd_btc,
         max_daily_loss_frac=max_daily_loss_frac,
         max_dd_frac=max_dd_frac,
-        risk_mode=risk_mode
+        risk_mode=risk_mode,
+        drawdown_reset_days=reset_days,
+        drawdown_reset_score=reset_score
     )
     print(json.dumps(res["summary"], indent=2))
     if args.out:
