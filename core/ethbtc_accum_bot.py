@@ -21,6 +21,7 @@ import numpy as np
 try:
     from core.trend_strategy import TrendStrategy, TrendParams
     from core.meta_strategy import MetaStrategy
+    from core.alert_manager import AlertManager
 except ImportError:
     pass
 

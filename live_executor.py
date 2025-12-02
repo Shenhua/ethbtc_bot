@@ -11,7 +11,7 @@ from binance.spot import Spot
 from core.config_schema import load_config
 from core.binance_adapter import BinanceSpotAdapter
 from pathlib import Path
-
+from core.alert_manager import AlertManager
 # --- METRICS ---
 from core.metrics import (
     ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_QUOTE, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
@@ -213,7 +213,22 @@ def main():
     ap.add_argument("--once", action="store_true", help="Run one logic loop and exit (for Cron)")
 
     args = ap.parse_args()
+    
+    # 1. Start Up
+    alerter = AlertManager(prefix=args.symbol)
+    alerter.send(f"Bot started in {args.mode} mode. Strategy: Meta-V2", level="INFO")
 
+    # 2. Inside the Loop (Risk Trigger)
+    if maxdd_hit and not state.get("alert_sent_maxdd", False):
+        alerter.send(f"🚨 MAX DRAWDOWN HIT! Trading Halted. DD: {dd_pct:.2%}", level="CRITICAL")
+        state["alert_sent_maxdd"] = True
+        
+    # 3. Inside the Loop (Regime Change)
+    current_regime = "TREND" if regime_score > threshold else "MR"
+    if current_regime != state.get("last_regime", current_regime):
+        alerter.send(f"🔄 Regime Switch: Now in {current_regime} (Score: {regime_score:.1f})", level="WARNING")
+        state["last_regime"] = current_regime
+    
     state_file_name = "state.json"
     if args.state.endswith(state_file_name):
         p = Path(args.state)
