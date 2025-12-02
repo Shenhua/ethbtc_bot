@@ -1,68 +1,125 @@
+#!/usr/bin/env python3
 import os
 import sys
 import json
-import logging
 from binance.spot import Spot
 from dotenv import load_dotenv
 
-# Path Fix
+# Path Fix to find 'core'
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.alert_manager import AlertManager
+try:
+    from core.alert_manager import AlertManager
+except ImportError:
+    print("Warning: AlertManager not found. Alerts will be skipped.")
+    AlertManager = None
 
 load_dotenv()
 
 def main():
+    # 1. Environment & Configuration
     symbol = os.getenv("SYMBOL", "ETHBTC")
-    state_path = os.getenv("STATE_FILE", "run_state/eth/state.json")
+    mode = os.getenv("MODE", "testnet")
     
-    # 1. Load State (Bot's Truth)
+    # Auto-detect state file based on mode if not explicitly provided
+    default_state_file = f"/data/state_{mode}.json"
+    state_path = os.getenv("STATE_FILE", default_state_file)
+    
+    # Binance API Setup
+    api_key = os.getenv("BINANCE_KEY")
+    api_secret = os.getenv("BINANCE_SECRET")
+    base_url = os.getenv("BINANCE_BASE_URL", "https://api.binance.com")
+
+    if not api_key:
+        print("Error: BINANCE_KEY not found in environment.")
+        return
+
+    print(f"--- PnL Reconciler ({mode.upper()}) ---")
+    print(f"Target: {symbol}")
+    print(f"State File: {state_path}")
+    print(f"API URL: {base_url}")
+
+    # 2. Load Bot State (The Bot's Truth)
     if not os.path.exists(state_path):
-        print("No state file found.")
+        print(f"❌ Error: No state file found at {state_path}")
         return
         
     with open(state_path) as f:
         state = json.load(f)
         
-    bot_wealth = state.get("risk_equity_high", 0.0) # Or current W if stored
-    # Note: You might need to save 'current_wealth' explicitly in state.json in live_executor
+    # Get Session Start Wealth
+    start_w = float(state.get("session_start_W", 0.0))
+    current_w_est = float(state.get("risk_equity_high", 0.0)) # Best approximation if current W isn't saved directly
     
-    # 2. Load Real Balance (Binance's Truth)
-    client = Spot(key=os.getenv("BINANCE_KEY"), secret=os.getenv("BINANCE_SECRET"))
+    if start_w == 0:
+        print("⚠️ Bot has no session history yet (start_W is 0).")
+        return
+
+    # 3. Load Real Balance (Binance's Truth)
+    # FIX: Use api_key/api_secret and inject base_url
+    client = Spot(api_key=api_key, api_secret=api_secret, base_url=base_url)
     
-    # Get Prices
-    price = float(client.ticker_price(symbol=symbol)["price"])
+    try:
+        # Get current price
+        ticker = client.ticker_price(symbol=symbol)
+        price = float(ticker["price"])
+    except Exception as e:
+        print(f"❌ API Error fetching price: {e}")
+        return
     
-    # Get Balances
-    base = symbol.replace("BTC", "").replace("USDC", "") # Naive parsing
-    quote = "BTC" if "BTC" in symbol else "USDC"
-    
+    # Parse Assets (e.g. ETHBTC -> ETH, BTC)
+    if "USDC" in symbol:
+        base_asset = symbol.replace("USDC", "")
+        quote_asset = "USDC"
+    elif "USDT" in symbol:
+        base_asset = symbol.replace("USDT", "")
+        quote_asset = "USDT"
+    else:
+        base_asset = symbol.replace("BTC", "")
+        quote_asset = "BTC"
+
     def get_bal(asset):
-        acct = client.account()
-        for b in acct["balances"]:
-            if b["asset"] == asset:
-                return float(b["free"]) + float(b["locked"])
+        try:
+            acct = client.account()
+            for b in acct["balances"]:
+                if b["asset"] == asset:
+                    return float(b["free"]) + float(b["locked"])
+        except Exception as e:
+            print(f"❌ API Error fetching balance for {asset}: {e}")
+            return 0.0
         return 0.0
 
-    real_base = get_bal(base)
-    real_quote = get_bal(quote)
+    real_base = get_bal(base_asset)
+    real_quote = get_bal(quote_asset)
     
-    real_wealth_btc = real_quote + (real_base * price)
+    # Calculate Real Wealth in Quote terms
+    real_wealth = real_quote + (real_base * price)
     
-    # 3. Compare
-    # Assuming 'session_start_W' tracks the initial deposit
-    start_w = state.get("session_start_W", 0.0)
+    # 4. Compare & Alert
+    diff = real_wealth - start_w
+    diff_pct = (diff / start_w) * 100 if start_w > 0 else 0.0
     
-    # Calculate Drift
-    # (This logic depends on how you track 'current wealth' in state. 
-    #  If you rely on Prometheus for current wealth, this script needs to query Prometheus or just trust the Wallet.)
+    # Drift Check (Bot Estimate vs Real Wallet)
+    # Note: 'risk_equity_high' is a high-water mark, not current wealth, so this is a rough check.
+    # A better check is if you save 'last_known_W' in state.json.
     
-    print(f"Real Wallet Value: {real_wealth_btc:.6f} {quote}")
-    print(f"Bot Session Start: {start_w:.6f} {quote}")
+    msg = (
+        f"🔍 **AUDIT REPORT ({symbol})**\n"
+        f"• Bot Start W: {start_w:.6f}\n"
+        f"• Real Wallet: {real_wealth:.6f} {quote_asset} (Base={real_base:.4f}, Quote={real_quote:.4f})\n"
+        f"• Actual PnL:  {diff_pct:+.2f}%"
+    )
+    print("\n" + msg)
     
-    # Simple Alert: If Wallet drops 50% below Start, something is catastrophic
-    if real_wealth_btc < (start_w * 0.5):
-        alerter = AlertManager(prefix="AUDITOR")
-        alerter.send(f"🚨 CRITICAL: Wallet Balance ({real_wealth_btc:.4f}) is 50% below Session Start!", level="CRITICAL")
+    # Send routine check to logs/discord if AlertManager is available
+    if AlertManager:
+        alerter = AlertManager(prefix=f"AUDIT-{symbol}")
+        
+        # Critical Alert: If Wallet drops > 20% below start
+        if diff_pct < -20.0:
+             alerter.send(f"🚨 CRITICAL: Wallet Down {diff_pct:.2f}%! Check Bot Immediately.", level="CRITICAL")
+        else:
+             # Regular Info
+             alerter.send(msg, level="INFO")
 
 if __name__ == "__main__":
     main()
