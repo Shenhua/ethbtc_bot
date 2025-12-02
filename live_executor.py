@@ -213,7 +213,7 @@ def main():
     ap.add_argument("--once", action="store_true", help="Run one logic loop and exit (for Cron)")
 
     args = ap.parse_args()
-    
+
     # 1. Start Up
     alerter = AlertManager(prefix=args.symbol)
     alerter.send(f"Bot started in {args.mode} mode. Strategy: Meta-V2", level="INFO")
@@ -359,6 +359,21 @@ def main():
             maxdd_hit = bool(state.get("risk_maxdd_hit", False))
             mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
 
+
+            # --- ALERT: Risk Trigger (Place this here!) ---
+            if maxdd_hit and not state.get("alert_sent_maxdd", False):
+                # Calculate DD % manually since it's not a local variable
+                eq_high = float(state.get("risk_equity_high", W))
+                dd_pct = (eq_high - W) / eq_high if eq_high > 0 else 0.0
+                
+                alerter.send(f"🚨 MAX DRAWDOWN HIT! Trading Halted. DD: {dd_pct:.2%}", level="CRITICAL")
+                state["alert_sent_maxdd"] = True
+            
+            # Reset alert flag if we recover (optional but good practice)
+            if not maxdd_hit:
+                state["alert_sent_maxdd"] = False
+
+
             WEALTH_TOTAL.set(W) 
             PRICE_MID.set(price)
             BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
@@ -453,20 +468,20 @@ def main():
                     plan = strat.generate_positions(df) # Requires OHLC
                     target_w = float(plan["target_w"].iloc[-1])
                     # --- Broadcast Meta-Strategy Brain ---
+                    # --- ALERT: Regime Switch (Place this here!) ---
                     if "regime_score" in plan.columns:
-                        # 1. The Score
                         current_score = float(plan["regime_score"].iloc[-1])
-                        metrics.REGIME_SCORE.set(current_score)
-                        
-                        # 2. The Threshold (Read from Config)
-                        # Fallback to 25.0 if not found (e.g. legacy config)
                         adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
-                        metrics.REGIME_THRESHOLD.set(adx_thresh)
                         
-                        # 3. The Active Mode (0 = MR, 1 = Trend)
-                        # If Score > Threshold, we are in Trend Mode
-                        is_trend = 1.0 if current_score > adx_thresh else 0.0
-                        metrics.STRATEGY_MODE.set(is_trend)
+                        # Determine current regime
+                        current_regime = "TREND" if current_score > adx_thresh else "CHOP"
+                        
+                        # Compare with memory
+                        last_regime = state.get("last_regime", current_regime)
+                        
+                        if current_regime != last_regime:
+                            alerter.send(f"🔄 Regime Switch: {last_regime} ➜ {current_regime} (Score: {current_score:.1f})", level="WARNING")
+                            state["last_regime"] = current_regime
                 elif strat_type == "meta":
                     # META Strategy with Overrides
                     # 1. Base Global Params
