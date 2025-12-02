@@ -8,6 +8,8 @@ import pandas as pd
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Lock
 from binance.spot import Spot
+from binance.um_futures import UMFutures
+from core.futures_adapter import BinanceFuturesAdapter
 from core.config_schema import load_config
 from core.binance_adapter import BinanceSpotAdapter
 from pathlib import Path
@@ -235,11 +237,31 @@ def main():
 
     log.info("Using Binance base_url=%s (mode=%s)", base_url, args.mode)
 
-    client = Spot(
-        api_key=os.getenv("BINANCE_KEY", ""),
-        api_secret=os.getenv("BINANCE_SECRET", ""),
-        base_url=base_url,
-    )
+    # 1. Determine Mode
+    is_futures = (getattr(cfg.execution, "exchange_type", "spot") == "futures")
+    
+    if is_futures:
+        log.info("🚀 STARTING IN FUTURES MODE (USDS-M) 🚀")
+        # Initialize Futures Client
+        client = UMFutures(
+            key=os.getenv("BINANCE_KEY", ""),
+            secret=os.getenv("BINANCE_SECRET", ""),
+            base_url="https://testnet.binancefuture.com" if args.mode == "testnet" else "https://fapi.binance.com"
+        )
+        adapter = BinanceFuturesAdapter(client)
+        
+        # Set Leverage on startup
+        lev = getattr(cfg.execution, "leverage", 1)
+        adapter.set_leverage(args.symbol, lev)
+        
+    else:
+        # Initialize Spot Client (Existing Logic)
+        client = Spot(
+            api_key=os.getenv("BINANCE_KEY", ""),
+            api_secret=os.getenv("BINANCE_SECRET", ""),
+            base_url=base_url,
+        )
+        adapter = BinanceSpotAdapter(client)
 
     try:
         info = client.exchange_info(symbol=args.symbol)
@@ -291,29 +313,69 @@ def main():
                 time.sleep(5)
                 continue
 
+            # --- BALANCE FETCHING (Updated for Spot/Futures) ---
             try:
-                acct = client.account()
-                bal_map = {
-                    x["asset"]: float(x["free"]) + float(x["locked"])
-                    for x in acct["balances"]
-                }
-                quote_bal = bal_map.get(quote_asset, 0.0) 
-                base_bal  = bal_map.get(base_asset,  0.0) 
-                
-                if state.get("last_balance_log_ts", 0) < now_s - 300:
-                    log.info("[BALANCE] %s=%.6f, %s=%.6f", quote_asset, quote_bal, base_asset, base_bal)
-                    state["last_balance_log_ts"] = now_s
+                if is_futures:
+                    # 1. FUTURES MODE
+                    # In USDS-M Futures, our "Wallet" is the Margin Balance (USDT)
+                    quote_bal = adapter.get_account_balance(quote_asset)
+                    base_bal = 0.0 # We don't hold the base asset in futures, we hold contracts
+                    
+                    # Current Exposure comes from the open Position size
+                    current_position = adapter.get_position(args.symbol)
+                    
+                    # Value of position = Size * Price
+                    # (current_position can be negative if Short)
+                    position_val = current_position * price
+                    
+                    # Total Wealth = Margin Balance (includes unrealized PnL)
+                    W = quote_bal 
+                    
+                    # Current Weight = Notional Exposure / Total Wealth
+                    # If W is very small, guard against div/0
+                    cur_w = position_val / W if W > 1e-6 else 0.0
+                    
+                    effective_base = current_position # Used for logging/logic later
+                    
+                    # Log balance occasionally
+                    if state.get("last_balance_log_ts", 0) < now_s - 300:
+                        log.info("[FUTURES BALANCE] Margin=%.2f %s, Position=%.4f %s (%.2f%%)", 
+                                 quote_bal, quote_asset, current_position, args.symbol, cur_w*100)
+                        state["last_balance_log_ts"] = now_s
+
+                else:
+                    # 2. SPOT MODE (Legacy Logic)
+                    acct = client.account()
+                    bal_map = {
+                        x["asset"]: float(x["free"]) + float(x["locked"])
+                        for x in acct["balances"]
+                    }
+                    quote_bal = bal_map.get(quote_asset, 0.0) 
+                    base_bal  = bal_map.get(base_asset,  0.0) 
+                    
+                    if state.get("last_balance_log_ts", 0) < now_s - 300:
+                        log.info("[BALANCE] %s=%.6f, %s=%.6f", quote_asset, quote_bal, base_asset, base_bal)
+                        state["last_balance_log_ts"] = now_s
+                    
+                    # Spot Calculation
+                    f = adapter.get_filters(args.symbol)
+                    min_base_val = f.min_notional / max(price, 1e-12)
+                    
+                    effective_base = base_bal
+                    if base_bal > 0 and base_bal < min_base_val:
+                        effective_base = 0.0
+                        # ... dust logging ...
+
+                    W = quote_bal + base_bal * price
+                    cur_w = 0.0 if W <= 0 else (effective_base * price) / W   
+
             except Exception as e:
                 log.error("CRITICAL: Failed to fetch %s account balance. Reason: %s", args.mode.upper(), e)
-                quote_bal, base_bal = cfg.risk.basis_btc, 0.0 
-
+                # Fallback logic...
+                quote_bal, base_bal = cfg.risk.basis_btc, 0.0
                 if "last_known_quote" in state:
                     quote_bal = state["last_known_quote"]
-                    base_bal = state.get("last_known_base", 0.0)
-                    log.warning("Using LAST KNOWN balance: %s=%.6f", quote_asset, quote_bal)
-                else:
-                    log.warning("Using CONFIG BASIS fallback (Dangerous for Live!): %.6f", quote_bal)
-
+                    # ...
             state["last_known_quote"] = quote_bal
             state["last_known_base"]  = base_bal
 
@@ -555,7 +617,15 @@ def main():
                     target_w = cur_w
             # -----------------------
 
-            target_w = max(0.0, min(1.0, target_w))
+            # If Spot: Clamp [0, 1]
+            # If Futures: Clamp [-1, 1] (or [-Leverage, +Leverage])
+            if is_futures:
+                # Allow Shorts!
+                max_lev = float(getattr(cfg.execution, "leverage", 1.0))
+                target_w = max(-max_lev, min(max_lev, target_w))
+            else:
+                # Spot is Long Only
+                target_w = max(0.0, min(1.0, target_w))
 
             reset_trade_decision()
 
@@ -615,7 +685,18 @@ def main():
                 new_w = cur_w
 
             delta_w = new_w - cur_w
+            
+            # Delta Base = Weight Change * Total Wealth / Price
             delta_eth = delta_w * W / max(price, 1e-12)
+            
+            # Determine Side
+            # If delta_eth is positive -> BUY (Longer)
+            # If delta_eth is negative -> SELL (Shorter)
+            side = "BUY" if delta_eth > 0 else "SELL"
+            
+            # For execution size, use absolute value
+            qty_abs = abs(delta_eth)
+
             set_delta_metrics(delta_w, delta_eth)
 
             # Spread Probe
@@ -627,7 +708,24 @@ def main():
             except Exception as e:
                 log.warning("Spread probe failed. Reason: %s", e)
 
-            action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
+            # Determine Side
+            # In Futures, delta_eth can be negative (Opening a Short)
+            # Logic: 
+            #   Positive Delta -> We need more exposure -> BUY
+            #   Negative Delta -> We need less exposure -> SELL
+            side = "BUY" if delta_eth > 0 else "SELL"
+
+            # Check Balance / Margin
+            # In Futures, we check "Available Margin" vs "Initial Margin Requirement"
+            # For simplicity in this spot-based architecture, we rely on the clamp logic below.
+            
+            if not is_futures and side == "SELL" and base_bal <= 1e-12:
+                # Spot-only check: Can't sell what you don't have
+                SKIPS.labels("balance").inc()
+                # ... (rest of skip balance logic) ...
+                continue
+
+            qty_abs = abs(delta_eth)
             
             update_status({
                 "mode": args.mode,

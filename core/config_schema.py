@@ -65,6 +65,8 @@ class Execution(BaseModel):
     min_trade_floor_btc: float = Field(0.0, ge=0.0, le=10.0)
     min_trade_cap_btc: float = Field(0.0, ge=0.0, le=10.0)
     min_trade_btc: Optional[float] = None
+    exchange_type: Literal["spot", "futures"] = "spot"  
+    leverage: int = Field(1, ge=1, le=20)              
 
 class Risk(BaseModel):
     basis_btc: float = Field(0.0, ge=0.0, le=100000.0)

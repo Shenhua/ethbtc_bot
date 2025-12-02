@@ -243,8 +243,10 @@ class Backtester:
         
         px = close.astype(float).copy()
         
+        # Align Funding for Gates AND PnL Calculation
         aligned_funding = None
         if funding_series is not None:
+            # fillna(0.0) is important so we don't crash on missing data
             aligned_funding = funding_series.reindex(close.index).ffill().fillna(0.0)
 
         # Generate Positions based on Strategy Type
@@ -253,21 +255,24 @@ class Backtester:
             plan = strat.generate_positions(full_df, funding=aligned_funding)
         elif hasattr(strat, 'generate_positions'):
             # Trend or Mean Reversion
-            # Trend handles Series or DF.
             if isinstance(strat, EthBtcStrategy):
                 plan = strat.generate_positions(px, funding=aligned_funding)
             else:
-                # TrendStrategy or others that might use OHLC if available
                 input_data = full_df if full_df is not None else px
                 plan = strat.generate_positions(input_data, funding=aligned_funding)
         
         target_w = plan["target_w"]
 
         # --- Execution Loop ---
-        btc = np.zeros(len(px)); eth = np.zeros(len(px)); bnb = np.zeros(len(px))
-        btc[0] = initial_btc; bnb[0] = start_bnb
-        cur_w = 0.0
-
+        btc = np.zeros(len(px))
+        eth = np.zeros(len(px))
+        bnb = np.zeros(len(px))
+        
+        # For Futures: 'btc' array represents Quote Balance (USDT)
+        # 'eth' array represents Position Size (Contracts)
+        btc[0] = initial_btc 
+        bnb[0] = start_bnb
+        
         equity_high = initial_btc
         maxdd_hit = False
         
@@ -278,10 +283,11 @@ class Backtester:
         total_turnover = 0.0
         trades = []
 
-        step = 1.0
-        thresh = 0.0
+        cur_w = 0.0
         
         # Try to extract step/thresh
+        step = 1.0
+        thresh = 0.0
         if hasattr(strat, 'p'):
             step = getattr(strat.p, 'step_allocation', 1.0)
             thresh = getattr(strat.p, 'rebalance_threshold_w', 0.0)
@@ -291,9 +297,35 @@ class Backtester:
 
         for i in range(1, len(px)):
             price = float(px.iat[i])
-            btc[i] = btc[i-1]; eth[i] = eth[i-1]; bnb[i] = bnb[i-1]
+            timestamp = px.index[i]
             
+            # Carry forward balances
+            btc[i] = btc[i-1]
+            eth[i] = eth[i-1]
+            bnb[i] = bnb[i-1]
+            
+            # --- Funding Fees (Futures Mode Approximation) ---
+            # Binance funding pays every 8 hours (00:00, 08:00, 16:00 UTC).
+            # If current bar timestamp matches these hours, we pay/receive funding.
+            # Only applies if we hold a position (eth[i] != 0) and have funding data.
+            if aligned_funding is not None and abs(eth[i-1]) > 0:
+                # Check if this bar is an 8H funding timestamp
+                # (Simple check: hour % 8 == 0 and minute == 0)
+                if timestamp.hour % 8 == 0 and timestamp.minute == 0:
+                    rate = float(aligned_funding.iat[i])
+                    # Funding Cost = Position Value * Rate
+                    # Positive Position (Long) + Positive Rate = Pay Funding (Cost)
+                    # Negative Position (Short) + Positive Rate = Receive Funding (Profit)
+                    # Cost = Position * Price * Rate
+                    funding_cost = eth[i-1] * price * rate
+                    
+                    # Deduct from Quote Balance (btc array)
+                    btc[i] -= funding_cost
+
+            # Wealth Calculation
             wealth = btc[i] + eth[i] * price
+            
+            # Risk Logic: MaxDD
             if wealth > equity_high: equity_high = wealth
             
             if max_dd_frac > 0.0 and equity_high > 0:
@@ -302,6 +334,7 @@ class Backtester:
             
             tw = 0.0 if maxdd_hit else float(target_w.iat[i])
             
+            # Rebalance Logic
             new_w = cur_w + step * (tw - cur_w)
             if abs(new_w - cur_w) < thresh:
                 new_w = cur_w
@@ -309,11 +342,13 @@ class Backtester:
             target_eth = new_w * wealth / price
             delta = target_eth - eth[i]
             
+            # Execution
             if abs(delta * price) > 0.0001:
                 notional = abs(delta * price)
                 f_rate = taker_fee * fee_disc 
                 fee_val = notional * f_rate
                 
+                # Fee Deduction
                 if self.fee.pay_fees_in_bnb and bnb_price_series is not None:
                     bnb_px = bnb_price_series.iat[i]
                     if bnb_px > 0:
@@ -338,7 +373,8 @@ class Backtester:
                 total_fees_btc += fee_val
                 total_turnover += notional
 
-            cur_w = (eth[i] * price) / max(btc[i] + eth[i] * price, 1e-12)
+            # Recalculate current weight for next iteration
+            cur_w = (eth[i] * price) / max(wealth, 1e-12)
 
         final_btc = btc[-1] + eth[-1] * float(px.iat[-1])
         
@@ -351,15 +387,13 @@ class Backtester:
             "n_trades": len(trades)
         }
         
-        # CRITICAL FIX: Return 'plan' (diagnostics) alongside portfolio for analysis
         port_df = pd.DataFrame({"wealth_btc": btc + eth*px}, index=px.index)
         return {
             "summary": summary, 
             "portfolio": port_df, 
             "trades": pd.DataFrame(trades),
-            "diagnostics": plan
+            "diagnostics": plan if hasattr(strat, 'generate_positions') else None
         }
-
 # ------------------ CLI ------------------
 def cmd_backtest(args):
     df = load_vision_csv(args.data)

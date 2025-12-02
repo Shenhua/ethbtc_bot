@@ -23,34 +23,43 @@ logging.basicConfig(
 log = logging.getLogger("optimizer")
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-def suggest_params(trial):
+def suggest_params(trial, allow_shorts=False):
     """Search Space for Trend Strategy"""
     fast = trial.suggest_int("fast_period", 10, 200, step=10)
     slow = trial.suggest_int("slow_period", 40, 400, step=20)
     ma_type = trial.suggest_categorical("ma_type", ["ema", "sma"])
     cooldown = trial.suggest_categorical("cooldown_minutes", [60, 120, 240, 360])
+    
+    # Funding limits (relevant for Futures)
     funding_long = trial.suggest_float("funding_limit_long", 0.01, 0.10)
     funding_short = trial.suggest_float("funding_limit_short", -0.10, -0.01)
+
+    # Shorting Logic
+    if allow_shorts:
+        long_only = trial.suggest_categorical("long_only", [True, False])
+    else:
+        long_only = True
 
     return TrendParams(
         fast_period=fast, slow_period=slow, ma_type=ma_type,
         cooldown_minutes=cooldown, step_allocation=1.0, max_position=1.0,
-        long_only=True, funding_limit_long=funding_long, funding_limit_short=funding_short
+        long_only=long_only, funding_limit_long=funding_long, funding_limit_short=funding_short
     )
 
 class Objective:
-    def __init__(self, fee, train_close, funding_train):
+    def __init__(self, fee, train_close, funding_train, allow_shorts=False):
         self.fee = fee
         self.train_close = train_close
         self.funding_train = funding_train
+        self.allow_shorts = allow_shorts
 
     def __call__(self, trial):
         try:
-            p = suggest_params(trial)
+            p = suggest_params(trial, self.allow_shorts)
             if p.fast_period >= p.slow_period:
                 raise optuna.TrialPruned("Fast >= Slow")
 
-            # 1. Run Simulation ONLY on Training Data
+            # 1. Run Simulation ONLY on Training Data (No Cheating!)
             bt = Backtester(self.fee)
             res_tr = bt.simulate(
                 self.train_close, TrendStrategy(p), 
@@ -59,15 +68,13 @@ class Objective:
             
             summ_tr = res_tr["summary"]
             
-            # 2. Calculate Score based ONLY on Training Data
+            # 2. Calculate Score based on Training Data
             train_profit = float(summ_tr["final_btc"])
             turns = float(summ_tr["n_trades"])
             dd = float(summ_tr["max_drawdown_pct"])
             
-            # Score: High Profit, Low Drawdown, Active Trading
+            # Score: Profit penalized by extreme DD
             score = train_profit
-            
-            # Penalties (Applied to Training Score)
             if dd < -0.25: score -= 0.5 
             if turns < 5: score -= 1.0 # Penalize inactive strategies
             
@@ -105,25 +112,25 @@ def run_slice_optimization(args, fee, df, start_idx, end_idx, test_end_idx, fund
         storage=args.storage, load_if_exists=True
     )
     
-    # Optimize using ONLY Training Data
-    obj = Objective(fee, train_close, f_tr)
+    # Optimize using ONLY Training Data + Allow Shorts setting
+    obj = Objective(fee, train_close, f_tr, allow_shorts=args.allow_shorts)
     study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
     
-    # --- THE CRUCIAL CHANGE ---
-    # Now that we found the best params based on the PAST, 
-    # we run them ONCE on the FUTURE (Test Data) to see if they held up.
+    # --- VALIDATION STEP ---
+    # Take the best params from the PAST and test them on the FUTURE
     best_trial = study.best_trial
     best_params = best_trial.params
     
-    # Re-construct params object
+    # Re-construct params object safely
     p_best = TrendParams(
         fast_period=best_params["fast_period"],
         slow_period=best_params["slow_period"],
         ma_type=best_params["ma_type"],
         cooldown_minutes=best_params["cooldown_minutes"],
-        funding_limit_long=best_params["funding_limit_long"],
-        funding_limit_short=best_params["funding_limit_short"],
-        step_allocation=1.0, max_position=1.0, long_only=True
+        funding_limit_long=best_params.get("funding_limit_long", 0.05),
+        funding_limit_short=best_params.get("funding_limit_short", -0.05),
+        long_only=best_params.get("long_only", True), # Respect the optimizer's choice
+        step_allocation=1.0, max_position=1.0
     )
 
     # Run the "Out of Sample" Test
@@ -133,7 +140,7 @@ def run_slice_optimization(args, fee, df, start_idx, end_idx, test_end_idx, fund
     oos_profit = float(res_te["summary"]["final_btc"])
     train_profit = best_trial.value
     
-    log.info(f"Window {train_close.index[-1].date()}: Train Score={train_profit:.4f} | OOS Profit={oos_profit:.4f}")
+    log.info(f"Window {train_close.index[-1].date()}: Train={train_profit:.4f} | OOS={oos_profit:.4f} | LongOnly={p_best.long_only}")
     
     return {
         "window_end": train_close.index[-1],
@@ -141,10 +148,8 @@ def run_slice_optimization(args, fee, df, start_idx, end_idx, test_end_idx, fund
         "oos_end": test_close.index[-1],
         "oos_profit": oos_profit,
         "train_profit": train_profit,
-        "best_params": json.dumps(best_params) # Serialize for CSV
+        "best_params": json.dumps(best_params)
     }
-
-
 
 def main():
     ap = argparse.ArgumentParser()
@@ -159,22 +164,27 @@ def main():
     ap.add_argument("--window-days", type=int, default=180, help="Training window size")
     ap.add_argument("--step-days", type=int, default=30, help="Step size for re-optimization")
     
+    # Futures / Shorts
+    ap.add_argument("--allow-shorts", action="store_true", help="Allow Short strategies (Futures)")
+
     # Standard Mode Arguments (Backwards Compatibility)
     ap.add_argument("--train-start")
     ap.add_argument("--train-end")
     ap.add_argument("--test-start")
     ap.add_argument("--test-end")
 
+    # Fees
+    ap.add_argument("--maker-fee", type=float, default=0.0002)
+    ap.add_argument("--taker-fee", type=float, default=0.0004)
+
     ap.add_argument("--storage", default="sqlite:///data/db/optuna.db")
     ap.add_argument("--study-name", default="trend_study")
     
     args = ap.parse_args()
 
-    # Create DB dir
     if args.storage.startswith("sqlite:///"):
         os.makedirs(os.path.dirname(args.storage.replace("sqlite:///", "")), exist_ok=True)
 
-    # Load Data
     df = load_vision_csv(args.data).dropna()
     
     funding_series = None
@@ -184,21 +194,20 @@ def main():
         f_df = f_df.set_index("time").sort_index()
         funding_series = f_df["rate"]
 
-    fee = FeeParams()
+    fee = FeeParams(maker_fee=args.maker_fee, taker_fee=args.taker_fee)
 
-    # --- MODE SELECTION ---
+    # --- WFO MODE ---
     if args.wfo:
         log.info(f"Starting Walk-Forward Optimization (Window={args.window_days}d, Step={args.step_days}d)")
-        
-        # Calculate indices
-        # We assume 15m candles: 1 day = 96 bars
-        bars_per_day = 96
+        if args.allow_shorts:
+            log.info("🩳 Shorting (Futures) Enabled")
+
+        bars_per_day = 96 # 15m candles
         window_bars = args.window_days * bars_per_day
         step_bars = args.step_days * bars_per_day
         
         wfo_results = []
         
-        # Sliding Loop
         for i in range(0, len(df) - window_bars - step_bars, step_bars):
             train_end = i + window_bars
             test_end = train_end + step_bars
@@ -209,40 +218,35 @@ def main():
             if res:
                 wfo_results.append(res)
         
-        # Save WFO Summary
         if wfo_results:
             wfo_df = pd.DataFrame(wfo_results)
             wfo_df.to_csv(args.out, index=False)
-            total_ret = wfo_df["oos_profit"].prod() # Compound returns? Or sum if btc delta?
-            # Actually final_btc is absolute wealth (starts at 1.0). 
-            # To chain them properly we'd need percent returns. 
-            # For simplicity, we just save the schedule.
             log.info(f"WFO Complete. Schedule saved to {args.out}")
         else:
             log.error("WFO failed: No valid windows found.")
 
+    # --- STATIC MODE ---
     else:
-        # --- CLASSIC STATIC MODE ---
         log.info("Starting Static Optimization")
-        # Reuse the single-slice logic manually
-        # Slicing logic moved here to support legacy arguments
         train_close = df["close"].loc[args.train_start:args.train_end].dropna()
-        test_close = df["close"].loc[args.test_start:args.test_end].dropna()
         
-        # Align Funding
-        f_tr = f_te = None
+        f_tr = None
         if funding_series is not None:
             f_tr = funding_series.reindex(train_close.index, method="ffill").fillna(0.0)
-            f_te = funding_series.reindex(test_close.index, method="ffill").fillna(0.0)
 
         study = optuna.create_study(
             study_name=args.study_name, direction="maximize",
             storage=args.storage, load_if_exists=True
         )
-        obj = Objective(fee, train_close, test_close, f_tr, f_te)
+        # Use Train-Only objective here too for consistency? 
+        # Usually static optimization wants to test on a specific hold-out set manually.
+        # We will use the Objective class but we need to match the signature.
+        # For static mode, we usually just want to fill the DB.
+        
+        obj = Objective(fee, train_close, f_tr, allow_shorts=args.allow_shorts)
         study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
         
-        # Save standard output
+        # Save output
         rows = []
         for t in study.trials:
             if t.state == optuna.trial.TrialState.COMPLETE:

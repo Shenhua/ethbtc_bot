@@ -75,6 +75,10 @@ echo "========================================"
 echo "Optimization Workflow: ${TAG}"
 echo "Mode: $( [ "$USE_WFO" = true ] && echo "Walk-Forward (Rolling)" || echo "Static" )"
 echo "========================================"
+echo "Price Data:   ${PRICE_DATA}"
+echo "Funding Data: ${FUNDING_DATA}"
+echo "Output Config: ${FINAL_CONFIG}"
+echo ""
 
 mkdir -p results configs
 
@@ -130,6 +134,7 @@ if [ "$USE_WFO" = true ]; then
       --data "$PRICE_DATA" \
       --funding-data "$FUNDING_DATA" \
       --wfo \
+      --allow-shorts \
       --window-days $WINDOW_DAYS \
       --step-days $STEP_DAYS \
       --n-trials $TR_TRIALS \
@@ -137,23 +142,37 @@ if [ "$USE_WFO" = true ]; then
       --study-name "trend_${TAG}_wfo" \
       --out "$OUT_TR_WFO_CSV"
 
-    echo "[4/6] Extracting Latest WFO Params..."
+echo "[4/6] Extracting Latest WFO Params..."
     # Extract the params from the LAST window in the CSV (The most recent market regime)
     python3 - <<PYTHON
 import pandas as pd
 import json
-import ast
+import sys
 
-df = pd.read_csv("$OUT_TR_WFO_CSV")
-latest = df.iloc[-1] # Get the last row (most recent window)
-print(f"Selected Window ending: {latest['window_end']}")
-print(f"OOS Profit: {latest['oos_profit']}")
+try:
+    df = pd.read_csv("$OUT_TR_WFO_CSV")
+    latest = df.iloc[-1] # Get the last row
+    print(f"Selected Window ending: {latest['window_end']}")
+    print(f"OOS Profit: {latest['oos_profit']}")
 
-# Parse the params string representation
-params = ast.literal_eval(latest["best_params"])
+    # FIX: Use json.loads because the generator uses json.dumps
+    # (ast.literal_eval fails on 'true'/'false' from JSON)
+    params_str = latest["best_params"]
+    try:
+        params = json.loads(params_str)
+    except json.JSONDecodeError:
+        # Fallback if somehow it wasn't valid JSON (e.g. single quotes)
+        import ast
+        params = ast.literal_eval(params_str)
 
-with open("$OUT_TR_PARAMS", "w") as f:
-    json.dump(params, f, indent=2)
+    print(f"Latest Params (LongOnly={params.get('long_only')}): Saved.")
+
+    with open("$OUT_TR_PARAMS", "w") as f:
+        json.dump(params, f, indent=2)
+
+except Exception as e:
+    print(f"Error extracting params: {e}")
+    sys.exit(1)
 PYTHON
 
 else
@@ -181,6 +200,7 @@ python3 - <<PYTHON
 import json
 with open("$OUT_TR_PARAMS") as f: params = json.load(f)
 for k in ["_generated_by", "_generated_at", "_family"]: params.pop(k, None)
+
 config = {
     "fees": { "maker_fee": 0.0002, "taker_fee": 0.0004, "slippage_bps": 1.0, "bnb_discount": 0.25, "pay_fees_in_bnb": True },
     "strategy": params,
@@ -188,7 +208,11 @@ config = {
     "risk": { "basis_btc": 1.0, "risk_mode": "fixed_basis" }
 }
 config["strategy"]["strategy_type"] = "trend"
-config["strategy"]["long_only"] = True
+
+# IMPORTANT: Do NOT force long_only=True here. 
+# Allow the optimizer's choice (which is inside 'params') to prevail.
+# Only set defaults if missing.
+if "long_only" not in config["strategy"]: config["strategy"]["long_only"] = True
 if "step_allocation" not in config["strategy"]: config["strategy"]["step_allocation"] = 1.0
 if "max_position" not in config["strategy"]: config["strategy"]["max_position"] = 1.0
 
@@ -216,4 +240,8 @@ python3 tools/assemble_v2_config.py \
   --out "$FINAL_CONFIG"
 
 echo ""
-echo "DONE. Config saved to: $FINAL_CONFIG"
+echo "========================================"
+echo "✓ DONE: ${TAG} Optimization Complete"
+echo "========================================"
+echo "File: ${FINAL_CONFIG}"
+echo ""
