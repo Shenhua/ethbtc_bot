@@ -8,9 +8,8 @@ services:
       - default 
       - trading-net
     environment:
-      - BINANCE_KEY=${BINANCE_KEY}
-      - BINANCE_SECRET=${BINANCE_SECRET}
-      - BINANCE_BASE_URL=${BINANCE_BASE_URL}
+      - BINANCE_KEY=${SPOT_TESTNET_KEY}
+      - BINANCE_SECRET=${SPOT_TESTNET_SECRET}
       - MODE=${MODE}
       - SYMBOL=ETHBTC
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
@@ -62,9 +61,8 @@ services:
     container_name: btcusdt_bot
     restart: unless-stopped
     environment:
-      - BINANCE_KEY=${BINANCE_KEY}
-      - BINANCE_SECRET=${BINANCE_SECRET}
-      - BINANCE_BASE_URL=${BINANCE_BASE_URL}
+      - BINANCE_KEY=${FUTURES_TESTNET_KEY}
+      - BINANCE_SECRET=${FUTURES_TESTNET_SECRET}
       - MODE=${MODE}
       - SYMBOL=BTCUSDT
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}

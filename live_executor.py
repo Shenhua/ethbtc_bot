@@ -282,8 +282,16 @@ def main():
         adapter = BinanceSpotAdapter(client)
 
     try:
-        info = client.exchange_info(symbol=args.symbol)
-        s_info = info["symbols"][0]
+        # Futures and Spot have different exchange_info() signatures
+        if is_futures:
+            info = client.exchange_info()  # Futures: no symbol parameter
+            s_info = next((s for s in info["symbols"] if s["symbol"] == args.symbol), None)
+            if not s_info:
+                raise ValueError(f"Symbol {args.symbol} not found in futures exchange info")
+        else:
+            info = client.exchange_info(symbol=args.symbol)  # Spot: with symbol parameter
+            s_info = info["symbols"][0]
+        
         base_asset = s_info["baseAsset"]
         quote_asset = s_info["quoteAsset"]
         log.info("Configuration: Trading %s | Base=%s | Quote=%s", args.symbol, base_asset, quote_asset)

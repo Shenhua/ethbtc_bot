@@ -49,6 +49,7 @@
     }
   },
   "execution": {
+    "exchange_type": "spot",
     "interval": "15m",
     "poll_sec": 5,
     "ttl_sec": 30,
