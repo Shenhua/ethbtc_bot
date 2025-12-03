@@ -1,5 +1,8 @@
 # core/metrics.py
 from prometheus_client import Counter, Gauge, Summary, start_http_server, REGISTRY
+import threading
+from http.server import HTTPServer
+import os
 
 # --- Reload-safe registry setup for tests ------------------------------------
 try:
@@ -14,9 +17,7 @@ ORDERS_SUBMITTED = Counter("orders_submitted_total", "Orders submitted", ["kind"
 FILLS = Counter("fills_total", "Executed fills")
 REJECTIONS = Counter("rejections_total", "Order rejections", ["reason"])
 
-# Renamed for clarity (was pnl_btc) - now generic PnL in Quote units
 PNL_QUOTE = Gauge("pnl_quote", "PnL in Quote Asset since session start")
-
 EXPOSURE_W = Gauge("exposure_base_weight", "Base Asset target/curr weights", ["kind"])
 SPREAD_BPS = Gauge("spread_bps", "Current spread in basis points")
 BAR_LATENCY = Summary("bar_latency_seconds", "Latency of processing a closed bar")
@@ -30,17 +31,11 @@ TRADE_DECISION = Gauge("trade_decision", "Decision this bar", ["trade_decision"]
 DELTA_W = Gauge("delta_w", "Planned Δweight")
 DELTA_BASE = Gauge("delta_base_asset", "Planned ΔBase units")
 
-# GENERIC WEALTH (Was WEALTH_BTC_TOTAL)
 WEALTH_TOTAL = Gauge("wealth_total", "Total wealth in Quote Asset units")
 PRICE_MID = Gauge("price_mid", "Mid price of the traded pair")
-
-# BALANCES (Asset label will be dynamic)
 BAL_FREE = Gauge("balance_free", "Free balance by asset", ["asset"])
 
 SKIPS = Counter("skips_total", "Skips by reason", ["reason"])
-
-# ---- GENERIC USD PRICES (New) ---------------------------------------------
-# Replaces PRICE_BTC_USD / PRICE_ETH_USD
 PRICE_ASSET_USD = Gauge("price_asset_usd", "Approx USD price of asset", ["asset"])
 
 # ---- Signal & Risk --------------------------------------------------------
@@ -62,24 +57,26 @@ REGIME_SCORE = Gauge("regime_score", "Current Trend Consensus Score (0-100)")
 REGIME_THRESHOLD = Gauge("regime_threshold", "ADX Threshold for Regime Switch")
 STRATEGY_MODE = Gauge("strategy_mode", "Active Strategy: 0=MeanRev, 1=Trend")
 PHOENIX_ACTIVE = Gauge("phoenix_active", "Phoenix Protocol Status: 1=Waiting for Reset, 0=Normal Trading")
+
 # ---- Helper functions -----------------------------------------------------
 
 def start_metrics_server(port: int, story_file: str = None) -> None:
     """
     Start Prometheus metrics HTTP server with optional /story endpoint.
-    
-    Args:
-        port: Port to listen on
-        story_file: Optional path to story file for /story endpoint
     """
     if story_file:
         # Use custom handler that serves both /metrics and /story
         import core.story_server as ss
         ss.StoryMetricsHandler.story_file_path = story_file
-        prometheus_client.start_http_server(port, handler=ss.StoryMetricsHandler)
+        
+        # FIX: Manually start HTTPServer to support custom handler
+        httpd = HTTPServer(("", port), ss.StoryMetricsHandler)
+        t = threading.Thread(target=httpd.serve_forever)
+        t.daemon = True
+        t.start()
     else:
         # Standard Prometheus server (metrics only)
-        prometheus_client.start_http_server(port)
+        start_http_server(port)
 
 def mark_signal_metrics(ratio: float, dist_buy: float, dist_sell: float) -> None:
     SIGNAL_RATIO.set(ratio)
@@ -127,9 +124,6 @@ def snapshot_wealth_balances(
     quote_asset: str,
     base_asset: str
 ) -> None:
-    """
-    Generic snapshot of wealth + balances + mid price.
-    """
     WEALTH_TOTAL.set(wealth_total)
     PRICE_MID.set(price_mid)
     BAL_FREE.labels(quote_asset.lower()).set(quote_val)
@@ -149,5 +143,4 @@ def mark_funding_rate(rate: float) -> None:
     FUNDING_RATE.set(rate)
 
 def mark_asset_price_usd(asset: str, price: float) -> None:
-    """Record USD price for a specific asset label"""
     PRICE_ASSET_USD.labels(asset=asset.lower()).set(price)

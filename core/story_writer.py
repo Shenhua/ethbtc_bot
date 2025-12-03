@@ -78,7 +78,7 @@ class StoryWriter:
         self.last_wealth = initial_wealth
         
         self._write_line(timestamp, "🚀", "BOT STARTED", 
-                        f"Mode: {mode.upper()} | Wealth: {initial_wealth:.6f} {quote_asset}")
+                         f"Mode: {mode.upper()} | Wealth: {initial_wealth:.6f} {quote_asset}")
         self._write_line(timestamp, "=" * 80, "", "")
     
     def check_ath(self, timestamp: datetime, current_wealth: float, quote_asset: str) -> bool:
@@ -88,6 +88,12 @@ class StoryWriter:
         Returns:
             True if new ATH was detected
         """
+        # BUG FIX: If peak_wealth is 0 (initial state), just set it and return
+        if self.peak_wealth <= 1e-9:
+            self.peak_wealth = current_wealth
+            self.last_wealth = current_wealth
+            return False
+
         if current_wealth > self.peak_wealth:
             # Only log if it's a significant increase (>2%)
             if current_wealth > self.last_wealth * 1.02:
@@ -110,7 +116,7 @@ class StoryWriter:
         return False
     
     def check_regime_switch(self, timestamp: datetime, score: float, 
-                           threshold: float, strategy_type: str = "meta"):
+                            threshold: float, strategy_type: str = "meta"):
         """Check for regime switch and log if detected."""
         if strategy_type != "meta":
             return  # Only log for meta strategy
@@ -119,7 +125,7 @@ class StoryWriter:
         
         if self.last_regime is not None and current_regime != self.last_regime:
             self._write_line(timestamp, "🔄", f"REGIME SWITCH: {current_regime:<15}", 
-                           f"Score: {score:.1f} (Threshold: {threshold:.1f})")
+                            f"Score: {score:.1f} (Threshold: {threshold:.1f})")
         
         # Track regime for summaries (even if no switch)
         self._track_regime(current_regime)
@@ -133,7 +139,7 @@ class StoryWriter:
         notional = abs(quantity * price)
         
         self._write_line(timestamp, icon, f"{side:<40}", 
-                        f"{abs(quantity):.6f} {base_asset} @ {price:.8f} ({notional:.6f} {quote_asset})")
+                         f"{abs(quantity):.6f} {base_asset} @ {price:.8f} ({notional:.6f} {quote_asset})")
         
         # Track trade count for summaries
         self._increment_trade_count()
@@ -142,7 +148,7 @@ class StoryWriter:
         """Log safety breaker trip."""
         if not self.is_halted:
             self._write_line(timestamp, "🚨", "SAFETY BREAKER TRIPPED", 
-                           f"Drawdown: -{drawdown_pct:.1%} | Trading HALTED")
+                             f"Drawdown: -{drawdown_pct:.1%} | Trading HALTED")
             
             # Send to Discord if enabled
             if self.alerter:
@@ -159,7 +165,7 @@ class StoryWriter:
         """Log Phoenix Protocol activation (reset)."""
         if self.is_halted:
             self._write_line(timestamp, "🔥", "PHOENIX PROTOCOL ACTIVATED", 
-                           f"Score: {score:.1f} | Cooldown: {cooldown_days:.1f}d | Resuming Trading")
+                             f"Score: {score:.1f} | Cooldown: {cooldown_days:.1f}d | Resuming Trading")
             
             # Send to Discord if enabled
             if self.alerter:
@@ -172,14 +178,29 @@ class StoryWriter:
             self.is_halted = False
     
     def log_daily_summary(self, timestamp: datetime, daily_pnl: float, 
-                         current_wealth: float, quote_asset: str):
+                          current_wealth: float, quote_asset: str):
         """Log daily summary (call once per day)."""
         icon = "📈" if daily_pnl >= 0 else "📉"
         sign = "+" if daily_pnl >= 0 else ""
         
         self._write_line(timestamp, icon, "DAILY SUMMARY", 
-                        f"PnL: {sign}{daily_pnl:.6f} {quote_asset} | Wealth: {current_wealth:.6f} {quote_asset}")
+                         f"PnL: {sign}{daily_pnl:.6f} {quote_asset} | Wealth: {current_wealth:.6f} {quote_asset}")
     
+    def check_and_log_daily(self, timestamp: datetime, daily_pnl: float, 
+                          current_wealth: float, quote_asset: str):
+        """Check if day changed and log summary."""
+        if self.last_daily_report_date and self.last_daily_report_date.day == timestamp.day:
+            return
+
+        if self.period_start_wealth['daily'] == 0.0:
+            self.period_start_wealth['daily'] = current_wealth
+            self.last_daily_report_date = timestamp
+            return
+
+        self.log_daily_summary(timestamp, daily_pnl, current_wealth, quote_asset)
+        self.period_start_wealth['daily'] = current_wealth
+        self.last_daily_report_date = timestamp
+
     def log_custom(self, timestamp: datetime, icon: str, event: str, details: str = ""):
         """Log a custom event."""
         self._write_line(timestamp, icon, event, details)
@@ -243,8 +264,8 @@ class StoryWriter:
         sign = "+" if pnl >= 0 else ""
         icon = "📊" if pnl >= 0 else "📉"
         
-        details = (f"PnL: {sign}{pnl:.6f} {quote_asset} ({sign}{pnl_pct:. 2f}%) | "
-                  f"Trades: {trades} | Regime: {trend_pct:.0f}% TREND, {mr_pct:.0f}% MR")
+        details = (f"PnL: {sign}{pnl:.6f} {quote_asset} ({sign}{pnl_pct:.2f}%) | "
+                   f"Trades: {trades} | Regime: {trend_pct:.0f}% TREND, {mr_pct:.0f}% MR")
         
         self._write_line(timestamp, icon, "WEEKLY SUMMARY", details)
         self._write_line(timestamp, "=" * 80, "", "")
@@ -291,7 +312,7 @@ class StoryWriter:
         month_name = timestamp.strftime("%B %Y")
         
         details = (f"{month_name} | PnL: {sign}{pnl:.6f} {quote_asset} ({sign}{pnl_pct:.2f}%) | "
-                  f"Trades: {trades} | Regime: {trend_pct:.0f}% TREND, {mr_pct:.0f}% MR")
+                   f"Trades: {trades} | Regime: {trend_pct:.0f}% TREND, {mr_pct:.0f}% MR")
         
         self._write_line(timestamp, icon, "MONTHLY SUMMARY", details)
         self._write_line(timestamp, "=" * 80, "", "")
@@ -332,7 +353,7 @@ class StoryWriter:
         year = timestamp.year - 1  # Reporting for the year that just ended
         
         details = (f"{year} | PnL: {sign}{pnl:.6f} {quote_asset} ({sign}{pnl_pct:.2f}%) | "
-                  f"Total Trades: {trades}")
+                   f"Total Trades: {trades}")
         
         self._write_line(timestamp, icon, "ANNUAL SUMMARY", details)
         self._write_line(timestamp, "=" * 80, "", "")

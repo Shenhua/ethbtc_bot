@@ -57,8 +57,8 @@ services:
     container_name: btcusdt_bot
     restart: unless-stopped
     environment:
-      - BINANCE_FUTURES_KEY=${FUTURES_TESTNET_KEY}
-      - BINANCE_FUTURES_SECRET=${FUTURES_TESTNET_SECRET}
+      - BINANCE_KEY=${FUTURES_TESTNET_KEY}
+      - BINANCE_SECRET=${FUTURES_TESTNET_SECRET}
       - MODE=${MODE}
       - SYMBOL=BTCUSDT
       - DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/1445786340586160169/ZUYKq8OOSap21M--ZpPx3eYf8oOS39PIUbaBuZ0qGe7w7_xU5JXvEcZJBmeqOMqnhH4A
