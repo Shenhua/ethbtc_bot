@@ -23,9 +23,10 @@ from core.metrics import (
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
-    REGIME_SCORE, STRATEGY_MODE  # New Metrics
+    REGIME_SCORE, STRATEGY_MODE, PHOENIX_ACTIVE  # New Metrics
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
+from core.story_writer import StoryWriter
 
 # --- STRATEGIES (Safe Import) ---
 from core.ethbtc_accum_bot import EthBtcStrategy, StratParams
@@ -254,6 +255,10 @@ def main():
     else:
         base_url = "https://api.binance.com"
 
+    log.info("🎯 Beginning main loop (interval=%ds, mode=%s)...", cfg.execution.poll_sec, args.mode)
+    state["loop_started_at"] = pd.Timestamp.now(tz="UTC").isoformat()
+    save_state(args.state, state) # save_state expects path, then state
+
     log.info("Using Binance base_url=%s (mode=%s)", base_url, args.mode)
 
     # 1. Determine Mode
@@ -309,6 +314,12 @@ def main():
             log.warning("Dry run fallback parsing: Base=%s, Quote=%s", base_asset, quote_asset)
         else:
             raise e
+
+    # --- STORY WRITER INITIALIZATION ---
+    story_file = os.path.join(os.path.dirname(args.state), f"story_{args.symbol.lower()}.txt")
+    story = StoryWriter(story_file, symbol=args.symbol, alerter=alerter)  # Pass alerter for Discord
+    
+    # --- INITIALIZATION ---
         
     # Bug Fix #2: Removed duplicate adapter assignment (adapter already set above)
     metrics_port = int(os.getenv("METRICS_PORT", "9109"))
@@ -327,6 +338,8 @@ def main():
         t0 = time.time()
         now_s = int(t0)
         bar_ts = last_closed_bar_ts(now_s, cfg.execution.interval)
+        bar_dt = pd.to_datetime(bar_ts, unit="s", utc=True) # Define bar_dt early for story logging
+
         if last_seen_bar == bar_ts:
             if args.once:
                 log.info("Run-once mode: Bar not closed yet, but logic complete. Exiting.")
@@ -423,8 +436,8 @@ def main():
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
+                story.log_startup(bar_dt, W, args.mode, quote_asset) # Log bot startup to story
 
-            bar_dt = pd.to_datetime(bar_ts, unit="s", utc=True)
             _ensure_risk_state(state, W, bar_dt)
             _update_risk_state(state, W, bar_dt, cfg)
 
@@ -434,6 +447,7 @@ def main():
             daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
             maxdd_hit = bool(state.get("risk_maxdd_hit", False))
             mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
+            PHOENIX_ACTIVE.set(1.0 if maxdd_hit else 0.0)  # Update Phoenix status
 
 
             # --- ALERT: Risk Trigger (Place this here!) ---
@@ -441,8 +455,9 @@ def main():
                 # Calculate DD % manually since it's not a local variable
                 eq_high = float(state.get("risk_equity_high", W))
                 dd_pct = (eq_high - W) / eq_high if eq_high > 0 else 0.0
-                
+                log.warning("🚨 MAX DD HIT: %.2f%%. Halting all trading.", dd_pct * 100)
                 alerter.send(f"🚨 MAX DRAWDOWN HIT! Trading Halted. DD: {dd_pct:.2%}", level="CRITICAL")
+                story.log_safety_breaker(bar_dt, dd_pct)
                 state["alert_sent_maxdd"] = True
             
             # Reset alert flag if we recover (optional but good practice)
@@ -570,6 +585,9 @@ def main():
                         # Update Metrics
                         REGIME_SCORE.set(current_score)
                         STRATEGY_MODE.set(1.0 if current_regime == "TREND" else 0.0)
+                        
+                        # Log regime switch to story
+                        story.check_regime_switch(bar_dt, current_score, adx_thresh, strat_type="meta")
 
                 elif strat_type == "meta":
                     # META Strategy with Overrides
@@ -691,10 +709,21 @@ def main():
                             
                             # Notify User
                             alerter.send(f"✅ Phoenix Protocol Activated: Market is Trending (Score {current_score:.1f}). Resuming Trading.", level="INFO")
+                            PHOENIX_ACTIVE.set(0.0)  # Phoenix reset complete
                             
+                            # Log Phoenix activation to story
+                            story.log_phoenix_activation(bar_dt, current_score, reset_days)
                     except Exception as e:
                         log.error(f"Phoenix logic failed: {e}")
 
+            # Check and update ATH
+            story.check_ath(bar_dt, W, quote_asset)
+            
+            # Check for period summaries (weekly/monthly/annual)
+            story.check_and_log_weekly(bar_dt, W, quote_asset)
+            story.check_and_log_monthly(bar_dt, W, quote_asset)
+            story.check_and_log_annual(bar_dt, W, quote_asset)
+            
             # --- METRICS UPDATE (General) ---
             if 'plan' in locals() and "regime_score" in plan.columns:
                 sc = float(plan["regime_score"].iloc[-1])
@@ -1038,6 +1067,8 @@ def main():
                     "[DRY] Would EXEC %s %0.8f @ ~%0.8f (Δw=%+.4f, Δ%s=%+.6f)",
                     side, qty_exec, price, delta_w, base_asset, delta_eth
                 )
+                # Log trade to story (even in dry mode)
+                story.log_trade(bar_dt, side, delta_eth, price, base_asset, quote_asset)
                 executed_qty = qty_exec # Assume fill
             else:
                 # --- MAKER EXECUTION ---
@@ -1074,6 +1105,9 @@ def main():
                         else:
                             TRADE_DECISION.labels("exec_sell").set(1)
                         executed_qty += remaining
+                        
+                        # Log trade to story
+                        story.log_trade(bar_dt, side, delta_eth, price, base_asset, quote_asset)
                     except Exception as e:
                         msg = str(e)
                         reason = "insufficient_balance" if "-2010" in msg else "order_error"
