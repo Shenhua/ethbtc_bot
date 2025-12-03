@@ -23,24 +23,45 @@ class MetaStrategy:
     def generate_positions(self, df: pd.DataFrame, funding=None) -> pd.DataFrame:
         if isinstance(df, pd.Series): raise ValueError("Need OHLC")
 
+        # 1. Generate Sub-Signals
         df_mr = self.mr.generate_positions(df["close"], funding)
         sig_mr = df_mr["target_w"]
         
         df_trend = self.trend.generate_positions(df["close"], funding)
         sig_trend = df_trend["target_w"]
         
+        # 2. Calculate Regime Score
         regime_score = get_regime_score(df)
         
-        # FORCE ALIGNMENT
-        # Use common index
+        # 3. FORCE ALIGNMENT
         common_idx = df.index
         
-        # Extract values as aligned numpy arrays
         v_mr = sig_mr.reindex(common_idx).fillna(0.0).values
         v_tr = sig_trend.reindex(common_idx).fillna(0.0).values
         v_sc = regime_score.reindex(common_idx).fillna(0.0).values
         
-        mask_trend = v_sc > self.adx_threshold
+        # --- 4. HYSTERESIS LOGIC (The Churn Killer) ---
+        # Instead of a simple check, we use a latching mechanism.
+        # We only switch UP if score > (thresh + buffer)
+        # We only switch DOWN if score < (thresh - buffer)
+        buffer = 2.0 
+        upper_bound = self.adx_threshold + buffer
+        lower_bound = max(0.0, self.adx_threshold - buffer)
+        
+        # 1 = Trend, -1 = MR, 0 = Hold previous
+        # We use numpy to create a signal series
+        regime_signal = np.zeros_like(v_sc)
+        regime_signal[v_sc > upper_bound] = 1  # Enter Trend
+        regime_signal[v_sc < lower_bound] = -1 # Enter MR
+        
+        # Convert to pandas to use ffill() (Forward Fill propagates the state)
+        # 0s become NaNs, then filled with previous state
+        regime_series = pd.Series(regime_signal, index=common_idx)
+        regime_series = regime_series.replace(0, np.nan).ffill().fillna(-1) # Default to MR start
+        
+        # Create final boolean mask
+        mask_trend = (regime_series == 1).values
+        # ------------------------------------------------
         
         final = np.where(mask_trend, v_tr, v_mr)
         

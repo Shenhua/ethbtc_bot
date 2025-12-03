@@ -75,6 +75,8 @@ class Risk(BaseModel):
     max_daily_loss_frac: float = Field(0.0, ge=0.0, le=1.0)
     max_dd_frac: float = Field(0.0, ge=0.0, le=1.0)
     risk_mode: Literal["fixed_basis", "dynamic"] = "fixed_basis"
+    drawdown_reset_days: float = Field(0.0, ge=0.0, le=365.0)
+    drawdown_reset_score: float = Field(25.0, ge=0.0, le=100.0)
 
 class AppConfig(BaseModel):
     fees: Fees

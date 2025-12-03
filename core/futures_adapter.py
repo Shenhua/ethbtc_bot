@@ -75,11 +75,17 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         """Returns current position size (Signed: +Long, -Short)"""
         try:
             # We must fetch specific position risk
-            # Note: This assumes One-Way Mode (not Hedge Mode)
+            # Support both One-Way and Hedge Mode by summing net position
             positions = self.client.account()["positions"]
-            target = next((p for p in positions if p["symbol"] == symbol), None)
-            if target:
-                return float(target["positionAmt"])
+            net_position = 0.0
+            found = False
+            for p in positions:
+                if p["symbol"] == symbol:
+                    net_position += float(p["positionAmt"])
+                    found = True
+            
+            if found:
+                return net_position
             return 0.0
         except Exception as e:
             log.error(f"Error fetching position: {e}")

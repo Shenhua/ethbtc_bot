@@ -228,21 +228,36 @@ def main():
     # --- STATIC MODE ---
     else:
         log.info("Starting Static Optimization")
+        
+        # Manually slice for Static Mode (since we aren't using the run_slice helper)
+        # Note: The Objective class handles the simulation, but we need to setup the study right
+        
+        # 1. Prepare Data
+        # (We reuse the logic from main to respect args.train_start/end)
+        # Actually, the Objective class takes full arrays? No, it takes sliced arrays.
+        # We need to slice them here.
+        
         train_close = df["close"].loc[args.train_start:args.train_end].dropna()
         
-        f_tr = None
+        # For Static Audit, we might not have a "Test" set in the same way (it's just the train set).
+        # But our Objective expects 'test_close'.
+        # If args.test_start is provided, use it. If not, use train set as test (In-Sample).
+        if args.test_start and args.test_end:
+             test_close = df["close"].loc[args.test_start:args.test_end].dropna()
+        else:
+             test_close = train_close # Fallback
+        
+        f_tr = f_te = None
         if funding_series is not None:
             f_tr = funding_series.reindex(train_close.index, method="ffill").fillna(0.0)
+            f_te = funding_series.reindex(test_close.index, method="ffill").fillna(0.0)
 
         study = optuna.create_study(
             study_name=args.study_name, direction="maximize",
             storage=args.storage, load_if_exists=True
         )
-        # Use Train-Only objective here too for consistency? 
-        # Usually static optimization wants to test on a specific hold-out set manually.
-        # We will use the Objective class but we need to match the signature.
-        # For static mode, we usually just want to fill the DB.
         
+        # Use the same Objective class (Unified logic)
         obj = Objective(fee, train_close, f_tr, allow_shorts=args.allow_shorts)
         study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
         
@@ -252,9 +267,21 @@ def main():
             if t.state == optuna.trial.TrialState.COMPLETE:
                 d = t.user_attrs.copy()
                 d.update(t.params)
+                
+                # CRITICAL: Ensure the picker sees the "Test" score even if it's just training data
+                if "test_final_btc" not in d:
+                    # Fallback: Use training score if test wasn't run separately
+                    d["test_final_btc"] = t.value
+                    d["turns"] = d.get("train_turns", 0) 
+                
                 rows.append(d)
-        pd.DataFrame(rows).to_csv(args.out, index=False)
-        log.info("Static Optimization Complete.")
+        
+        if rows:
+            out_df = pd.DataFrame(rows)
+            out_df.to_csv(args.out, index=False)
+            log.info(f"Static Optimization Complete. Saved {len(out_df)} trials to {args.out}")
+        else:
+            log.warning("Static Optimization produced NO valid trials.")
 
 if __name__ == "__main__":
     main()

@@ -13,19 +13,10 @@ scrape_configs:
       - targets: ['bot_bnb:9109']  # Scrapes the BNB container
         labels:
           instance: 'BNB'
-  # Scrape your ETHBTC bot's Prometheus metrics
-  #- job_name: "ethbtc-bot"
-  #  static_configs:
-  #    - targets:
-  #        - "192.168.10.25:9109" # e.g. 192.168.1.50:9109 (DO NOT use localhost)
+        
+  - job_name: 'btcusdt_bot'
+    static_configs:
+      - targets: ['bot_btc:9109']
+        labels:
+          instance: 'BTC'
 
-  # (optional) Scrape Prometheus itself
-  #- job_name: "prometheus"
-  #  static_configs:
-  #    - targets: ["192.168.10.25:9999"]
-
-  #- job_name: "ethbtc_bot_v3"
-  #  static_configs:
-  #    - targets: ["192.168.10.25:9109"]
-  #      labels:
-  #        instance: "bot_v3_main"

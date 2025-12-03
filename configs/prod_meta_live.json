@@ -12,40 +12,41 @@
     "bar_interval_minutes": 15,
     "mean_reversion_overrides": {
       "comment": "Optimized MR Settings",
-      "trend_kind": "sma",
-      "trend_lookback": 160,
-      "flip_band_entry": 0.0569142504727076,
-      "flip_band_exit": 0.0110039686871961,
-      "vol_window": 45,
-      "vol_adapt_k": 0.005,
-      "target_vol": 0.5,
+      "trend_kind": "roc",
+      "trend_lookback": 120,
+      "flip_band_entry": 0.0406675848355633,
+      "flip_band_exit": 0.0275630417506214,
+      "vol_window": 60,
+      "vol_adapt_k": 0.0,
+      "target_vol": 0.3,
       "min_mult": 0.5,
       "max_mult": 1.5,
-      "gate_window_days": 30,
-      "gate_roc_threshold": 0.0,
+      "gate_window_days": 60,
+      "gate_roc_threshold": 0.02,
       "fast_period": 50,
       "slow_period": 200,
       "ma_type": "ema",
-      "cooldown_minutes": 240,
-      "step_allocation": 0.5,
+      "cooldown_minutes": 180,
+      "step_allocation": 0.33,
       "max_position": 1.0,
-      "long_only": 1,
-      "rebalance_threshold_w": 0.0,
-      "funding_limit_long": 0.0218657041061889,
-      "funding_limit_short": -0.0923469845857912,
+      "long_only": 0,
+      "rebalance_threshold_w": 0.01,
+      "funding_limit_long": 0.0845831815906986,
+      "funding_limit_short": -0.0324780129098627,
       "bar_interval_minutes": 15
     },
     "trend_overrides": {
       "comment": "Optimized Trend Settings",
-      "fast_period": 120,
-      "slow_period": 160,
-      "ma_type": "sma",
+      "fast_period": 30,
+      "slow_period": 60,
+      "ma_type": "ema",
       "cooldown_minutes": 360,
-      "funding_limit_long": 0.07945378392941857,
-      "funding_limit_short": -0.04801407273286289,
+      "funding_limit_long": 0.04529417600053597,
+      "funding_limit_short": -0.01721527314118644,
       "long_only": true,
-      "step_allocation": 0.5,
-      "max_position": 1.0
+      "step_allocation": 1.0,
+      "max_position": 1.0,
+      "rebalance_threshold_w": 0.03
     }
   },
   "execution": {
@@ -58,6 +59,8 @@
   "risk": {
     "basis_btc": 1.0,
     "risk_mode": "dynamic",
-    "max_dd_frac": 0.2
+    "max_dd_frac": 0.2,
+    "drawdown_reset_days": 7.0,
+    "drawdown_reset_score": 30.0
   }
 }

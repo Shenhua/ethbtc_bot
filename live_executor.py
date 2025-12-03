@@ -22,7 +22,8 @@ from core.metrics import (
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
-    mark_trade_readiness, mark_funding_rate, mark_asset_price_usd
+    mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
+    REGIME_SCORE, STRATEGY_MODE  # New Metrics
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 
@@ -142,12 +143,19 @@ def _ensure_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp) -
         state["risk_maxdd_hit"] = False
 
 def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, cfg) -> None:
+    """
+    Updates the risk state (High Water Mark, Daily Loss, Max Drawdown).
+    Detects crashes but DOES NOT handle resets (Phoenix Protocol).
+    Resets are handled in the main execution loop.
+    """
     risk = cfg.risk
     risk_mode = getattr(risk, "risk_mode", "fixed_basis")
     max_dd_frac = float(getattr(risk, "max_dd_frac", 0.0) or 0.0)
     max_daily_loss_frac = float(getattr(risk, "max_daily_loss_frac", 0.0) or 0.0)
 
+    # 1. Load Current State
     equity_high = float(state.get("risk_equity_high", wealth))
+    
     current_date_str = state.get("risk_current_date")
     if current_date_str:
         try:
@@ -161,23 +169,33 @@ def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, c
     daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
     maxdd_hit = bool(state.get("risk_maxdd_hit", False))
 
-    if wealth > equity_high:
-        equity_high = wealth
+    # 2. Update High Water Mark (Only if we aren't already crashed)
+    # If we are in MaxDD state, we do NOT update HWM (we are in the penalty box)
+    if not maxdd_hit:
+        if wealth > equity_high:
+            equity_high = wealth
+    
     dd_now = equity_high - wealth
 
-    if risk_mode == "dynamic":
-        if max_dd_frac > 0.0:
-            threshold_dd = equity_high * max_dd_frac
+    # 3. Check for Max Drawdown Violation
+    if not maxdd_hit:
+        if risk_mode == "dynamic":
+            if max_dd_frac > 0.0:
+                threshold_dd = equity_high * max_dd_frac
+            else:
+                threshold_dd = float(risk.max_dd_btc)
         else:
             threshold_dd = float(risk.max_dd_btc)
-    else:
-        threshold_dd = float(risk.max_dd_btc)
 
-    if threshold_dd > 0.0 and dd_now >= threshold_dd:
-        maxdd_hit = True
+        if threshold_dd > 0.0 and dd_now >= threshold_dd:
+            maxdd_hit = True
+            # Record Time of Death for Phoenix Protocol
+            state["risk_maxdd_hit_ts"] = ts.isoformat() 
 
+    # 4. Check for Daily Loss Violation
     cur_date = ts.normalize().date()
     if cur_date != current_date:
+        # New Day: Reset Daily Counters
         current_date = cur_date
         daily_start = wealth
         daily_limit_hit = False
@@ -195,6 +213,7 @@ def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, c
     if threshold_loss > 0.0 and daily_pnl <= -threshold_loss:
         daily_limit_hit = True
 
+    # 5. Save State
     state["risk_equity_high"] = equity_high
     state["risk_current_date"] = current_date.isoformat()
     state["risk_daily_start_wealth"] = daily_start
@@ -242,10 +261,15 @@ def main():
     
     if is_futures:
         log.info("🚀 STARTING IN FUTURES MODE (USDS-M) 🚀")
-        # Initialize Futures Client
+        # --- CLIENT SETUP ---
+        # Hybrid Setup Support: Use Futures-specific keys if available, else fallback
+        # Priority: BINANCE_FUTURES_KEY (Docker mapped) -> FUTURES_TESTNET_KEY (Local .env) -> BINANCE_KEY (Spot/Default)
+        f_key = os.getenv("BINANCE_FUTURES_KEY", os.getenv("FUTURES_TESTNET_KEY", os.getenv("BINANCE_KEY", "")))
+        f_secret = os.getenv("BINANCE_FUTURES_SECRET", os.getenv("FUTURES_TESTNET_SECRET", os.getenv("BINANCE_SECRET", "")))
+        
         client = UMFutures(
-            key=os.getenv("BINANCE_KEY", ""),
-            secret=os.getenv("BINANCE_SECRET", ""),
+            key=f_key,
+            secret=f_secret,
             base_url="https://testnet.binancefuture.com" if args.mode == "testnet" else "https://fapi.binance.com"
         )
         adapter = BinanceFuturesAdapter(client)
@@ -264,8 +288,16 @@ def main():
         adapter = BinanceSpotAdapter(client)
 
     try:
-        info = client.exchange_info(symbol=args.symbol)
-        s_info = info["symbols"][0]
+        # Futures and Spot have different exchange_info() signatures
+        if is_futures:
+            info = client.exchange_info()  # Futures: no symbol parameter
+            s_info = next((s for s in info["symbols"] if s["symbol"] == args.symbol), None)
+            if not s_info:
+                raise ValueError(f"Symbol {args.symbol} not found in futures exchange info")
+        else:
+            info = client.exchange_info(symbol=args.symbol)  # Spot: with symbol parameter
+            s_info = info["symbols"][0]
+        
         base_asset = s_info["baseAsset"]
         quote_asset = s_info["quoteAsset"]
         log.info("Configuration: Trading %s | Base=%s | Quote=%s", args.symbol, base_asset, quote_asset)
@@ -278,12 +310,13 @@ def main():
         else:
             raise e
         
-    adapter = BinanceSpotAdapter(client)
+    # Bug Fix #2: Removed duplicate adapter assignment (adapter already set above)
     metrics_port = int(os.getenv("METRICS_PORT", "9109"))
     status_port  = int(os.getenv("STATUS_PORT", "9110"))
     
     start_metrics_server(metrics_port)
     update_status = start_status_server(status_port)
+    alerter = AlertManager(prefix=args.symbol)  # Bug Fix #1: Initialize alerter
 
     state = load_state(args.state)
     if "session_start_W" not in state:
@@ -301,6 +334,8 @@ def main():
             time.sleep(cfg.execution.poll_sec)
             continue
 
+        active_rebalance_threshold = float(cfg.strategy.rebalance_threshold_w)
+
         with BAR_LATENCY.time():
             try:
                 ks = adapter.get_klines(args.symbol, cfg.execution.interval, limit=600)
@@ -314,6 +349,11 @@ def main():
                 continue
 
             # --- BALANCE FETCHING (Updated for Spot/Futures) ---
+            # Initialize current_position for use in snap-to-zero logic later
+            current_position = 0.0
+            W = 0.0 # Initialize W to prevent UnboundLocalError if fetch fails
+            cur_w = 0.0 # Initialize cur_w as well
+            
             try:
                 if is_futures:
                     # 1. FUTURES MODE
@@ -379,18 +419,7 @@ def main():
             state["last_known_quote"] = quote_bal
             state["last_known_base"]  = base_bal
 
-            f = adapter.get_filters(args.symbol)
-            min_base_val = f.min_notional / max(price, 1e-12)
-            
-            effective_base = base_bal
-            if base_bal > 0 and base_bal < min_base_val:
-                effective_base = 0.0
-                if state.get("last_dust_log_ts", 0) < now_s - 3600:
-                    log.info("[DUST] Masking %.8f %s (Too small).", base_bal, base_asset)
-                    state["last_dust_log_ts"] = now_s
-
-            W = quote_bal + base_bal * price
-            cur_w = 0.0 if W <= 0 else (effective_base * price) / W            
+            # Bug Fix #3: Removed duplicate balance calculation (already done above in lines 336-390)            
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
@@ -496,6 +525,10 @@ def main():
             # --- STRATEGY EXECUTION ---
             target_w = None
             strat_type = getattr(cfg.strategy, "strategy_type", "mean_reversion")
+            
+            # Bug Fix #5: Initialize these outside strategy blocks for Phoenix Protocol
+            mr_merged = {}
+            tr_merged = {}
 
             try:
                 if strat_type == "trend":
@@ -514,6 +547,10 @@ def main():
                     strat = TrendStrategy(tp)
                     plan = strat.generate_positions(df) # Requires OHLC
                     target_w = float(plan["target_w"].iloc[-1])
+
+
+
+
                     # --- Broadcast Meta-Strategy Brain ---
                     # --- ALERT: Regime Switch (Place this here!) ---
                     if "regime_score" in plan.columns:
@@ -529,6 +566,11 @@ def main():
                         if current_regime != last_regime:
                             alerter.send(f"🔄 Regime Switch: {last_regime} ➜ {current_regime} (Score: {current_score:.1f})", level="WARNING")
                             state["last_regime"] = current_regime
+                        
+                        # Update Metrics
+                        REGIME_SCORE.set(current_score)
+                        STRATEGY_MODE.set(1.0 if current_regime == "TREND" else 0.0)
+
                 elif strat_type == "meta":
                     # META Strategy with Overrides
                     # 1. Base Global Params
@@ -607,6 +649,68 @@ def main():
                 log.error("Strategy calculation failed (%s): %s", strat_type, e)
                 target_w = cur_w # Hold position on error
 
+            # --- SMART PHOENIX PROTOCOL (Auto-Recovery) ---
+            # Checks if we should wake up from a MaxDD Crash
+            if maxdd_hit and 'plan' in locals():
+                reset_days = float(getattr(cfg.risk, "drawdown_reset_days", 0.0))
+                reset_score = float(getattr(cfg.risk, "drawdown_reset_score", 30.0))
+                hit_ts_str = state.get("risk_maxdd_hit_ts")
+                
+                if reset_days > 0 and hit_ts_str:
+                    try:
+                        # 1. Check Time
+                        crash_time = pd.to_datetime(hit_ts_str)
+                        if crash_time.tzinfo is None and bar_dt.tzinfo is not None:
+                            crash_time = crash_time.replace(tzinfo=bar_dt.tzinfo)
+                        time_passed = bar_dt - crash_time
+                        
+                        # 2. Check Trend (The "Smart" part)
+                        current_score = 0.0
+                        if "regime_score" in plan.columns:
+                            current_score = float(plan["regime_score"].iloc[-1])
+                            adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
+                            
+                            current_regime = "TREND" if current_score > adx_thresh else "CHOP"
+                            
+                            # Pick the correct threshold based on regime
+                            if current_regime == "TREND":
+                                active_rebalance_threshold = float(tr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                            else:
+                                active_rebalance_threshold = float(mr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                            
+                        # 3. Decision
+                        if (time_passed.total_seconds() >= (reset_days * 86400)) and (current_score >= reset_score):
+                            log.warning(f"🐦 PHOENIX REBIRTH: Cooldown ({reset_days}d) passed AND Trend confirmed (Score {current_score:.1f} >= {reset_score}). Resuming!")
+                            
+                            # Reset Risk State
+                            maxdd_hit = False
+                            state["risk_maxdd_hit"] = False
+                            state["risk_maxdd_hit_ts"] = None
+                            state["risk_equity_high"] = W # Reset High Water Mark to NOW
+                            state["alert_sent_maxdd"] = False
+                            
+                            # Notify User
+                            alerter.send(f"✅ Phoenix Protocol Activated: Market is Trending (Score {current_score:.1f}). Resuming Trading.", level="INFO")
+                            
+                    except Exception as e:
+                        log.error(f"Phoenix logic failed: {e}")
+
+            # --- METRICS UPDATE (General) ---
+            if 'plan' in locals() and "regime_score" in plan.columns:
+                sc = float(plan["regime_score"].iloc[-1])
+                REGIME_SCORE.set(sc)
+                # If we are in Meta strategy, we can infer mode from the score
+                # If Trend strategy, mode is always TREND (1.0)
+                # If MR strategy, mode is always MR (0.0)
+                if strat_type == "trend":
+                    STRATEGY_MODE.set(1.0)
+                elif strat_type == "meta":
+                    # Re-derive regime for metric consistency
+                    adx_t = getattr(cfg.strategy, "adx_threshold", 25.0)
+                    STRATEGY_MODE.set(1.0 if sc > adx_t else 0.0)
+                else:
+                    STRATEGY_MODE.set(0.0)
+
             # --- SAFETY OVERRIDE ---
             # If the "Global Gate" is closed (due to funding or trend check in main loop),
             # we must prevent BUYING.
@@ -657,14 +761,17 @@ def main():
             step = cfg.strategy.step_allocation
 
             # --- SNAP-TO-ZERO (Generic) ---
-            if target_w == 0.0 and base_bal > 0:
-                total_val_quote = base_bal * price
-                min_trade_quote = max(cfg.execution.min_trade_floor_btc,
-                                cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
-                
-                if total_val_quote > min_trade_quote and total_val_quote < (3.0 * min_trade_quote):
-                    step = 1.0
-                    log.info("[EXEC] Snap-to-Zero: %s position small (%.6f %s). Forcing exit.", base_asset, total_val_quote, quote_asset)
+            # Bug Fix #7: Use position size for futures, base_bal for spot
+            if target_w == 0.0:
+                check_val = current_position if is_futures else base_bal
+                if check_val > 0:
+                    total_val_quote = check_val * price
+                    min_trade_quote = max(cfg.execution.min_trade_floor_btc,
+                                    cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
+                    
+                    if total_val_quote > min_trade_quote and total_val_quote < (3.0 * min_trade_quote):
+                        step = 1.0
+                        log.info("[EXEC] Snap-to-Zero: %s position small (%.6f %s). Forcing exit.", base_asset, total_val_quote, quote_asset)
 
             if getattr(cfg.strategy, "vol_scaled_step", False):
                 z = cur_ratio / max(rv, 1e-6)
@@ -672,7 +779,13 @@ def main():
 
             # Final target calculation with smoothing
             new_w_ideal = cur_w + step * (target_w - cur_w)
-            new_w = max(0.0, min(1.0, new_w_ideal))
+            
+            # Bug Fix #8: Apply correct clamp based on mode BEFORE risk checks
+            if is_futures:
+                max_lev = float(getattr(cfg.execution, "leverage", 1.0))
+                new_w = max(-max_lev, min(max_lev, new_w_ideal))
+            else:
+                new_w = max(0.0, min(1.0, new_w_ideal))
 
             if maxdd_hit:
                 if new_w > 0.0:
@@ -689,13 +802,7 @@ def main():
             # Delta Base = Weight Change * Total Wealth / Price
             delta_eth = delta_w * W / max(price, 1e-12)
             
-            # Determine Side
-            # If delta_eth is positive -> BUY (Longer)
-            # If delta_eth is negative -> SELL (Shorter)
-            side = "BUY" if delta_eth > 0 else "SELL"
-            
-            # For execution size, use absolute value
-            qty_abs = abs(delta_eth)
+            # Bug Fix #4: Removed duplicate side determination (will be set later at line 906)
 
             set_delta_metrics(delta_w, delta_eth)
 
@@ -708,17 +815,11 @@ def main():
             except Exception as e:
                 log.warning("Spread probe failed. Reason: %s", e)
 
-            # Determine Side
-            # In Futures, delta_eth can be negative (Opening a Short)
-            # Logic: 
-            #   Positive Delta -> We need more exposure -> BUY
-            #   Negative Delta -> We need less exposure -> SELL
-            side = "BUY" if delta_eth > 0 else "SELL"
-
             # Check Balance / Margin
             # In Futures, we check "Available Margin" vs "Initial Margin Requirement"
             # For simplicity in this spot-based architecture, we rely on the clamp logic below.
             
+            # Bug Fix #6: Guard spot-only balance check
             if not is_futures and side == "SELL" and base_bal <= 1e-12:
                 # Spot-only check: Can't sell what you don't have
                 SKIPS.labels("balance").inc()
@@ -813,12 +914,12 @@ def main():
                 time.sleep(cfg.execution.poll_sec)
                 continue
 
-            if abs_delta < cfg.strategy.rebalance_threshold_w:
+            if abs_delta < active_rebalance_threshold:
                 SKIPS.labels('threshold').inc()
                 mark_decision("skip_threshold")   
                 log.info(
                     "Skip: |Δw|=%.4f < threshold=%.4f (need ≥ %.4f).",
-                    abs_delta, cfg.strategy.rebalance_threshold_w, cfg.strategy.rebalance_threshold_w
+                    abs_delta, active_rebalance_threshold, active_rebalance_threshold
                 )
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
@@ -835,7 +936,8 @@ def main():
 
             side = "BUY" if delta_eth > 0 else "SELL"
 
-            if side == "SELL" and base_bal <= 1e-12:
+            # Bug Fix #6: Guard spot-only balance check
+            if not is_futures and side == "SELL" and base_bal <= 1e-12:
                 SKIPS.labels("balance").inc()
                 mark_decision("skip_balance")
                 log.info("Skip: SELL requested but %s balance is 0 (cur_w=%.4f, target_w=%.4f).", base_asset, cur_w, target_w)
