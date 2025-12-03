@@ -22,7 +22,8 @@ from core.metrics import (
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
-    mark_trade_readiness, mark_funding_rate, mark_asset_price_usd
+    mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
+    REGIME_SCORE, STRATEGY_MODE  # New Metrics
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 
@@ -260,10 +261,15 @@ def main():
     
     if is_futures:
         log.info("🚀 STARTING IN FUTURES MODE (USDS-M) 🚀")
-        # Initialize Futures Client
+        # --- CLIENT SETUP ---
+        # Hybrid Setup Support: Use Futures-specific keys if available, else fallback
+        # Priority: BINANCE_FUTURES_KEY (Docker mapped) -> FUTURES_TESTNET_KEY (Local .env) -> BINANCE_KEY (Spot/Default)
+        f_key = os.getenv("BINANCE_FUTURES_KEY", os.getenv("FUTURES_TESTNET_KEY", os.getenv("BINANCE_KEY", "")))
+        f_secret = os.getenv("BINANCE_FUTURES_SECRET", os.getenv("FUTURES_TESTNET_SECRET", os.getenv("BINANCE_SECRET", "")))
+        
         client = UMFutures(
-            key=os.getenv("BINANCE_KEY", ""),
-            secret=os.getenv("BINANCE_SECRET", ""),
+            key=f_key,
+            secret=f_secret,
             base_url="https://testnet.binancefuture.com" if args.mode == "testnet" else "https://fapi.binance.com"
         )
         adapter = BinanceFuturesAdapter(client)
@@ -345,6 +351,8 @@ def main():
             # --- BALANCE FETCHING (Updated for Spot/Futures) ---
             # Initialize current_position for use in snap-to-zero logic later
             current_position = 0.0
+            W = 0.0 # Initialize W to prevent UnboundLocalError if fetch fails
+            cur_w = 0.0 # Initialize cur_w as well
             
             try:
                 if is_futures:
@@ -558,6 +566,11 @@ def main():
                         if current_regime != last_regime:
                             alerter.send(f"🔄 Regime Switch: {last_regime} ➜ {current_regime} (Score: {current_score:.1f})", level="WARNING")
                             state["last_regime"] = current_regime
+                        
+                        # Update Metrics
+                        REGIME_SCORE.set(current_score)
+                        STRATEGY_MODE.set(1.0 if current_regime == "TREND" else 0.0)
+
                 elif strat_type == "meta":
                     # META Strategy with Overrides
                     # 1. Base Global Params
@@ -681,6 +694,22 @@ def main():
                             
                     except Exception as e:
                         log.error(f"Phoenix logic failed: {e}")
+
+            # --- METRICS UPDATE (General) ---
+            if 'plan' in locals() and "regime_score" in plan.columns:
+                sc = float(plan["regime_score"].iloc[-1])
+                REGIME_SCORE.set(sc)
+                # If we are in Meta strategy, we can infer mode from the score
+                # If Trend strategy, mode is always TREND (1.0)
+                # If MR strategy, mode is always MR (0.0)
+                if strat_type == "trend":
+                    STRATEGY_MODE.set(1.0)
+                elif strat_type == "meta":
+                    # Re-derive regime for metric consistency
+                    adx_t = getattr(cfg.strategy, "adx_threshold", 25.0)
+                    STRATEGY_MODE.set(1.0 if sc > adx_t else 0.0)
+                else:
+                    STRATEGY_MODE.set(0.0)
 
             # --- SAFETY OVERRIDE ---
             # If the "Global Gate" is closed (due to funding or trend check in main loop),

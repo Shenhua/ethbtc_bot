@@ -54,7 +54,8 @@
     "poll_sec": 5,
     "ttl_sec": 30,
     "taker_fallback": true,
-    "min_trade_btc": 0.0001
+    "min_trade_btc": 0.0001,
+    "exchange_type": "futures"
   },
   "risk": {
     "basis_btc": 1.0,
