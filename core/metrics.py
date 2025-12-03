@@ -64,8 +64,22 @@ STRATEGY_MODE = Gauge("strategy_mode", "Active Strategy: 0=MeanRev, 1=Trend")
 PHOENIX_ACTIVE = Gauge("phoenix_active", "Phoenix Protocol Status: 1=Waiting for Reset, 0=Normal Trading")
 # ---- Helper functions -----------------------------------------------------
 
-def start_metrics_server(port: int) -> None:
-    start_http_server(port)
+def start_metrics_server(port: int, story_file: str = None) -> None:
+    """
+    Start Prometheus metrics HTTP server with optional /story endpoint.
+    
+    Args:
+        port: Port to listen on
+        story_file: Optional path to story file for /story endpoint
+    """
+    if story_file:
+        # Use custom handler that serves both /metrics and /story
+        import core.story_server as ss
+        ss.StoryMetricsHandler.story_file_path = story_file
+        prometheus_client.start_http_server(port, handler=ss.StoryMetricsHandler)
+    else:
+        # Standard Prometheus server (metrics only)
+        prometheus_client.start_http_server(port)
 
 def mark_signal_metrics(ratio: float, dist_buy: float, dist_sell: float) -> None:
     SIGNAL_RATIO.set(ratio)

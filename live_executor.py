@@ -325,7 +325,7 @@ def main():
     metrics_port = int(os.getenv("METRICS_PORT", "9109"))
     status_port  = int(os.getenv("STATUS_PORT", "9110"))
     
-    start_metrics_server(metrics_port)
+    start_metrics_server(metrics_port, story_file=story_file)  # Pass story file for /story endpoint
     update_status = start_status_server(status_port)
     alerter = AlertManager(prefix=args.symbol)  # Bug Fix #1: Initialize alerter
 
