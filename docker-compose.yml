@@ -1,61 +1,61 @@
 services:
   # --- INSTANCE 1: ETH/BTC ---
-  bot_eth:
-    build: .
-    container_name: ethbtc_bot
-    restart: unless-stopped
-    networks:
-      - default 
-      - trading-net
-    environment:
-      - BINANCE_KEY=${BINANCE_KEY}
-      - BINANCE_SECRET=${BINANCE_SECRET}
-      - BINANCE_BASE_URL=${BINANCE_BASE_URL}
-      - MODE=${MODE}
-      - SYMBOL=ETHBTC
-      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-    volumes:
-      - ./run_state/eth:/data  # Isolated State Folder for ETH
-      - .:/app
-    command: >
-      python /app/live_executor.py 
-      --params configs/prod_meta_live.json 
-      --mode ${MODE} 
-      --symbol ETHBTC
-      --state /data/state.json
-    ports:
-      - "9109:9109"
+  # bot_eth:
+  #   build: .
+  #   container_name: ethbtc_bot
+  #   restart: unless-stopped
+  #   networks:
+  #     - default 
+  #     - trading-net
+  #   environment:
+  #     - BINANCE_KEY=${BINANCE_KEY}
+  #     - BINANCE_SECRET=${BINANCE_SECRET}
+  #     - BINANCE_BASE_URL=${BINANCE_BASE_URL}
+  #     - MODE=${MODE}
+  #     - SYMBOL=ETHBTC
+  #     - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+  #     - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+  #     - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+  #   volumes:
+  #     - ./run_state/eth:/data  # Isolated State Folder for ETH
+  #     - .:/app
+  #   command: >
+  #     python /app/live_executor.py 
+  #     --params configs/prod_meta_live.json 
+  #     --mode ${MODE} 
+  #     --symbol ETHBTC
+  #     --state /data/state.json
+  #   ports:
+  #     - "9109:9109"
 
   # --- INSTANCE 2: BNB/USDC ---
-  bot_bnb:
-    build: .
-    container_name: bnbusdc_bot
-    restart: unless-stopped
-    networks:
-      - default  
-      - trading-net
-    environment:
-      - BINANCE_KEY=${BINANCE_KEY}
-      - BINANCE_SECRET=${BINANCE_SECRET}
-      - BINANCE_BASE_URL=${BINANCE_BASE_URL}
-      - MODE=${MODE}
-      - SYMBOL=BNBUSDC
-      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-      - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-    volumes:
-      - ./run_state/bnb:/data  # Isolated State Folder for BNB
-      - .:/app
-    command: >
-      python /app/live_executor.py 
-      --params configs/prod_bnb_meta_live.json 
-      --mode ${MODE} 
-      --symbol BNBUSDC
-      --state /data/state.json
-    ports:
-      - "9101:9109" # Maps Host 9101 -> Container 9109
+  # bot_bnb:
+  #   build: .
+  #   container_name: bnbusdc_bot
+  #   restart: unless-stopped
+  #   networks:
+  #     - default  
+  #     - trading-net
+  #   environment:
+  #     - BINANCE_KEY=${BINANCE_KEY}
+  #     - BINANCE_SECRET=${BINANCE_SECRET}
+  #     - BINANCE_BASE_URL=${BINANCE_BASE_URL}
+  #     - MODE=${MODE}
+  #     - SYMBOL=BNBUSDC
+  #     - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+  #     - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
+  #     - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
+  #   volumes:
+  #     - ./run_state/bnb:/data  # Isolated State Folder for BNB
+  #     - .:/app
+  #   command: >
+  #     python /app/live_executor.py 
+  #     --params configs/prod_bnb_meta_live.json 
+  #     --mode ${MODE} 
+  #     --symbol BNBUSDC
+  #     --state /data/state.json
+  #   ports:
+  #     - "9101:9109" # Maps Host 9101 -> Container 9109
 
   bot_btc:
     build: .

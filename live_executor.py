@@ -296,12 +296,13 @@ def main():
         else:
             raise e
         
-    adapter = BinanceSpotAdapter(client)
+    # Bug Fix #2: Removed duplicate adapter assignment (adapter already set above)
     metrics_port = int(os.getenv("METRICS_PORT", "9109"))
     status_port  = int(os.getenv("STATUS_PORT", "9110"))
     
     start_metrics_server(metrics_port)
     update_status = start_status_server(status_port)
+    alerter = AlertManager(prefix=args.symbol)  # Bug Fix #1: Initialize alerter
 
     state = load_state(args.state)
     if "session_start_W" not in state:
@@ -334,6 +335,9 @@ def main():
                 continue
 
             # --- BALANCE FETCHING (Updated for Spot/Futures) ---
+            # Initialize current_position for use in snap-to-zero logic later
+            current_position = 0.0
+            
             try:
                 if is_futures:
                     # 1. FUTURES MODE
@@ -399,18 +403,7 @@ def main():
             state["last_known_quote"] = quote_bal
             state["last_known_base"]  = base_bal
 
-            f = adapter.get_filters(args.symbol)
-            min_base_val = f.min_notional / max(price, 1e-12)
-            
-            effective_base = base_bal
-            if base_bal > 0 and base_bal < min_base_val:
-                effective_base = 0.0
-                if state.get("last_dust_log_ts", 0) < now_s - 3600:
-                    log.info("[DUST] Masking %.8f %s (Too small).", base_bal, base_asset)
-                    state["last_dust_log_ts"] = now_s
-
-            W = quote_bal + base_bal * price
-            cur_w = 0.0 if W <= 0 else (effective_base * price) / W            
+            # Bug Fix #3: Removed duplicate balance calculation (already done above in lines 336-390)            
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
@@ -516,6 +509,10 @@ def main():
             # --- STRATEGY EXECUTION ---
             target_w = None
             strat_type = getattr(cfg.strategy, "strategy_type", "mean_reversion")
+            
+            # Bug Fix #5: Initialize these outside strategy blocks for Phoenix Protocol
+            mr_merged = {}
+            tr_merged = {}
 
             try:
                 if strat_type == "trend":
@@ -727,14 +724,17 @@ def main():
             step = cfg.strategy.step_allocation
 
             # --- SNAP-TO-ZERO (Generic) ---
-            if target_w == 0.0 and base_bal > 0:
-                total_val_quote = base_bal * price
-                min_trade_quote = max(cfg.execution.min_trade_floor_btc,
-                                cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
-                
-                if total_val_quote > min_trade_quote and total_val_quote < (3.0 * min_trade_quote):
-                    step = 1.0
-                    log.info("[EXEC] Snap-to-Zero: %s position small (%.6f %s). Forcing exit.", base_asset, total_val_quote, quote_asset)
+            # Bug Fix #7: Use position size for futures, base_bal for spot
+            if target_w == 0.0:
+                check_val = current_position if is_futures else base_bal
+                if check_val > 0:
+                    total_val_quote = check_val * price
+                    min_trade_quote = max(cfg.execution.min_trade_floor_btc,
+                                    cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
+                    
+                    if total_val_quote > min_trade_quote and total_val_quote < (3.0 * min_trade_quote):
+                        step = 1.0
+                        log.info("[EXEC] Snap-to-Zero: %s position small (%.6f %s). Forcing exit.", base_asset, total_val_quote, quote_asset)
 
             if getattr(cfg.strategy, "vol_scaled_step", False):
                 z = cur_ratio / max(rv, 1e-6)
@@ -742,7 +742,13 @@ def main():
 
             # Final target calculation with smoothing
             new_w_ideal = cur_w + step * (target_w - cur_w)
-            new_w = max(0.0, min(1.0, new_w_ideal))
+            
+            # Bug Fix #8: Apply correct clamp based on mode BEFORE risk checks
+            if is_futures:
+                max_lev = float(getattr(cfg.execution, "leverage", 1.0))
+                new_w = max(-max_lev, min(max_lev, new_w_ideal))
+            else:
+                new_w = max(0.0, min(1.0, new_w_ideal))
 
             if maxdd_hit:
                 if new_w > 0.0:
@@ -759,13 +765,7 @@ def main():
             # Delta Base = Weight Change * Total Wealth / Price
             delta_eth = delta_w * W / max(price, 1e-12)
             
-            # Determine Side
-            # If delta_eth is positive -> BUY (Longer)
-            # If delta_eth is negative -> SELL (Shorter)
-            side = "BUY" if delta_eth > 0 else "SELL"
-            
-            # For execution size, use absolute value
-            qty_abs = abs(delta_eth)
+            # Bug Fix #4: Removed duplicate side determination (will be set later at line 906)
 
             set_delta_metrics(delta_w, delta_eth)
 
@@ -778,17 +778,11 @@ def main():
             except Exception as e:
                 log.warning("Spread probe failed. Reason: %s", e)
 
-            # Determine Side
-            # In Futures, delta_eth can be negative (Opening a Short)
-            # Logic: 
-            #   Positive Delta -> We need more exposure -> BUY
-            #   Negative Delta -> We need less exposure -> SELL
-            side = "BUY" if delta_eth > 0 else "SELL"
-
             # Check Balance / Margin
             # In Futures, we check "Available Margin" vs "Initial Margin Requirement"
             # For simplicity in this spot-based architecture, we rely on the clamp logic below.
             
+            # Bug Fix #6: Guard spot-only balance check
             if not is_futures and side == "SELL" and base_bal <= 1e-12:
                 # Spot-only check: Can't sell what you don't have
                 SKIPS.labels("balance").inc()
@@ -905,7 +899,8 @@ def main():
 
             side = "BUY" if delta_eth > 0 else "SELL"
 
-            if side == "SELL" and base_bal <= 1e-12:
+            # Bug Fix #6: Guard spot-only balance check
+            if not is_futures and side == "SELL" and base_bal <= 1e-12:
                 SKIPS.labels("balance").inc()
                 mark_decision("skip_balance")
                 log.info("Skip: SELL requested but %s balance is 0 (cur_w=%.4f, target_w=%.4f).", base_asset, cur_w, target_w)
