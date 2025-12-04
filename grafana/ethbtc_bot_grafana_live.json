@@ -20,7 +20,7 @@
   "graphTooltip": 0,
   "id": null,
   "links": [],
-  "liveNow": false,
+  "liveNow": true,
   "panels": [
     {
       "collapsed": false,
@@ -40,7 +40,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Total Wealth (Quote Currency).",
+      "description": "Total Account Value (Wallet + Unrealized PnL).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -60,7 +60,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
         "y": 1
       },
@@ -80,12 +80,12 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "Total Wealth",
+      "title": "💰 Total Wealth",
       "type": "stat",
       "targets": [
         {
-          "expr": "last_over_time(wealth_total{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Wealth",
+          "expr": "wealth_total{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ]
@@ -95,13 +95,241 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Session Profit/Loss.",
+      "description": "Breakdown of assets held.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 5,
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Qty"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 4
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 3,
+        "y": 1
+      },
+      "id": 28,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "targets": [
+        {
+          "expr": "balance_free{instance=~\"$instance\"}",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "Qty",
+          "refId": "A"
+        },
+        {
+          "expr": "price_asset_usd{instance=~\"$instance\"}",
+          "format": "time_series",
+          "instant": true,
+          "legendFormat": "Price",
+          "refId": "B"
+        }
+      ],
+      "title": "📦 Portfolio",
+      "transformations": [
+        {
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "mode": "reduceFields",
+            "reducers": [
+              "last"
+            ]
+          }
+        },
+        {
+          "id": "joinByField",
+          "options": {
+            "byField": "asset",
+            "mode": "outer"
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "Value",
+            "binary": {
+              "left": "Qty",
+              "operator": "*",
+              "reducer": "sum",
+              "right": "Price"
+            },
+            "mode": "binary",
+            "reduce": {
+              "reducer": "sum"
+            }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Field": true,
+              "Price": false,
+              "Qty": false,
+              "Value": false,
+              "asset": false
+            },
+            "indexByName": {
+              "Value": 3,
+              "Price": 2,
+              "Qty": 1,
+              "asset": 0
+            },
+            "renameByName": {}
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Currently Active Strategy Logic.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "blue",
+                  "index": 0,
+                  "text": "Mean Reversion"
+                },
+                "1": {
+                  "color": "orange",
+                  "index": 1,
+                  "text": "Trend"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 8,
+        "y": 1
+      },
+      "id": 25,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "title": "🧠 Mode",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "strategy_mode{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Historical Performance.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 4,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -116,20 +344,21 @@
             ]
           },
           "unit": "none"
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
         "w": 4,
-        "x": 4,
+        "x": 11,
         "y": 1
       },
       "id": 3,
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
+        "colorMode": "value",
+        "graphMode": "area",
         "justifyMode": "auto",
-        "orientation": "auto",
+        "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -137,91 +366,21 @@
           "fields": "",
           "values": false
         },
-        "textMode": "auto",
+        "textMode": "value_and_name",
         "wideLayout": true
       },
-      "title": "Session PnL",
+      "title": "📅 Period PnL",
       "type": "stat",
       "targets": [
         {
-          "expr": "last_over_time(pnl_quote{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} PnL",
+          "expr": "delta(wealth_total{instance=~\"$instance\"}[7d])",
+          "legendFormat": "7d",
           "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Max Drawdown Status.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "NORMAL"
-                },
-                "1": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "MAX DD HIT"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 8,
-        "y": 1
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "max"
-          ],
-          "fields": "",
-          "values": false
         },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "title": "Risk Status",
-      "type": "stat",
-      "targets": [
         {
-          "expr": "max_over_time(risk_flags{kind=\"maxdd_hit\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Risk",
-          "refId": "A"
+          "expr": "delta(wealth_total{instance=~\"$instance\"}[30d])",
+          "legendFormat": "30d",
+          "refId": "B"
         }
       ]
     },
@@ -270,8 +429,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 12,
+        "w": 3,
+        "x": 15,
         "y": 1
       },
       "id": 5,
@@ -290,12 +449,12 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "Regime Gate",
+      "title": "🚧 Gate",
       "type": "stat",
       "targets": [
         {
           "expr": "last_over_time(gate_state{gate_state=\"open\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Gate",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ]
@@ -305,7 +464,82 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Funding Rate Risk Meter (Futures).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "SAFE"
+                },
+                "1": {
+                  "color": "red",
+                  "index": 1,
+                  "text": "MAX DD HIT"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 2,
+        "x": 18,
+        "y": 1
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "title": "🛡️ Risk",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "max_over_time(risk_flags{kind=\"maxdd_hit\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Funding Rate.\nPositive = Longs pay Shorts.\nNegative = Shorts pay Longs.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -324,6 +558,10 @@
                 "value": -0.05
               },
               {
+                "color": "green",
+                "value": 0
+              },
+              {
                 "color": "red",
                 "value": 0.05
               }
@@ -334,8 +572,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 16,
+        "w": 2,
+        "x": 20,
         "y": 1
       },
       "id": 6,
@@ -354,61 +592,72 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "Funding Rate",
+      "title": "💸 Fund",
       "type": "stat",
       "targets": [
         {
           "expr": "last_over_time(funding_rate_pct{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Funding",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ]
     },
     {
+<<<<<<< Updated upstream
+=======
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Current Base exposure (Support Shorts).",
+      "description": "Phoenix Protocol Status. \nACTIVE = Normal Trading.\nWAITING = Crashed/Cooldown Mode.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "min": -1.5,
-          "max": 1.5,
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "ACTIVE"
+                },
+                "1": {
+                  "color": "yellow",
+                  "index": 1,
+                  "text": "WAITING"
+                }
+              },
+              "type": "value"
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "purple",
+                "color": "green",
                 "value": null
               },
               {
-                "color": "blue",
-                "value": -0.1
-              },
-              {
-                "color": "orange",
-                "value": 0.8
-              },
-              {
-                "color": "red",
-                "value": 1.0
+                "color": "yellow",
+                "value": 1
               }
             ]
-          },
-          "unit": "percentunit"
+          }
         }
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
+        "w": 2,
+        "x": 22,
         "y": 1
       },
-      "id": 7,
+      "id": 26,
       "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
@@ -417,20 +666,21 @@
           "fields": "",
           "values": false
         },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true
+        "textMode": "auto",
+        "wideLayout": true
       },
-      "title": "Current Exposure",
-      "type": "gauge",
+      "title": "🔥",
+      "type": "stat",
       "targets": [
         {
-          "expr": "last_over_time(exposure_base_weight{kind=\"current\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Exposure",
+          "expr": "last_over_time(phoenix_active{instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ]
     },
     {
+>>>>>>> Stashed changes
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -438,80 +688,9 @@
         "x": 0,
         "y": 5
       },
-      "id": 8,
-      "panels": [],
-      "title": "DECISION ENGINE & BLOCKERS",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "fillOpacity": 70,
-            "lineWidth": 0,
-            "spanNulls": false
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 6
-      },
-      "id": 9,
-      "options": {
-        "alignValue": "center",
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "mergeValues": true,
-        "rowHeight": 0.9,
-        "showValue": "auto",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "title": "Decision History",
-      "type": "state-timeline",
-      "targets": [
-        {
-          "expr": "trade_decision{instance=~\"$instance\"} > 0",
-          "legendFormat": "{{instance}} - {{trade_decision}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 12
-      },
       "id": 23,
       "panels": [],
-      "title": "META STRATEGY BRAIN",
+      "title": "STRATEGY BRAIN & REGIME 🧠",
       "type": "row"
     },
     {
@@ -519,6 +698,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "ADX Consensus Score. \n> Threshold = Trend Mode.\n< Threshold = Mean Reversion.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -529,26 +709,13 @@
             "fillOpacity": 10,
             "lineWidth": 2
           },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 25
-              }
-            ]
-          },
           "unit": "short"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "Threshold"
+              "id": "byRegexp",
+              "options": "/.*Threshold.*/"
             },
             "properties": [
               {
@@ -576,7 +743,7 @@
         "h": 8,
         "w": 16,
         "x": 0,
-        "y": 13
+        "y": 6
       },
       "id": 24,
       "options": {
@@ -586,17 +753,17 @@
           "showLegend": true
         }
       },
-      "title": "🧠 Regime Analysis (ADX Consensus)",
+      "title": "🧠 Regime Analysis",
       "type": "timeseries",
       "targets": [
         {
           "expr": "regime_score{instance=~\"$instance\"}",
-          "legendFormat": "Score",
+          "legendFormat": "{{instance}} Score",
           "refId": "A"
         },
         {
           "expr": "regime_threshold{instance=~\"$instance\"}",
-          "legendFormat": "Threshold",
+          "legendFormat": "{{instance}} Threshold",
           "refId": "B"
         }
       ]
@@ -606,72 +773,66 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Active Strategy Mode",
+      "description": "Current active position size relative to max.\n100% = Max Long\n-100% = Max Short",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "blue",
-                  "index": 0,
-                  "text": "Mean Reversion"
-                },
-                "1": {
-                  "color": "orange",
-                  "index": 1,
-                  "text": "Trend"
-                }
-              },
-              "type": "value"
-            }
-          ],
+          "decimals": 1,
+          "max": 1.5,
+          "min": -1.5,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "blue",
-                "value": null
+                "color": "red",
+                "value": -1.5
               },
               {
                 "color": "orange",
-                "value": 1
+                "value": -1
+              },
+              {
+                "color": "gray",
+                "value": -0.1
+              },
+              {
+                "color": "green",
+                "value": 0.1
               }
             ]
-          }
-        }
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 13
+        "y": 6
       },
-      "id": 25,
+      "id": 29,
       "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
         "orientation": "auto",
         "reduceOptions": {
           "calcs": [
-            "last"
+            "lastNotNull"
           ],
           "fields": "",
           "values": false
         },
-        "textMode": "value_and_name",
-        "wideLayout": true
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "textMode": "value_and_name"
       },
-      "title": "Active Strategy",
-      "type": "stat",
+      "title": "📦 Exposure Gauge",
+      "type": "gauge",
       "targets": [
         {
-          "expr": "strategy_mode{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}} Mode",
+          "expr": "last_over_time(exposure_base_weight{kind=\"current\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ]
@@ -682,11 +843,11 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 21
+        "y": 14
       },
       "id": 10,
       "panels": [],
-      "title": "STRATEGY X-RAY",
+      "title": "STRATEGY X-RAY (SIGNALS)",
       "type": "row"
     },
     {
@@ -694,12 +855,15 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "Signal strength. \nLine = Current Signal.\nDashed Lines = Band Thresholds.\nGreen Background = BUY Zone.\nRed Background = SELL Zone.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisSoftMax": 0.04,
+            "axisSoftMin": -0.04,
             "drawStyle": "line",
             "fillOpacity": 10,
             "lineWidth": 2
@@ -709,14 +873,22 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": -0.025
+              },
+              {
+                "color": "transparent",
+                "value": -0.024
               },
               {
                 "color": "red",
                 "value": 0.025
               }
             ]
-          }
+          },
+          "thresholdsStyle": {
+            "mode": "area"
+          },
+          "unit": "percentunit"
         },
         "overrides": [
           {
@@ -731,6 +903,74 @@
                   "fixedColor": "white",
                   "mode": "fixed"
                 }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    2,
+                    2
+                  ],
+                  "fill": "dash"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Upper Band"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    5,
+                    5
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillBelowTo",
+                "value": "Zero Line"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Lower Band"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "dash": [
+                    5,
+                    5
+                  ],
+                  "fill": "dash"
+                }
+              },
+              {
+                "id": "custom.fillBelowTo",
+                "value": "Zero Line"
               }
             ]
           }
@@ -740,10 +980,22 @@
         "h": 8,
         "w": 18,
         "x": 0,
-        "y": 22
+        "y": 15
       },
       "id": 11,
-      "title": "Signal vs Static Bands",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "title": "Signal vs Bands (Zones)",
       "type": "timeseries",
       "targets": [
         {
@@ -755,6 +1007,16 @@
           "expr": "0",
           "legendFormat": "Zero Line",
           "refId": "B"
+        },
+        {
+          "expr": "0.025",
+          "legendFormat": "Upper Band",
+          "refId": "C"
+        },
+        {
+          "expr": "-0.025",
+          "legendFormat": "Lower Band",
+          "refId": "D"
         }
       ]
     },
@@ -763,23 +1025,28 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "Distance to next action (in basis points). \n0 = ACTION (In Zone).\nHigh = Waiting.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "continuous-RdYlGr"
           },
-          "max": 300,
+          "max": 1000,
           "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 50
               },
               {
                 "color": "red",
-                "value": 80
+                "value": 500
               }
             ]
           },
@@ -790,7 +1057,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 22
+        "y": 15
       },
       "id": 12,
       "options": {
@@ -798,12 +1065,12 @@
         "orientation": "vertical",
         "showUnfilled": true
       },
-      "title": "Proximity to Trade",
-      "type": "bargauge",
+      "title": "📏 Dist to Action (bps)",
+      "type": "gauge",
       "targets": [
         {
           "expr": "last_over_time(next_action_dist_bps{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Dist",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ]
@@ -814,7 +1081,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 30
+        "y": 23
       },
       "id": 13,
       "panels": [],
@@ -840,7 +1107,7 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
+              "id": "byRegexp",
               "options": "/.*Target/"
             },
             "properties": [
@@ -869,7 +1136,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 24
       },
       "id": 14,
       "title": "Weight Tracking (Target vs Current)",
@@ -907,7 +1174,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 24
       },
       "id": 15,
       "title": "Skipped Trades by Reason",
@@ -926,7 +1193,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 39
+        "y": 32
       },
       "id": 16,
       "panels": [],
@@ -954,7 +1221,7 @@
         "h": 6,
         "w": 10,
         "x": 0,
-        "y": 40
+        "y": 33
       },
       "id": 17,
       "title": "Holdings History (Log Scale)",
@@ -962,7 +1229,7 @@
       "targets": [
         {
           "expr": "last_over_time(balance_free{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} {{asset}}",
+          "legendFormat": "{{asset}} ({{instance}})",
           "refId": "A"
         }
       ]
@@ -982,7 +1249,7 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
+              "id": "byRegexp",
               "options": "/.* ETH/USD/"
             },
             "properties": [
@@ -998,7 +1265,7 @@
         "h": 6,
         "w": 14,
         "x": 10,
-        "y": 40
+        "y": 33
       },
       "id": 18,
       "title": "Market Prices (USD)",
@@ -1007,6 +1274,64 @@
         {
           "expr": "last_over_time(price_asset_usd{instance=~\"$instance\"}[1h])",
           "legendFormat": "{{asset}}/USD",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "spanNulls": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 39
+      },
+      "id": 9,
+      "options": {
+        "alignValue": "center",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "title": "Decision History",
+      "type": "state-timeline",
+      "targets": [
+        {
+          "expr": "trade_decision{instance=~\"$instance\"} > 0",
+          "legendFormat": "{{instance}} - {{trade_decision}}",
           "refId": "A"
         }
       ]
@@ -1073,6 +1398,6 @@
   "timezone": "",
   "title": "ETHBTC Admiral V5 (Hybrid)",
   "uid": "ethbtc-admiral-v5",
-  "version": 1,
+  "version": 6,
   "weekStart": ""
 }
