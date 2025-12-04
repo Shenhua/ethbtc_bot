@@ -44,6 +44,7 @@ SIGNAL_RATIO = Gauge("signal_ratio", "Current ratio signal")
 DIST_TO_BUY_BPS = Gauge("dist_to_buy_bps", "Distance to BUY entry in bps")
 DIST_TO_SELL_BPS = Gauge("dist_to_sell_bps", "Distance to SELL entry in bps")
 NEXT_ACTION_DIST_BPS = Gauge("next_action_dist_bps", "Distance to nearest band entry")
+SIGNAL_BAND = Gauge("signal_band", "Dynamic Signal Thresholds", ["kind"])
 
 RISK_MODE = Gauge("risk_mode", "Risk mode active flag", ["mode"])
 RISK_FLAGS = Gauge("risk_flags", "Risk state flags", ["kind"])

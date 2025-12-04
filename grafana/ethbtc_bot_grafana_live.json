@@ -47,7 +47,7 @@
             "mode": "fixed",
             "fixedColor": "green"
           },
-          "decimals": 4,
+          "decimals": 2,
           "sparkline": {
             "fillColor": "rgba(30, 255, 0, 0.18)",
             "full": false,
@@ -603,99 +603,6 @@
       ]
     },
     {
-<<<<<<< HEAD
-<<<<<<< Updated upstream
-=======
-=======
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Phoenix Protocol Status - Shows if bot is waiting for reset after max drawdown.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "NORMAL"
-                },
-                "1": {
-                  "color": "yellow",
-                  "index": 1,
-                  "text": "WAITING"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 5
-      },
-      "id": 26,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "title": "🔥 Phoenix Protocol",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "last_over_time(phoenix_active{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Phoenix",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 5
-      },
-      "id": 8,
-      "panels": [],
-      "title": "DECISION ENGINE & BLOCKERS",
-      "type": "row"
-    },
-    {
->>>>>>> f1464de708f84824ed079213a419ea2db8ddb4f4
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -771,7 +678,6 @@
       ]
     },
     {
->>>>>>> Stashed changes
       "collapsed": false,
       "gridPos": {
         "h": 1,
@@ -946,54 +852,67 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Signal strength. \nLine = Current Signal.\nDashed Lines = Band Thresholds.\nGreen Background = BUY Zone.\nRed Background = SELL Zone.",
+      "description": "Dynamic Signal Bands.\nRed = Sell Zone (Upper Entry to Upper Exit)\nGreen = Buy Zone (Lower Entry to Lower Exit)\nWhite = Signal Line",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
-            "axisSoftMax": 0.04,
-            "axisSoftMin": -0.04,
             "drawStyle": "line",
             "fillOpacity": 10,
             "lineWidth": 2
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": -0.025
-              },
-              {
-                "color": "transparent",
-                "value": -0.024
-              },
-              {
-                "color": "red",
-                "value": 0.025
-              }
-            ]
-          },
-          "thresholdsStyle": {
-            "mode": "area"
           },
           "unit": "percentunit"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "Zero Line"
+              "id": "byRegexp",
+              "options": "/.*Signal/"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 3
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/.*Top Entry/"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "white",
+                  "fixedColor": "red",
                   "mode": "fixed"
                 }
+              },
+              {
+                "id": "custom.fillBelowTo",
+                "value": "Top Exit"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/.*Top Exit/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "rgba(255, 0, 0, 0.2)",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
               },
               {
                 "id": "custom.lineStyle",
@@ -1009,37 +928,41 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "Upper Band"
+              "id": "byRegexp",
+              "options": "/.*Bot Exit/"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "red",
+                  "fixedColor": "rgba(0, 255, 0, 0.2)",
                   "mode": "fixed"
                 }
+              },
+              {
+                "id": "custom.fillBelowTo",
+                "value": "Bot Entry"
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 1
               },
               {
                 "id": "custom.lineStyle",
                 "value": {
                   "dash": [
-                    5,
-                    5
+                    2,
+                    2
                   ],
                   "fill": "dash"
                 }
-              },
-              {
-                "id": "custom.fillBelowTo",
-                "value": "Zero Line"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "Lower Band"
+              "id": "byRegexp",
+              "options": "/.*Bot Entry/"
             },
             "properties": [
               {
@@ -1048,20 +971,6 @@
                   "fixedColor": "green",
                   "mode": "fixed"
                 }
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    5,
-                    5
-                  ],
-                  "fill": "dash"
-                }
-              },
-              {
-                "id": "custom.fillBelowTo",
-                "value": "Zero Line"
               }
             ]
           }
@@ -1086,7 +995,7 @@
           "sort": "none"
         }
       },
-      "title": "Signal vs Bands (Zones)",
+      "title": "Signal vs Bands (Dynamic Zones)",
       "type": "timeseries",
       "targets": [
         {
@@ -1095,19 +1004,24 @@
           "refId": "A"
         },
         {
-          "expr": "0",
-          "legendFormat": "Zero Line",
+          "expr": "last_over_time(signal_band{kind=\"upper_entry\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} Top Entry",
           "refId": "B"
         },
         {
-          "expr": "0.025",
-          "legendFormat": "Upper Band",
+          "expr": "last_over_time(signal_band{kind=\"upper_exit\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} Top Exit",
           "refId": "C"
         },
         {
-          "expr": "-0.025",
-          "legendFormat": "Lower Band",
+          "expr": "last_over_time(signal_band{kind=\"lower_entry\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} Bot Entry",
           "refId": "D"
+        },
+        {
+          "expr": "last_over_time(signal_band{kind=\"lower_exit\", instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} Bot Exit",
+          "refId": "E"
         }
       ]
     },
@@ -1368,64 +1282,6 @@
           "refId": "A"
         }
       ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "fillOpacity": 70,
-            "lineWidth": 0,
-            "spanNulls": false
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 39
-      },
-      "id": 9,
-      "options": {
-        "alignValue": "center",
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "mergeValues": true,
-        "rowHeight": 0.9,
-        "showValue": "auto",
-        "tooltip": {
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "title": "Decision History",
-      "type": "state-timeline",
-      "targets": [
-        {
-          "expr": "trade_decision{instance=~\"$instance\"} > 0",
-          "legendFormat": "{{instance}} - {{trade_decision}}",
-          "refId": "A"
-        }
-      ]
     }
   ],
   "refresh": "1m",
@@ -1489,6 +1345,6 @@
   "timezone": "",
   "title": "ETHBTC Admiral V5 (Hybrid)",
   "uid": "ethbtc-admiral-v5",
-  "version": 6,
+  "version": 8,
   "weekStart": ""
 }

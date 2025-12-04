@@ -18,7 +18,7 @@ from core.alert_manager import AlertManager
 from core.metrics import (
     ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_QUOTE, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
     GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, 
-    PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, 
+    PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, SIGNAL_BAND,
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
     PHOENIX_ACTIVE,    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
@@ -548,6 +548,12 @@ def main():
             entry = p_entry + p_k * (rv if rv == rv else 0.0)
             exitb = p_exit + p_k * (rv if rv == rv else 0.0)
 
+            # Export Dynamic Bands to Prometheus
+            SIGNAL_BAND.labels("upper_entry").set(entry)
+            SIGNAL_BAND.labels("lower_entry").set(-entry)
+            SIGNAL_BAND.labels("upper_exit").set(exitb)
+            SIGNAL_BAND.labels("lower_exit").set(-exitb)
+
             # --- GATE & FUNDING CHECKS ---
             gate_ok = True
             gate_reason = "open"
@@ -819,9 +825,11 @@ def main():
             # we must prevent BUYING.
             if not gate_ok:
                 # If strategy wants to increase exposure, block it.
-                if target_w > cur_w:
-                    log.warning("Safety Override: Strategy wants %.2f, but Gate is CLOSED. Holding %.2f.", target_w, cur_w)
+                if target_w > cur_w and target_w > 0:
+                    log.warning("Safety Override: Gate CLOSED. Blocking Long Entry.")
                     target_w = cur_w
+                # Prevent OPENING or ADDING to Shorts (if target < cur)
+                # (This logic depends on your specific gate definition, but standard gates block Longs)
             # -----------------------
 
             # If Spot: Clamp [0, 1]
@@ -908,6 +916,7 @@ def main():
             # Bug Fix #4: Removed duplicate side determination (will be set later at line 906)
 
             set_delta_metrics(delta_w, delta_eth)
+            side = "BUY" if delta_eth > 0 else "SELL"
 
             # Spread Probe
             sp_bps = 0.0
@@ -1036,8 +1045,6 @@ def main():
                     break
                 time.sleep(cfg.execution.poll_sec)
                 continue
-
-            side = "BUY" if delta_eth > 0 else "SELL"
 
             # Bug Fix #6: Guard spot-only balance check
             if not is_futures and side == "SELL" and base_bal <= 1e-12:

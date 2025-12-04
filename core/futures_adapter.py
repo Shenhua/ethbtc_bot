@@ -160,6 +160,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             self.client.cancel_order(symbol=symbol, orderId=order_id)
         except Exception as e:
             log.warning(f"Cancel failed for order {order_id}: {e}")
+            pass
 
     def check_order(self, symbol: str, order_id: str) -> Tuple[bool, float]:
         """

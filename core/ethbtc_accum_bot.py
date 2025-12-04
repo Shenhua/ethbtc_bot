@@ -194,7 +194,7 @@ class EthBtcStrategy:
         idx_arr = close.index
         
         out_sig = np.zeros(len(close))
-        state = -1.0 # Default Start State
+        state = 0.0 # Default Start State
         
         # Cooldown logic requires timestamps, convert to int nanoseconds for speed comparison
         ts_arr = idx_arr.astype(np.int64)
