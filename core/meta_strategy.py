@@ -33,7 +33,8 @@ class MetaStrategy:
         log.debug(f"[META] MR signal: {sig_mr.iloc[-1]:.4f}")
         
         log.debug(f"[META] Generating Trend signal")
-        df_trend = self.trend.generate_positions(df["close"], funding)
+        # FIX #6: Pass full DataFrame for consistency (Trend can handle both)
+        df_trend = self.trend.generate_positions(df, funding)
         sig_trend = df_trend["target_w"]
         log.debug(f"[META] Trend signal: {sig_trend.iloc[-1]:.4f}")
         
@@ -74,9 +75,11 @@ class MetaStrategy:
         final = np.where(mask_trend, v_tr, v_mr)
         log.debug(f"[META] Final signal: {final[-1]:.4f} (regime={'TREND' if mask_trend[-1] else 'MR'}, score={v_sc[-1]:.2f})")
         
+        # FIX #7: Export regime state for observability
         return pd.DataFrame({
             "target_w": final,
             "regime_score": v_sc,
+            "regime_state": regime_series.values,  # -1=MR, 1=Trend
             "sig_mr": v_mr,
             "sig_trend": v_tr
         }, index=common_idx)

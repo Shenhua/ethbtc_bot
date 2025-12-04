@@ -20,7 +20,7 @@ from core.metrics import (
     GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, 
     PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, SIGNAL_BAND,
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
-    PHOENIX_ACTIVE,    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
+    REGIME_STATE, PHOENIX_ACTIVE,    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
 )
@@ -411,7 +411,14 @@ def main():
                     base_bal = 0.0 # We don't hold the base asset in futures, we hold contracts
                     
                     # Current Exposure comes from the open Position size
-                    current_position = adapter.get_position(args.symbol)
+                    # FIX #5: Add fallback if position fetch fails
+                    try:
+                        current_position = adapter.get_position(args.symbol)
+                        # Store successful fetch for future fallback
+                        state["last_known_position"] = current_position
+                    except Exception as e:
+                        log.error("Position fetch failed, using last known: %s", e)
+                        current_position = state.get("last_known_position", 0.0)
                     
                     # Value of position = Size * Price
                     # (current_position can be negative if Short)
@@ -831,6 +838,30 @@ def main():
             else:
                 STRATEGY_MODE.set(0.0) # Always MR
 
+            # 4. Regime State (FIX #7: Export actual state with hysteresis)
+            if 'plan' in locals() and "regime_state" in plan.columns:
+                regime_state_val = float(plan["regime_state"].iloc[-1])
+                REGIME_STATE.set(regime_state_val)
+
+            # --- FIX #4: REGIME-AWARE THRESHOLD SELECTION ---
+            # Meta Strategy should use different thresholds based on current regime
+            # This was previously only updated during Phoenix recovery (line 760)
+            if strat_type == "meta" and 'plan' in locals():
+                if "regime_score" in plan.columns:
+                    current_score = float(plan["regime_score"].iloc[-1])
+                    adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
+                    
+                    if current_score > adx_thresh:
+                        # TREND mode - use Trend threshold (usually tighter)
+                        active_rebalance_threshold = float(tr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                        log.debug("[THRESHOLD] Using TREND threshold: %.4f", active_rebalance_threshold)
+                    else:
+                        # MR mode - use MR threshold (usually looser)
+                        active_rebalance_threshold = float(mr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                        log.debug("[THRESHOLD] Using MR threshold: %.4f", active_rebalance_threshold)
+            # For non-Meta strategies, use config value (already set at line 375)
+            # ------------------------------------------------
+
             # --- SAFETY OVERRIDE ---
             # If the "Global Gate" is closed (due to funding or trend check in main loop),
             # we must prevent BUYING.
@@ -886,14 +917,16 @@ def main():
             # Bug Fix #7: Use position size for futures, base_bal for spot
             if target_w == 0.0:
                 check_val = current_position if is_futures else base_bal
-                if check_val > 0:
-                    total_val_quote = check_val * price
+                # CRITICAL FIX: Use abs() to handle both long AND short positions
+                if abs(check_val) > 0:
+                    total_val_quote = abs(check_val) * price  # Absolute value for shorts
                     min_trade_quote = max(cfg.execution.min_trade_floor_btc,
                                     cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
                     
                     if total_val_quote > min_trade_quote and total_val_quote < (3.0 * min_trade_quote):
                         step = 1.0
-                        log.info("[EXEC] Snap-to-Zero: %s position small (%.6f %s). Forcing exit.", base_asset, total_val_quote, quote_asset)
+                        position_type = "SHORT" if check_val < 0 else "LONG"
+                        log.info("[EXEC] Snap-to-Zero: %s %s position small (%.6f %s). Forcing exit.", position_type, base_asset, total_val_quote, quote_asset)
 
             if getattr(cfg.strategy, "vol_scaled_step", False):
                 z = cur_ratio / max(rv, 1e-6)
@@ -1264,7 +1297,10 @@ def main():
                 # Some or all of the order didn't fill - get truth from exchange
                 try:
                     actual_position = adapter.get_position(args.symbol)
-                    actual_current_w = (actual_position * price) / max(W, 1e-12)
+                    # FIX #5: Store successful position fetch
+                    state["last_known_position"] = actual_position
+                    state["last_known_cur_w"] = (actual_position * price) / max(W, 1e-12)
+                    actual_current_w = state["last_known_cur_w"]
                     if abs(actual_current_w - new_w) > 0.01:
                         log.warning("Position mismatch! Bot calculated: %.4f, Actual: %.4f (unfilled orders)", new_w, actual_current_w)
                 except Exception as e:
