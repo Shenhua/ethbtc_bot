@@ -40,8 +40,7 @@ class TrendStrategy:
     def __init__(self, p: TrendParams): 
         self.p = p
 
-    def generate_positions(self, df: pd.DataFrame | pd.Series, funding: pd.Series = None) -> pd.DataFrame:
-        # Support both Series (just close) and DataFrame (OHLC)
+    def generate_positions(self, df: pd.DataFrame | pd.Series, funding: pd.Series = None) -> pd.DataFrame:          # Support both Series (just close) and DataFrame (OHLC)
         if isinstance(df, pd.Series):
             close = df
         else:
@@ -85,17 +84,57 @@ class TrendStrategy:
 
         # 4. Funding Filter (Safety)
         if funding is not None:
-            # Align funding if lengths differ
-            if len(funding) != len(close):
-                funding = funding.reindex(close.index).ffill().fillna(0.0)
-                
-            mask_long = (funding > self.p.funding_limit_long)
-            mask_short = (funding < self.p.funding_limit_short)
+            # Align
+            funding = funding.reindex(close.index).ffill().fillna(0.0)
             
-            # If Euphoria -> No Longs
-            clean_sig.loc[mask_long & (clean_sig > 0)] = 0.0
-            # If Panic -> No Shorts
-            clean_sig.loc[mask_short & (clean_sig < 0)] = 0.0
+            # Mask: True if funding prohibits this side
+            block_long = (funding > self.p.funding_limit_long)
+            block_short = (funding < self.p.funding_limit_short)
+            
+            # Logic: 
+            # If Signal is Long (1) AND Block Long is True -> Force Neutral (0) IF we weren't already Long?
+            # Actually, standard safety is: If unsafe, go to cash (0). 
+            # But "Don't Enter" implies holding.
+            
+            # Vectorized Hold Logic:
+            # If (Signal=1 AND Block=True), effective signal = 0.0 (Safety First approach)
+            # OR effective signal = Previous Signal (Hold approach).
+            # Given "Safety" context, we usually want to exit crowded trades. 
+            # However, to fix "premature exit", we can apply a "Neutral" zone only if the trend hasn't reversed.
+            
+            # Re-implementation: Strict Safety (Exit on excessive funding) is usually desired in crypto.
+            # If the user intention was "Filter Entries", we use pandas to forward fill 0s.
+            
+            # Correct logic for "Filter Entry":
+            # If Signal flips 0->1, but funding is high, stay 0.
+            # If Signal is already 1, and funding gets high, stay 1 (Hold).
+            
+            final_sig = clean_sig.copy()
+            
+            # We iterate to apply stateful "Filter Entry Only" logic
+            # (Vectorizing this specific state machine is complex, falling back to efficient loop)
+            curr = 0.0
+            for i in range(len(final_sig)):
+                raw = clean_sig.iat[i]
+                f = funding.iat[i]
+                
+                # Default to raw signal
+                proposed = raw
+                
+                # Check Long Entry Block
+                if raw > 0 and curr <= 0: # Trying to enter Long
+                    if f > self.p.funding_limit_long:
+                        proposed = 0.0 # Block entry
+                
+                # Check Short Entry Block
+                if raw < 0 and curr >= 0: # Trying to enter Short
+                    if f < self.p.funding_limit_short:
+                        proposed = 0.0 # Block entry
+                        
+                curr = proposed
+                final_sig.iat[i] = curr
+                
+            clean_sig = final_sig
 
         # 5. Allocation
         lo = 0.0 if self.p.long_only else -self.p.max_position

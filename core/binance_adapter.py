@@ -4,6 +4,9 @@ import requests
 from typing import Any, Dict, List, Tuple
 from binance.spot import Spot
 from .exchange_adapter import ExchangeAdapter, Book, Filters
+import logging
+
+log = logging.getLogger("binance_adapter")
 
 class BinanceSpotAdapter(ExchangeAdapter):
     def __init__(self, client: Spot, public_client: Spot | None = None, timeout: int = 5000):
@@ -72,43 +75,74 @@ class BinanceSpotAdapter(ExchangeAdapter):
         tick_size = float(price.get("tickSize", "0")) if price else 0.0
         min_notional = float(notional.get("minNotional", "0")) if notional else 0.0
 
-        return Filters(step_size=step_size, tick_size=tick_size, min_notional=min_notional)
+        filters = Filters(step_size=step_size, tick_size=tick_size, min_notional=min_notional)
+        log.debug(f"[SPOT] Filters for {symbol}: {filters}")
+        return filters
 
     # --- REFACTORED: Non-blocking Place Only ---
     def place_limit_maker(self, symbol: str, side: str, quantity: float, price: float) -> str:
-        """
-        Places a LIMIT_MAKER (Post-Only) order.
-        Returns order_id immediately. Does NOT wait or sleep.
-        """
+        """Spot POST_ONLY order."""
+        log.debug(f"[SPOT] Placing POST_ONLY {side} order: {quantity:.8f} {symbol} @ {price:.8f}")
         resp = self.client.new_order(
-            symbol=symbol, 
-            side=side, 
+            symbol=symbol,
+            side=side,
             type="LIMIT_MAKER",
-            timeInForce="GTC", 
-            quantity=f"{quantity:.8f}", 
-            price=f"{price:.8f}",
-            newOrderRespType="RESULT"
+            quantity=f"{quantity:.8f}",
+            price=f"{price:.8f}"
         )
-        return str(resp.get("orderId") or resp.get("clientOrderId"))
+        log.debug(f"[SPOT] Order response: {resp}")
+        return str(resp["orderId"])
 
+    def cancel_open_orders(self, symbol: str) -> List[str]:
+        """Cancel all open orders for the symbol. Returns list of cancelled IDs."""
+        log.debug(f"[SPOT] Attempting to cancel all open orders for {symbol}")
+        try:
+            open_orders = self.client.get_open_orders(symbol=symbol)
+            cancelled_ids = []
+            for o in open_orders:
+                oid = o.get("orderId")
+                try:
+                    self.client.cancel_order(symbol=symbol, orderId=oid)
+                    cancelled_ids.append(str(oid))
+                    log.debug(f"[SPOT] Cancelled order {oid} for {symbol}")
+                except Exception as e:
+                    log.warning(f"[SPOT] Could not cancel order {oid} for {symbol}: {e}")
+            log.debug(f"[SPOT] Cancelled {len(cancelled_ids)} orders for {symbol}")
+            return cancelled_ids
+        except Exception as e:
+            log.error(f"[SPOT] Error cancelling open orders for {symbol}: {e}")
+            return []
+            
     def cancel(self, symbol: str, order_id: str) -> None:
+        log.debug(f"[SPOT] Attempting to cancel order {order_id} for {symbol}")
         try:
             self.client.cancel_order(symbol=symbol, orderId=order_id)
-        except Exception:
-            pass
+            log.debug(f"[SPOT] Order {order_id} cancelled successfully")
+        except Exception as e:
+            log.warning(f"[SPOT] Could not cancel order {order_id}: {e}")
 
     def check_order(self, symbol: str, order_id: str) -> Tuple[bool, float]:
+        log.debug(f"[SPOT] Checking order {order_id} for {symbol}")
         od = self.client.get_order(symbol=symbol, orderId=order_id)
         status = od.get("status","")
         filled = float(od.get("executedQty","0"))
+        log.debug(f"[SPOT] Order {order_id} status: {status}, filled: {filled}")
         return (status == "FILLED"), filled
 
     def market_order(self, symbol: str, side: str, quantity: float) -> str:
-        resp = self.client.new_order(symbol=symbol, side=side, type="MARKET",
-                                     quantity=f"{quantity:.8f}", newOrderRespType="FULL")
-        return str(resp.get("orderId") or resp.get("clientOrderId"))
+        """Execute market order on Spot."""
+        log.debug(f"[SPOT] Placing MARKET {side} order: {quantity:.8f} {symbol}")
+        resp = self.client.new_order(
+            symbol=symbol,
+            side=side,
+            type="MARKET",
+            quantity=f"{quantity:.8f}"
+        )
+        log.debug(f"[SPOT] Market order response: {resp}")
+        return str(resp["orderId"])
     
     def get_funding_rate(self, symbol: str = "ETHUSDT") -> float:
+        log.debug(f"[SPOT] Fetching funding rate for {symbol}")
         try:
             url = "https://fapi.binance.com/fapi/v1/premiumIndex"
             params = {"symbol": symbol}

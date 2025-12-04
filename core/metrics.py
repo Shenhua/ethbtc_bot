@@ -53,6 +53,7 @@ FUNDING_RATE = Gauge("funding_rate_pct", "Current funding rate percentage")
 TRADE_READY = Gauge("trade_ready", "Overall trade readiness (1=OK, 0=Blocked)")
 TRADE_READY_COND = Gauge("trade_ready_condition", "Sub-condition readiness", ["cond"])
 
+# --- NEW METRICS FOR LIVE EXECUTOR ---
 REGIME_SCORE = Gauge("regime_score", "Current Trend Consensus Score (0-100)")
 REGIME_THRESHOLD = Gauge("regime_threshold", "ADX Threshold for Regime Switch")
 STRATEGY_MODE = Gauge("strategy_mode", "Active Strategy: 0=MeanRev, 1=Trend")

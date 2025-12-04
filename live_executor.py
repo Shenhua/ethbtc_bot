@@ -32,6 +32,9 @@ from core.story_writer import StoryWriter
 from core.ethbtc_accum_bot import EthBtcStrategy, StratParams
 from core.trend_strategy import TrendStrategy, TrendParams
 from core.meta_strategy import MetaStrategy
+from core.regime import get_regime_score
+
+log = logging.getLogger("live_executor")
 
 # --- MAKER LOGIC ---
 try:
@@ -98,6 +101,9 @@ def inc_rejection(reason: str = "error") -> None:
 
 logging.basicConfig(level=os.getenv("LOGLEVEL","INFO"))
 log = logging.getLogger("live_enhanced")
+
+# Global Stop Event for graceful shutdown of maker threads
+STOP_EVENT = threading.Event()
 
 def last_closed_bar_ts(now_s: int, interval: str) -> int:
     units = {"m":60, "h":3600, "d":86400}
@@ -247,6 +253,10 @@ def main():
 
     cfg = load_config(args.params)
 
+    state = load_state(args.state)
+    if "session_start_W" not in state:
+        state["session_start_W"] = 0.0
+
     env_base = (os.getenv("BINANCE_BASE_URL") or "").strip()
     if env_base:
         base_url = env_base
@@ -254,6 +264,7 @@ def main():
         base_url = "https://testnet.binance.vision"
     else:
         base_url = "https://api.binance.com"
+
 
     log.info("🎯 Beginning main loop (interval=%ds, mode=%s)...", cfg.execution.poll_sec, args.mode)
     state["loop_started_at"] = pd.Timestamp.now(tz="UTC").isoformat()
@@ -317,8 +328,8 @@ def main():
 
     # --- STORY WRITER INITIALIZATION ---
     story_file = os.path.join(os.path.dirname(args.state), f"story_{args.symbol.lower()}.txt")
-    story = StoryWriter(story_file, symbol=args.symbol, alerter=alerter)  # Pass alerter for Discord
-    
+    alerter = AlertManager(prefix=args.symbol)
+    story = StoryWriter(story_file, symbol=args.symbol, alerter=alerter)    
     # --- INITIALIZATION ---
         
     # Bug Fix #2: Removed duplicate adapter assignment (adapter already set above)
@@ -327,7 +338,12 @@ def main():
     
     start_metrics_server(metrics_port, story_file=story_file)  # Pass story file for /story endpoint
     update_status = start_status_server(status_port)
-    alerter = AlertManager(prefix=args.symbol)  # Bug Fix #1: Initialize alerter
+
+    if args.mode in ["live", "testnet"]:
+        log.info("Checking for open orders...")
+        cancelled = adapter.cancel_open_orders(args.symbol)
+        if cancelled:
+            log.info(f"Cleaned up {len(cancelled)} zombie orders.")
 
     state = load_state(args.state)
     if "session_start_W" not in state:
@@ -353,8 +369,19 @@ def main():
             try:
                 ks = adapter.get_klines(args.symbol, cfg.execution.interval, limit=600)
                 df = pd.DataFrame(ks)
+                
+                # Ensure numeric types
+                cols = ["open", "high", "low", "close", "volume"]
+                df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
+
                 if "close_time" in df.columns:
                     df.index = pd.to_datetime(df["close_time"], unit="ms", utc=True)
+                
+                # --- FIX START: Strict Deduplication ---
+                df = df[~df.index.duplicated(keep='last')]
+                df = df.sort_index()
+                # --- FIX END ---
+
                 price = float(df["close"].iloc[-1])
             except Exception as e:
                 log.error("Failed to fetch klines: %s", e)
@@ -395,6 +422,10 @@ def main():
                         log.info("[FUTURES BALANCE] Margin=%.2f %s, Position=%.4f %s (%.2f%%)", 
                                  quote_bal, quote_asset, current_position, args.symbol, cur_w*100)
                         state["last_balance_log_ts"] = now_s
+                    
+                    # Fetch filters for order sizing
+                    f = adapter.get_filters(args.symbol)
+                    log.debug(f"[FUTURES] Filters: step_size={f.step_size}, min_notional={f.min_notional}")
 
                 else:
                     # 2. SPOT MODE (Legacy Logic)
@@ -420,7 +451,8 @@ def main():
                         # ... dust logging ...
 
                     W = quote_bal + base_bal * price
-                    cur_w = 0.0 if W <= 0 else (effective_base * price) / W   
+                    cur_w = 0.0 if W <= 0 else (effective_base * price) / W
+                    log.debug(f"[SPOT] Wealth calculation: quote={quote_bal:.8f}, base={base_bal:.8f}, W={W:.8f}, cur_w={cur_w:.4f}")   
 
             except Exception as e:
                 log.error("CRITICAL: Failed to fetch %s account balance. Reason: %s", args.mode.upper(), e)
@@ -488,6 +520,22 @@ def main():
                       quote_asset, quote_bal, base_asset, base_bal, W, cur_w)
 
             # --- INDICATORS (Common) ---
+            # Fix: Use correct params for bands if Meta Strategy is active
+            strat_type = getattr(cfg.strategy, "strategy_type", "mean_reversion")
+            
+            # Default to base config
+            p_entry = cfg.strategy.flip_band_entry
+            p_exit = cfg.strategy.flip_band_exit
+            p_k = cfg.strategy.vol_adapt_k
+            
+            if strat_type == "meta":
+                # If Meta, use MR overrides for the visual bands
+                mr_opts = cfg.strategy.mean_reversion_overrides
+                if mr_opts:
+                    p_entry = float(mr_opts.get("flip_band_entry", p_entry))
+                    p_exit = float(mr_opts.get("flip_band_exit", p_exit))
+                    p_k = float(mr_opts.get("vol_adapt_k", p_k))
+
             L = int(cfg.strategy.trend_lookback)
             ser_close = df["close"].astype(float)
             if cfg.strategy.trend_kind == "sma":
@@ -497,8 +545,9 @@ def main():
                 prev = ser_close.shift(L).iloc[-1]
                 cur_ratio = float(ser_close.iloc[-1] / max(prev, 1e-12) - 1.0)
             rv = float(ser_close.pct_change().rolling(cfg.strategy.vol_window).std().iloc[-1])
-            entry = cfg.strategy.flip_band_entry + cfg.strategy.vol_adapt_k * (rv if rv == rv else 0.0)
-            exitb = cfg.strategy.flip_band_exit + cfg.strategy.vol_adapt_k * (rv if rv == rv else 0.0)
+            
+            entry = p_entry + p_k * (rv if rv == rv else 0.0)
+            exitb = p_exit + p_k * (rv if rv == rv else 0.0)
 
             # --- GATE & FUNDING CHECKS ---
             gate_ok = True
@@ -664,7 +713,7 @@ def main():
                     target_w = float(plan["target_w"].iloc[-1])
 
             except Exception as e:
-                log.error("Strategy calculation failed (%s): %s", strat_type, e)
+                log.exception("Strategy calculation failed (%s): %s", strat_type, e)
                 target_w = cur_w # Hold position on error
 
             # --- SMART PHOENIX PROTOCOL (Auto-Recovery) ---
@@ -725,20 +774,29 @@ def main():
             story.check_and_log_annual(bar_dt, W, quote_asset)
             
             # --- METRICS UPDATE (General) ---
+            # --- METRICS UPDATE (General) ---
+            # Calculate Regime Score if missing (for observability)
+            current_score = 0.0
             if 'plan' in locals() and "regime_score" in plan.columns:
-                sc = float(plan["regime_score"].iloc[-1])
-                REGIME_SCORE.set(sc)
-                # If we are in Meta strategy, we can infer mode from the score
-                # If Trend strategy, mode is always TREND (1.0)
-                # If MR strategy, mode is always MR (0.0)
-                if strat_type == "trend":
-                    STRATEGY_MODE.set(1.0)
-                elif strat_type == "meta":
-                    # Re-derive regime for metric consistency
-                    adx_t = getattr(cfg.strategy, "adx_threshold", 25.0)
-                    STRATEGY_MODE.set(1.0 if sc > adx_t else 0.0)
-                else:
-                    STRATEGY_MODE.set(0.0)
+                current_score = float(plan["regime_score"].iloc[-1])
+            else:
+                try:
+                    # Calculate independently
+                    rs_series = get_regime_score(df)
+                    current_score = float(rs_series.iloc[-1])
+                except Exception:
+                    pass
+
+            REGIME_SCORE.set(current_score)
+
+            # Strategy Mode Metric
+            if strat_type == "trend":
+                STRATEGY_MODE.set(1.0)
+            elif strat_type == "meta":
+                adx_t = getattr(cfg.strategy, "adx_threshold", 25.0)
+                STRATEGY_MODE.set(1.0 if current_score > adx_t else 0.0)
+            else:
+                STRATEGY_MODE.set(0.0)
 
             # --- SAFETY OVERRIDE ---
             # If the "Global Gate" is closed (due to funding or trend check in main loop),
@@ -1008,11 +1066,20 @@ def main():
                 time.sleep(cfg.execution.poll_sec)
                 continue
 
-            # ---- Balance-aware clamp (Generic) ----------------------------
-            if side == "BUY":
+            # ---- Balance-aware clamp (Mode-specific) ----------------------------
+            if is_futures:
+                # FUTURES MODE: Margin-based trading
+                # For both BUY and SELL, we can use margin up to our available balance
+                # The exchange will handle position management
                 max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), f.step_size)
-            else:  
-                max_qty_by_balance = adapter.round_qty(max(base_bal, 0.0), f.step_size)
+                log.debug(f"[FUTURES] Max qty by balance: {max_qty_by_balance:.8f} (margin={quote_bal:.2f})")
+            else:
+                # SPOT MODE: Wallet-based trading
+                if side == "BUY":
+                    max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), f.step_size)
+                else:  
+                    max_qty_by_balance = adapter.round_qty(max(base_bal, 0.0), f.step_size)
+                log.debug(f"[SPOT] Max qty by balance: {max_qty_by_balance:.8f} (side={side}, quote={quote_bal:.8f}, base={base_bal:.8f})")
 
             qty_exec = min(qty_rounded, max_qty_by_balance)
 
@@ -1077,7 +1144,7 @@ def main():
                     try:
                         filled_maker = maker_chase(
                             adapter, args.symbol, side, qty_exec, f.tick_size,
-                            max_reprices=3, step_sec=8
+                            max_reprices=3, step_sec=8, stop_event=STOP_EVENT
                         )
                         executed_qty += filled_maker
                         if filled_maker > 0:
