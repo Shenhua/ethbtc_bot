@@ -19,11 +19,10 @@ from core.metrics import (
     ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_QUOTE, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
     GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, 
     PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, 
-    DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,
-    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
+    DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
+    PHOENIX_ACTIVE,    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
-    REGIME_SCORE, STRATEGY_MODE, PHOENIX_ACTIVE  # New Metrics
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 from core.story_writer import StoryWriter
@@ -789,14 +788,31 @@ def main():
 
             REGIME_SCORE.set(current_score)
 
-            # Strategy Mode Metric
-            if strat_type == "trend":
-                STRATEGY_MODE.set(1.0)
-            elif strat_type == "meta":
-                adx_t = getattr(cfg.strategy, "adx_threshold", 25.0)
-                STRATEGY_MODE.set(1.0 if current_score > adx_t else 0.0)
+            # --- METRICS: Strategy & Regime ---
+            # 1. Regime Score
+            current_score = 0.0
+            if 'plan' in locals() and "regime_score" in plan.columns:
+                current_score = float(plan["regime_score"].iloc[-1])
             else:
-                STRATEGY_MODE.set(0.0)
+                try:
+                    rs_series = get_regime_score(df)
+                    current_score = float(rs_series.iloc[-1])
+                except Exception:
+                    pass
+            REGIME_SCORE.set(current_score)
+
+            # 2. Regime Threshold (FIX: Always publish config value)
+            # Default to 25.0 if not set, so graph line is never 0
+            adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
+            REGIME_THRESHOLD.set(adx_thresh)
+
+            # 3. Strategy Mode
+            if strat_type == "trend":
+                STRATEGY_MODE.set(1.0) # Always Trend
+            elif strat_type == "meta":
+                STRATEGY_MODE.set(1.0 if current_score > adx_thresh else 0.0)
+            else:
+                STRATEGY_MODE.set(0.0) # Always MR
 
             # --- SAFETY OVERRIDE ---
             # If the "Global Gate" is closed (due to funding or trend check in main loop),
