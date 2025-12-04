@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional, Literal, Any, Dict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 import json
 
 Interval = Literal["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d"]
@@ -84,39 +84,38 @@ class AppConfig(BaseModel):
     execution: Execution
     risk: Risk
     
-    # Legacy Coercion Logic
-    @staticmethod
-    def coerce_legacy(d: Dict[str, Any]) -> Dict[str, Any]:
-        out: Dict[str, Any] = {}
-        # Full legacy logic preserved for compatibility with old configs
-        fees_keys = {"maker_fee","taker_fee","slippage_bps","bnb_discount","pay_fees_in_bnb"}
-        strat_keys = {"trend_kind","trend_lookback","flip_band_entry","flip_band_exit","vol_window","vol_adapt_k",
-                      "target_vol","min_mult","max_mult","cooldown_minutes","step_allocation","max_position",
-                      "gate_window_days","gate_roc_threshold","rebalance_threshold_w","vol_scaled_step","profit_lock_dd","long_only",
-                      "fast_period","slow_period","ma_type","adx_threshold","strategy_type","funding_limit_long","funding_limit_short"}
-        exec_keys = {"interval","poll_sec","ttl_sec","taker_fallback","max_taker_btc","max_spread_bps_for_taker",
-                     "min_trade_frac","min_trade_floor_btc","min_trade_cap_btc","min_trade_btc"}
-        risk_keys = {"basis_btc","max_daily_loss_btc","max_dd_btc","max_daily_loss_frac","max_dd_frac","risk_mode"}
+    # FIX ITEM 7: Robust Pre-Validation for Legacy Configs
+    @root_validator(pre=True)
+    def flatten_compatibility(cls, values):
+        # If structure is already nested (has 'fees', 'strategy', etc), return as is
+        if "fees" in values and "strategy" in values:
+            return values
+            
+        # Otherwise, assume flat legacy config and map fields
+        fees_data = {k: v for k, v in values.items() if k in Fees.__fields__}
         
-        out["fees"] = {k: d[k] for k in fees_keys if k in d}
-        out["strategy"] = {k: d[k] for k in strat_keys if k in d}
-        out["execution"] = {k: d[k] for k in exec_keys if k in d}
-        out["risk"] = {k: d[k] for k in risk_keys if k in d}
+        # Strategy fields might have overrides (e.g. trend_kind)
+        strat_data = {k: v for k, v in values.items() if k in Strategy.__fields__}
         
-        # Defaults
-        if "maker_fee" not in out["fees"]: out["fees"]["maker_fee"] = d.get("maker_fee", 0.0002)
-        if "taker_fee" not in out["fees"]: out["fees"]["taker_fee"] = d.get("taker_fee", 0.0004)
-        if "basis_btc" not in out["risk"]: out["risk"]["basis_btc"] = d.get("basis_btc", 0.1)
-        if "interval" not in out["execution"]: out["execution"]["interval"] = d.get("interval","15m")
+        # Specific legacy defaults
+        if "strategy_type" not in strat_data: 
+            strat_data["strategy_type"] = "mean_reversion"
+            
+        exec_data = {k: v for k, v in values.items() if k in Execution.__fields__}
+        risk_data = {k: v for k, v in values.items() if k in Risk.__fields__}
         
-        return out
+        # Handle Basis legacy
+        if "basis_btc" in values and "basis_btc" not in risk_data:
+            risk_data["basis_btc"] = values["basis_btc"]
+
+        return {
+            "fees": fees_data,
+            "strategy": strat_data,
+            "execution": exec_data,
+            "risk": risk_data
+        }
 
 def load_config(path: str) -> AppConfig:
     with open(path, "r") as f:
         data = json.load(f)
-    
-    # Check if it's legacy flat structure
-    if "strategy" not in data or "execution" not in data:
-        data = AppConfig.coerce_legacy(data)
-        
     return AppConfig(**data)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ethbtc_accum_bot.py — v5.2 (Definitive Multi-Strategy Backtester)
+ethbtc_accum_bot.py — v5.3 (Optimized & Fixed)
 """
 
 from __future__ import annotations
@@ -11,11 +11,17 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ----------------------
 
-import math, argparse, json, random
+import math
+import argparse
+import json
+import random
+import logging
 from dataclasses import dataclass
 from typing import Dict, Optional, Any, Union
 import pandas as pd
 import numpy as np
+
+log = logging.getLogger("ethbtc_accum_bot")
 
 # --- Strategy Imports (Safe) ---
 try:
@@ -133,22 +139,30 @@ class EthBtcStrategy:
     def __init__(self, p: StratParams): self.p = p
 
     def generate_positions(self, close: pd.Series, funding: Optional[pd.Series] = None) -> pd.DataFrame:
+        # --- FIX ITEM 4: Optimized Vectorized Calculation ---
+        
         # 1. Indicators
         if self.p.trend_kind == "sma":
             ma = close.rolling(self.p.trend_lookback).mean()
             ratio = close / ma - 1.0
         else:
             ratio = (close / close.shift(self.p.trend_lookback)) - 1.0
-            
+        
+        log.debug(f"[STRATEGY] Current ratio: {ratio.iloc[-1]:.4f}")
+
         ret = close.pct_change(fill_method=None).fillna(0)
         bars_per_year = (365 * 24 * 60) / float(self.p.bar_interval_minutes)
         vol = ret.rolling(self.p.vol_window).std() * math.sqrt(bars_per_year)
+        log.debug(f"[STRATEGY] Current volatility: {vol.iloc[-1]:.4f}")
         
         adj = self.p.vol_adapt_k * (vol.fillna(vol.median()))
         band_entry = self.p.flip_band_entry + adj
         band_exit  = self.p.flip_band_exit + adj
 
         # 2. Gate Logic
+        gate_buy_mask = pd.Series(True, index=close.index)
+        gate_sell_mask = pd.Series(True, index=close.index)
+
         if self.p.gate_window_days > 0:
             daily = close.resample("1D").last()
             roc_daily = daily.pct_change(self.p.gate_window_days, fill_method=None)            
@@ -156,9 +170,6 @@ class EthBtcStrategy:
             
             gate_buy_mask = roc <= -self.p.gate_roc_threshold
             gate_sell_mask = roc >= self.p.gate_roc_threshold
-        else:
-            gate_buy_mask = pd.Series(True, index=close.index)
-            gate_sell_mask = pd.Series(True, index=close.index)
 
         # 3. Funding Logic
         allow_buy = pd.Series(True, index=close.index)
@@ -169,14 +180,10 @@ class EthBtcStrategy:
             allow_buy = f_aligned <= self.p.funding_limit_long
             allow_sell = f_aligned >= self.p.funding_limit_short
 
-        # 4. Loop State Machine
-        sig = pd.Series(0.0, index=close.index)
-        state = -1.0
-        last_flip_ts = close.index[0]
-        min_delta = pd.Timedelta(minutes=self.p.cooldown_minutes)
-
-        # Pre-convert to numpy
-        idx_arr = close.index
+        # 4. State Machine (Vectorized Loop Optimization)
+        # Instead of iterating .loc/iloc (slow), we use numpy arrays.
+        
+        # Prepare arrays
         r_arr = ratio.values
         be_arr = band_entry.values
         bx_arr = band_exit.values
@@ -184,13 +191,20 @@ class EthBtcStrategy:
         gs_arr = gate_sell_mask.values
         ab_arr = allow_buy.values
         as_arr = allow_sell.values
+        idx_arr = close.index
         
         out_sig = np.zeros(len(close))
+        state = -1.0 # Default Start State
+        
+        # Cooldown logic requires timestamps, convert to int nanoseconds for speed comparison
+        ts_arr = idx_arr.astype(np.int64)
+        cooldown_ns = self.p.cooldown_minutes * 60 * 1_000_000_000
+        last_flip_ts = ts_arr[0]
 
         for i in range(len(close)):
-            t = idx_arr[i]
+            t = ts_arr[i]
             
-            if (t - last_flip_ts) < min_delta:
+            if (t - last_flip_ts) < cooldown_ns:
                 out_sig[i] = state
                 continue
 
@@ -219,11 +233,10 @@ class EthBtcStrategy:
             out_sig[i] = state
 
         # 5. Volatility Scaling
+        mult = pd.Series(1.0, index=close.index)
         if self.p.target_vol > 0:
             vol_adj = vol.replace(0, np.nan)
             mult = (self.p.target_vol / vol_adj).clip(self.p.min_mult, self.p.max_mult).fillna(self.p.min_mult)
-        else:
-            mult = 1.0
 
         # 6. Final Allocation
         sig_series = pd.Series(out_sig, index=close.index)
@@ -266,7 +279,6 @@ class Backtester:
         target_w = plan["target_w"]
 
         # --- PARAMETER SETUP (DYNAMIC) ---
-        # Default to MR values
         step_mr = 1.0
         thresh_mr = 0.0
         step_trend = 1.0
@@ -277,14 +289,11 @@ class Backtester:
         if hasattr(strat, 'adx_threshold'): # MetaStrategy
             is_meta = True
             adx_cutoff = strat.adx_threshold
-            # Extract MR Params
             step_mr = getattr(strat.mr.p, 'step_allocation', 1.0)
             thresh_mr = getattr(strat.mr.p, 'rebalance_threshold_w', 0.0)
-            # Extract Trend Params
             step_trend = getattr(strat.trend.p, 'step_allocation', 1.0)
             thresh_trend = getattr(strat.trend.p, 'rebalance_threshold_w', 0.0)
         elif hasattr(strat, 'p'):
-             # Single Strategy
              step_mr = getattr(strat.p, 'step_allocation', 1.0)
              thresh_mr = getattr(strat.p, 'rebalance_threshold_w', 0.0)
              step_trend = step_mr
@@ -311,6 +320,11 @@ class Backtester:
 
         cur_w = 0.0
         
+        # --- FIX ITEM 15: Daily Risk Tracking Variables ---
+        current_day = px.index[0].date()
+        day_start_wealth = initial_btc
+        daily_limit_hit = False
+        
         for i in range(1, len(px)):
             price = float(px.iat[i])
             timestamp = px.index[i]
@@ -330,7 +344,18 @@ class Backtester:
             # Wealth Calculation
             wealth = btc[i] + eth[i] * price
             
-            # Risk Logic
+            # --- FIX ITEM 15: Daily Loss Logic ---
+            if timestamp.date() != current_day:
+                current_day = timestamp.date()
+                day_start_wealth = wealth # Reset for new day
+                daily_limit_hit = False
+            
+            if not daily_limit_hit and max_daily_loss_btc > 0:
+                day_loss = day_start_wealth - wealth
+                if day_loss >= max_daily_loss_btc:
+                    daily_limit_hit = True
+
+            # Max Drawdown Logic
             if not maxdd_hit:
                 if wealth > equity_high: equity_high = wealth
             
@@ -351,8 +376,8 @@ class Backtester:
                     maxdd_hit = False
                     equity_high = wealth
 
-            # Target Weight
-            tw = 0.0 if maxdd_hit else float(target_w.iat[i])
+            # Target Weight (Force Close if Risk Hit)
+            tw = 0.0 if (maxdd_hit or daily_limit_hit) else float(target_w.iat[i])
             
             # --- DYNAMIC PARAM SELECTION ---
             step = step_mr
@@ -367,6 +392,8 @@ class Backtester:
 
             # Rebalance Logic
             new_w = cur_w + step * (tw - cur_w)
+            
+            # Threshold check
             if abs(new_w - cur_w) < thresh:
                 new_w = cur_w
 
@@ -374,8 +401,14 @@ class Backtester:
             delta = target_eth - eth[i]
             
             # Execution
-            if abs(delta * price) > 0.0001:
-                notional = abs(delta * price)
+            # --- FIX ITEM 12: Float Comparison ---
+            # Using 0.0001 as dust threshold relative to price, effectively checking "not zero"
+            # Here we assume min notional check is handled by 'min_trade_btc' or similar in live logic.
+            # For backtest, we check if the value of the trade is significant.
+            
+            trade_value = abs(delta * price)
+            if not math.isclose(trade_value, 0.0, abs_tol=1e-5):
+                notional = trade_value
                 f_rate = taker_fee * fee_disc 
                 fee_val = notional * f_rate
                 
@@ -408,12 +441,14 @@ class Backtester:
         final_btc = btc[-1] + eth[-1] * float(px.iat[-1])
         
         summary = {
+            "initial_btc": initial_btc,
             "final_btc": final_btc,
             "total_return": (final_btc / initial_btc) - 1.0,
             "max_drawdown_pct": (equity_high - final_btc)/equity_high if equity_high > 0 else 0.0,
             "fees_btc": total_fees_btc,
             "turnover_btc": total_turnover,
-            "n_trades": len(trades)
+            "n_trades": len(trades),
+            "n_bars": len(px)
         }
         
         port_df = pd.DataFrame({"wealth_btc": btc + eth*px}, index=px.index)
@@ -442,6 +477,65 @@ def load_funding_series(path: Optional[str], ref_index: pd.DatetimeIndex) -> Opt
     if "rate" not in f_df.columns: raise ValueError("Funding CSV must have 'rate'")
     funding = f_df["rate"].reindex(ref_index).ffill().fillna(0.0)
     return funding
+
+def build_strategy_from_config(app_cfg, df: pd.DataFrame):
+    strat_cfg = app_cfg.strategy
+    exec_cfg = app_cfg.execution
+    interval_str = str(strat_cfg.strategy_type and exec_cfg.interval)
+    bar_minutes = _interval_to_minutes(interval_str)
+    
+    # Common parameters shared across MR and Trend
+    common_kwargs = dict(
+        trend_kind=strat_cfg.trend_kind, trend_lookback=strat_cfg.trend_lookback,
+        flip_band_entry=strat_cfg.flip_band_entry, flip_band_exit=strat_cfg.flip_band_exit,
+        vol_window=strat_cfg.vol_window, vol_adapt_k=strat_cfg.vol_adapt_k,
+        bar_interval_minutes=bar_minutes, target_vol=strat_cfg.target_vol,
+        min_mult=strat_cfg.min_mult, max_mult=strat_cfg.max_mult,
+        cooldown_minutes=strat_cfg.cooldown_minutes, step_allocation=strat_cfg.step_allocation,
+        max_position=strat_cfg.max_position, long_only=strat_cfg.long_only,
+        rebalance_threshold_w=strat_cfg.rebalance_threshold_w,
+        min_trade_btc=exec_cfg.min_trade_btc or 0.0,
+        gate_window_days=strat_cfg.gate_window_days, gate_roc_threshold=strat_cfg.gate_roc_threshold,
+        profit_lock_dd=strat_cfg.profit_lock_dd, vol_scaled_step=strat_cfg.vol_scaled_step,
+        funding_limit_long=strat_cfg.funding_limit_long, funding_limit_short=strat_cfg.funding_limit_short,
+        fast_period=strat_cfg.fast_period, slow_period=strat_cfg.slow_period,
+        ma_type=strat_cfg.ma_type, adx_threshold=strat_cfg.adx_threshold,
+        strategy_type=strat_cfg.strategy_type,
+    )
+    
+    if strat_cfg.strategy_type == "trend":
+        tp = TrendParams(
+            fast_period=strat_cfg.fast_period, slow_period=strat_cfg.slow_period,
+            ma_type=strat_cfg.ma_type, cooldown_minutes=strat_cfg.cooldown_minutes,
+            step_allocation=strat_cfg.step_allocation, max_position=strat_cfg.max_position,
+            long_only=strat_cfg.long_only, funding_limit_long=strat_cfg.funding_limit_long,
+            funding_limit_short=strat_cfg.funding_limit_short,
+            rebalance_threshold_w=strat_cfg.rebalance_threshold_w
+        )
+        return TrendStrategy(tp)
+
+    if strat_cfg.strategy_type == "meta":
+        # Extract override configs
+        mr_opts = strat_cfg.mean_reversion_overrides
+        tr_opts = strat_cfg.trend_overrides
+        
+        # Merge overrides into base params
+        # Pydantic models to dict
+        base_dict = strat_cfg.dict()
+        
+        mr_dict = {**base_dict, **mr_opts}
+        tr_dict = {**base_dict, **tr_opts}
+        
+        # Filter keys that are valid for StratParams/TrendParams
+        valid_mr = {k: v for k, v in mr_dict.items() if k in StratParams.__annotations__}
+        valid_tr = {k: v for k, v in tr_dict.items() if k in TrendParams.__annotations__}
+        
+        mr_p = StratParams(**valid_mr)
+        tr_p = TrendParams(**valid_tr)
+        
+        return MetaStrategy(mr_p, tr_p, adx_threshold=strat_cfg.adx_threshold)
+
+    return EthBtcStrategy(StratParams(**common_kwargs))
 
 def cmd_backtest(args):
     df = load_vision_csv(args.data)
@@ -495,75 +589,7 @@ def cmd_backtest(args):
         df_out.to_csv(args.out)
         print(f"Saved detailed diagnostics to {args.out}")
 
-# Copied from earlier response, ensure this exists in file
-def build_strategy_from_config(app_cfg, df: pd.DataFrame):
-    strat_cfg = app_cfg.strategy
-    exec_cfg = app_cfg.execution
-    interval_str = str(strat_cfg.strategy_type and exec_cfg.interval)
-    bar_minutes = _interval_to_minutes(interval_str)
-    
-    # (Same helper logic as before, just ensure it is included)
-    common_kwargs = dict(
-        trend_kind=strat_cfg.trend_kind, trend_lookback=strat_cfg.trend_lookback,
-        flip_band_entry=strat_cfg.flip_band_entry, flip_band_exit=strat_cfg.flip_band_exit,
-        vol_window=strat_cfg.vol_window, vol_adapt_k=strat_cfg.vol_adapt_k,
-        bar_interval_minutes=bar_minutes, target_vol=strat_cfg.target_vol,
-        min_mult=strat_cfg.min_mult, max_mult=strat_cfg.max_mult,
-        cooldown_minutes=strat_cfg.cooldown_minutes, step_allocation=strat_cfg.step_allocation,
-        max_position=strat_cfg.max_position, long_only=strat_cfg.long_only,
-        rebalance_threshold_w=strat_cfg.rebalance_threshold_w,
-        min_trade_btc=exec_cfg.min_trade_btc or 0.0,
-        gate_window_days=strat_cfg.gate_window_days, gate_roc_threshold=strat_cfg.gate_roc_threshold,
-        profit_lock_dd=strat_cfg.profit_lock_dd, vol_scaled_step=strat_cfg.vol_scaled_step,
-        funding_limit_long=strat_cfg.funding_limit_long, funding_limit_short=strat_cfg.funding_limit_short,
-        fast_period=strat_cfg.fast_period, slow_period=strat_cfg.slow_period,
-        ma_type=strat_cfg.ma_type, adx_threshold=strat_cfg.adx_threshold,
-        strategy_type=strat_cfg.strategy_type,
-    )
-    
-    if strat_cfg.strategy_type == "trend":
-        tp = TrendParams(
-            fast_period=strat_cfg.fast_period, slow_period=strat_cfg.slow_period,
-            ma_type=strat_cfg.ma_type, cooldown_minutes=strat_cfg.cooldown_minutes,
-            step_allocation=strat_cfg.step_allocation, max_position=strat_cfg.max_position,
-            long_only=strat_cfg.long_only, funding_limit_long=strat_cfg.funding_limit_long,
-            funding_limit_short=strat_cfg.funding_limit_short,
-            rebalance_threshold_w=strat_cfg.rebalance_threshold_w
-        )
-        return TrendStrategy(tp)
-
-    if strat_cfg.strategy_type == "meta":
-        mr_p = StratParams(**common_kwargs)
-        # Ensure overrides are applied via StratParams constructor if using config_schema correctly
-        # But for this builder, we assume app_cfg is already populated.
-        # Wait, the config_schema load doesn't automatically apply overrides to the base object.
-        # We need to manually handle overrides here if we want exact parity with live_executor.
-        
-        # For simplicity in this fix, we reconstruct TrendParams from the config's trend_overrides
-        # which config_schema doesn't fully expose as a separate object property easily without dict access.
-        # Actually, config_schema.py defines overrides as Dict.
-        
-        tr_opts = strat_cfg.trend_overrides
-        mr_opts = strat_cfg.mean_reversion_overrides
-        
-        # Helper to merge
-        def merge(base, over): return {**base, **over}
-        
-        # We need the base dictionary from the Strategy object
-        base_dict = strat_cfg.dict()
-        
-        tr_dict = merge(base_dict, tr_opts)
-        mr_dict = merge(base_dict, mr_opts)
-        
-        mr_p = StratParams(**{k:v for k,v in mr_dict.items() if k in StratParams.__annotations__})
-        tr_p = TrendParams(**{k:v for k,v in tr_dict.items() if k in TrendParams.__annotations__})
-        
-        return MetaStrategy(mr_p, tr_p, adx_threshold=strat_cfg.adx_threshold)
-
-    return EthBtcStrategy(StratParams(**common_kwargs))
-
-def cmd_dummy(args): print("Optimize/Selftest moved to tools/")
-
+# --- FIX ITEM 11: Remove Dummy Logic ---
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -580,8 +606,7 @@ if __name__ == "__main__":
     
     bt.set_defaults(func=cmd_backtest)
     
-    opt = sub.add_parser("optimize")
-    opt.set_defaults(func=cmd_dummy)
+    # Removed "optimize" parser to avoid confusion with tools/optimize_cli.py
     
     args = ap.parse_args()
     if hasattr(args, "func"): args.func(args)

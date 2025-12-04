@@ -1,9 +1,12 @@
 from __future__ import annotations
 import pandas as pd
 import numpy as np
+import logging
 from core.ethbtc_accum_bot import EthBtcStrategy, StratParams
 from core.trend_strategy import TrendStrategy, TrendParams
 from core.regime import get_regime_score
+
+log = logging.getLogger("meta_strategy")
 
 class MetaStrategy:
     def __init__(self, 
@@ -24,17 +27,22 @@ class MetaStrategy:
         if isinstance(df, pd.Series): raise ValueError("Need OHLC")
 
         # 1. Generate Sub-Signals
+        log.debug(f"[META] Generating Mean Reversion signal")
         df_mr = self.mr.generate_positions(df["close"], funding)
         sig_mr = df_mr["target_w"]
+        log.debug(f"[META] MR signal: {sig_mr.iloc[-1]:.4f}")
         
+        log.debug(f"[META] Generating Trend signal")
         df_trend = self.trend.generate_positions(df["close"], funding)
         sig_trend = df_trend["target_w"]
+        log.debug(f"[META] Trend signal: {sig_trend.iloc[-1]:.4f}")
         
         # 2. Calculate Regime Score
+        # get_regime_score now handles the resampling 'left'/'closed' internally
         regime_score = get_regime_score(df)
         
         # 3. FORCE ALIGNMENT
-        common_idx = df.index
+        common_idx = df.index.intersection(regime_score.index)
         
         v_mr = sig_mr.reindex(common_idx).fillna(0.0).values
         v_tr = sig_trend.reindex(common_idx).fillna(0.0).values
@@ -64,6 +72,7 @@ class MetaStrategy:
         # ------------------------------------------------
         
         final = np.where(mask_trend, v_tr, v_mr)
+        log.debug(f"[META] Final signal: {final[-1]:.4f} (regime={'TREND' if mask_trend[-1] else 'MR'}, score={v_sc[-1]:.2f})")
         
         return pd.DataFrame({
             "target_w": final,
