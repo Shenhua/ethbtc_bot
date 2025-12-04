@@ -104,18 +104,27 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             return 0.0
 
     def cancel_open_orders(self, symbol: str) -> List[str]:
-        """Cancel all open orders for the symbol using the bulk endpoint."""
         log.debug(f"[FUTURES] Attempting to cancel all open orders for {symbol}")
         try:
-            # Use the dedicated 'Cancel All' endpoint (more efficient)
-            # Note: This endpoint returns a success message, not the list of IDs, 
-            # so we return an empty list or fetch open orders first if strictly needed.
-            # For the bot's startup cleanup, simply ensuring they are gone is sufficient.
-            self.client.cancel_all_open_orders(symbol=symbol)
-            log.info(f"[FUTURES] Successfully triggered Cancel All for {symbol}")
-            return [] # Futures bulk cancel doesn't return IDs in the same way, empty list is safe here.
+            open_orders = self.client.get_orders(symbol=symbol)
+            log.debug(f"[FUTURES] Raw open orders for {symbol}: {open_orders}")
+
+            cancelled_ids = []
+            for o in open_orders:
+                oid = o.get("orderId")
+                if not oid:
+                    log.warning(f"[FUTURES] Skipping order without orderId: {o}")
+                    continue
+                try:
+                    self.client.cancel_order(symbol=symbol, orderId=int(oid))
+                    cancelled_ids.append(str(oid))
+                    log.debug(f"[FUTURES] Cancelled order {oid} for {symbol}")
+                except Exception as e:
+                    log.warning(f"[FUTURES] Could not cancel order {oid} for {symbol}: {e}")
+            log.debug(f"[FUTURES] Cancelled {len(cancelled_ids)} orders for {symbol}")
+            return cancelled_ids
         except Exception as e:
-            log.error(f"Error cancelling open orders for {symbol}: {e}")
+            log.error(f"[FUTURES] Error cancelling open orders for {symbol}: {e}")
             return []
 
     # --- Order Placement (Required for Maker Chase) ---
