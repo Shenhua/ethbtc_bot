@@ -532,15 +532,20 @@ def main():
             p_exit = cfg.strategy.flip_band_exit
             p_k = cfg.strategy.vol_adapt_k
             
+            if strat_type == "meta":
+                # If Meta, use MR overrides for the visual bands
+                mr_opts = cfg.strategy.mean_reversion_overrides
+                if mr_opts:
+                    p_entry = float(mr_opts.get("flip_band_entry", p_entry))
+                    p_exit = float(mr_opts.get("flip_band_exit", p_exit))
+                    p_k = float(mr_opts.get("vol_adapt_k", p_k))
 
-            # Use the lookback from the active strategy override if available
             L = int(cfg.strategy.trend_lookback)
             if strat_type == "meta":
-                 # If we are in Meta mode, try to pick the lookback of the active sub-strategy
-                 # (This is an approximation, assuming MR is the "default" view)
-                 mr_opts = cfg.strategy.mean_reversion_overrides
-                 if mr_opts:
-                     L = int(mr_opts.get("trend_lookback", L))
+                mr_opts = cfg.strategy.mean_reversion_overrides
+                if mr_opts:
+                    L = int(mr_opts.get("trend_lookback", L))
+
 
             ser_close = df["close"].astype(float)
             if cfg.strategy.trend_kind == "sma":
