@@ -80,7 +80,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "💰 Total Wealth",
+      "title": "\ud83d\udcb0 Total Wealth",
       "type": "stat",
       "targets": [
         {
@@ -123,28 +123,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "Value"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "currencyUSD"
-              },
-              {
-                "id": "decimals",
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Qty"
+              "options": "Balance"
             },
             "properties": [
               {
                 "id": "decimals",
-                "value": 4
+                "value": 6
               }
             ]
           }
@@ -173,71 +157,24 @@
       "targets": [
         {
           "expr": "balance_free{instance=~\"$instance\"}",
-          "format": "time_series",
-          "instant": true,
-          "legendFormat": "Qty",
+          "format": "table",
+          "legendFormat": "{{asset}}",
           "refId": "A"
-        },
-        {
-          "expr": "price_asset_usd{instance=~\"$instance\"}",
-          "format": "time_series",
-          "instant": true,
-          "legendFormat": "Price",
-          "refId": "B"
         }
       ],
-      "title": "📦 Portfolio",
+      "title": "\ud83d\udce6 Portfolio",
       "transformations": [
-        {
-          "id": "reduce",
-          "options": {
-            "includeTimeField": false,
-            "mode": "reduceFields",
-            "reducers": [
-              "last"
-            ]
-          }
-        },
-        {
-          "id": "joinByField",
-          "options": {
-            "byField": "asset",
-            "mode": "outer"
-          }
-        },
-        {
-          "id": "calculateField",
-          "options": {
-            "alias": "Value",
-            "binary": {
-              "left": "Qty",
-              "operator": "*",
-              "reducer": "sum",
-              "right": "Price"
-            },
-            "mode": "binary",
-            "reduce": {
-              "reducer": "sum"
-            }
-          }
-        },
         {
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Field": true,
-              "Price": false,
-              "Qty": false,
-              "Value": false,
-              "asset": false
+              "Time": true
             },
-            "indexByName": {
-              "Value": 3,
-              "Price": 2,
-              "Qty": 1,
-              "asset": 0
-            },
-            "renameByName": {}
+            "indexByName": {},
+            "renameByName": {
+              "Value": "Balance",
+              "asset": "Asset"
+            }
           }
         }
       ],
@@ -308,7 +245,7 @@
         "textMode": "value_and_name",
         "wideLayout": true
       },
-      "title": "🧠 Mode",
+      "title": "\ud83e\udde0 Mode",
       "type": "stat",
       "targets": [
         {
@@ -323,13 +260,13 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Historical Performance.",
+      "description": "Absolute change in wealth over time periods.",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "decimals": 4,
+          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -343,7 +280,7 @@
               }
             ]
           },
-          "unit": "none"
+          "unit": "currencyUSD"
         },
         "overrides": []
       },
@@ -369,7 +306,7 @@
         "textMode": "value_and_name",
         "wideLayout": true
       },
-      "title": "📅 Period PnL",
+      "title": "\ud83d\udcc5 Period PnL",
       "type": "stat",
       "targets": [
         {
@@ -449,7 +386,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "🚧 Gate",
+      "title": "\ud83d\udea7 Gate",
       "type": "stat",
       "targets": [
         {
@@ -524,7 +461,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "🛡️ Risk",
+      "title": "\ud83d\udee1\ufe0f Risk",
       "type": "stat",
       "targets": [
         {
@@ -592,7 +529,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "💸 Fund",
+      "title": "\ud83d\udcb8 Fund",
       "type": "stat",
       "targets": [
         {
@@ -667,7 +604,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "🔥",
+      "title": "\ud83d\udd25",
       "type": "stat",
       "targets": [
         {
@@ -687,7 +624,7 @@
       },
       "id": 23,
       "panels": [],
-      "title": "STRATEGY BRAIN & REGIME 🧠",
+      "title": "STRATEGY BRAIN & REGIME \ud83e\udde0",
       "type": "row"
     },
     {
@@ -750,7 +687,7 @@
           "showLegend": true
         }
       },
-      "title": "🧠 Regime Analysis",
+      "title": "\ud83e\udde0 Regime Analysis",
       "type": "timeseries",
       "targets": [
         {
@@ -824,7 +761,7 @@
         "showThresholdMarkers": true,
         "textMode": "value_and_name"
       },
-      "title": "📦 Exposure Gauge",
+      "title": "\ud83d\udce6 Exposure Gauge",
       "type": "gauge",
       "targets": [
         {
@@ -852,36 +789,143 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Dynamic Signal Bands.\nRed = Sell Zone (Upper Entry to Upper Exit)\nGreen = Buy Zone (Lower Entry to Lower Exit)\nWhite = Signal Line",
+      "description": "Visual level bar showing position relative to buy/sell zones.\\n\\n\ud83d\udfe2 GREEN ZONE = BUY signal\\n\ud83d\udd34 RED ZONE = SELL signal\\n\u26aa NEUTRAL = Hold\\n\ud83d\udfe1 YELLOW DOT = Current signal",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "palette-classic"
           },
           "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 2
+            "fillOpacity": 30,
+            "gradientMode": "none",
+            "hideFrom": {
+              "tooltip": false,
+              "viz": false,
+              "legend": false
+            },
+            "lineInterpolation": "stepAfter",
+            "lineWidth": 2,
+            "pointSize": 12,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "always",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
           },
           "unit": "percentunit"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byRegexp",
-              "options": "/.*Signal/"
+              "id": "byName",
+              "options": "Signal"
             },
             "properties": [
               {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#FFFF00",
+                  "mode": "fixed"
+                }
+              },
+              {
                 "id": "custom.lineWidth",
-                "value": 3
+                "value": 2
+              },
+              {
+                "id": "custom.pointSize",
+                "value": 5
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
+              },
+              {
+                "id": "custom.lineInterpolation",
+                "value": "smooth"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byRegexp",
-              "options": "/.*Top Entry/"
+              "id": "byName",
+              "options": "BUY Zone Top"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.fillBelowTo",
+                "value": "BUY Zone Bottom"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 40
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "BUY Zone Bottom"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SELL Zone Top"
             },
             "properties": [
               {
@@ -893,55 +937,111 @@
               },
               {
                 "id": "custom.fillBelowTo",
-                "value": "Top Exit"
+                "value": "SELL Zone Bottom"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 40
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byRegexp",
-              "options": "/.*Top Exit/"
+              "id": "byName",
+              "options": "SELL Zone Bottom"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "rgba(255, 0, 0, 0.2)",
+                  "fixedColor": "red",
                   "mode": "fixed"
                 }
               },
               {
                 "id": "custom.lineWidth",
-                "value": 1
+                "value": 0
               },
               {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    2,
-                    2
-                  ],
-                  "fill": "dash"
-                }
+                "id": "custom.showPoints",
+                "value": "never"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byRegexp",
-              "options": "/.*Bot Exit/"
+              "id": "byName",
+              "options": "Neutral Top"
             },
             "properties": [
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "rgba(0, 255, 0, 0.2)",
+                  "fixedColor": "gray",
                   "mode": "fixed"
                 }
               },
               {
                 "id": "custom.fillBelowTo",
-                "value": "Bot Entry"
+                "value": "Neutral Bottom"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 15
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Neutral Bottom"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "gray",
+                  "mode": "fixed"
+                }
+              },
+              {
+                "id": "custom.lineWidth",
+                "value": 0
+              },
+              {
+                "id": "custom.showPoints",
+                "value": "never"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "/.*Boundary.*/"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "white",
+                  "mode": "fixed"
+                }
               },
               {
                 "id": "custom.lineWidth",
@@ -951,77 +1051,94 @@
                 "id": "custom.lineStyle",
                 "value": {
                   "dash": [
-                    2,
-                    2
+                    5,
+                    5
                   ],
                   "fill": "dash"
                 }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/.*Bot Entry/"
-            },
-            "properties": [
+              },
               {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
+                "id": "custom.showPoints",
+                "value": "never"
+              },
+              {
+                "id": "custom.fillOpacity",
+                "value": 0
               }
             ]
           }
         ]
       },
       "gridPos": {
-        "h": 8,
-        "w": 18,
+        "h": 10,
+        "w": 24,
         "x": 0,
-        "y": 15
+        "y": 14
       },
-      "id": 11,
+      "id": 34,
       "options": {
         "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "sortBy": "Name",
+          "sortDesc": false
         },
         "tooltip": {
-          "mode": "single",
+          "mode": "multi",
           "sort": "none"
         }
       },
-      "title": "Signal vs Bands (Dynamic Zones)",
+      "title": "\ud83d\udcca Signal Level Bar (Buy/Sell Zones)",
       "type": "timeseries",
       "targets": [
         {
-          "expr": "last_over_time(signal_ratio{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Signal",
+          "expr": "signal_ratio{instance=~\"$instance\"}",
+          "legendFormat": "Signal",
           "refId": "A"
         },
         {
-          "expr": "last_over_time(signal_band{kind=\"upper_entry\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Top Entry",
+          "expr": "-signal_band{kind=\"lower_entry\", instance=~\"$instance\"}",
+          "legendFormat": "BUY Zone Top",
           "refId": "B"
         },
         {
-          "expr": "last_over_time(signal_band{kind=\"upper_exit\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Top Exit",
+          "expr": "-signal_band{kind=\"lower_entry\", instance=~\"$instance\"} - 0.05",
+          "legendFormat": "BUY Zone Bottom",
           "refId": "C"
         },
         {
-          "expr": "last_over_time(signal_band{kind=\"lower_entry\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Bot Entry",
+          "expr": "signal_band{kind=\"upper_entry\", instance=~\"$instance\"} + 0.05",
+          "legendFormat": "SELL Zone Top",
           "refId": "D"
         },
         {
-          "expr": "last_over_time(signal_band{kind=\"lower_exit\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Bot Exit",
+          "expr": "signal_band{kind=\"upper_entry\", instance=~\"$instance\"}",
+          "legendFormat": "SELL Zone Bottom",
           "refId": "E"
+        },
+        {
+          "expr": "signal_band{kind=\"upper_exit\", instance=~\"$instance\"}",
+          "legendFormat": "Neutral Top",
+          "refId": "F"
+        },
+        {
+          "expr": "-signal_band{kind=\"lower_exit\", instance=~\"$instance\"}",
+          "legendFormat": "Neutral Bottom",
+          "refId": "G"
+        },
+        {
+          "expr": "signal_band{kind=\"upper_entry\", instance=~\"$instance\"}",
+          "legendFormat": "SELL Entry Boundary",
+          "refId": "H"
+        },
+        {
+          "expr": "-signal_band{kind=\"lower_entry\", instance=~\"$instance\"}",
+          "legendFormat": "BUY Entry Boundary",
+          "refId": "I"
         }
       ]
     },
@@ -1034,7 +1151,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "continuous-RdYlGr"
+            "mode": "palette-classic"
           },
           "max": 1000,
           "min": 0,
@@ -1066,17 +1183,24 @@
       },
       "id": 12,
       "options": {
-        "displayMode": "gradient",
-        "orientation": "vertical",
-        "showUnfilled": true
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
       },
-      "title": "📏 Dist to Action (bps)",
-      "type": "gauge",
+      "title": "\ud83d\udccf Dist to Action (bps)",
+      "type": "timeseries",
       "targets": [
         {
-          "expr": "last_over_time(next_action_dist_bps{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}}",
+          "expr": "last_over_time(dist_to_buy_bps{instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} to BUY",
           "refId": "A"
+        },
+        {
+          "expr": "last_over_time(dist_to_sell_bps{instance=~\"$instance\"}[1h])",
+          "legendFormat": "{{instance}} to SELL",
+          "refId": "B"
         }
       ]
     },
@@ -1279,6 +1403,267 @@
         {
           "expr": "last_over_time(price_asset_usd{instance=~\"$instance\"}[1h])",
           "legendFormat": "{{asset}}/USD",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Bot actions and decisions over time.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "lineWidth": 0,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 38
+      },
+      "id": 30,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "title": "\ud83d\udcca Actions & Decisions",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "increase(skips_total{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}} - {{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Bar processing latency (time between bar close and strategy execution).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "unit": "s"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 38
+      },
+      "id": 31,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "mean"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "title": "\u23f1\ufe0f Latency",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "rate(bar_latency_seconds_sum{instance=~\"$instance\"}[5m]) / rate(bar_latency_seconds_count{instance=~\"$instance\"}[5m])",
+          "legendFormat": "{{instance}} Avg",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Indicates if bot can take short positions.\\nBLUE = Long Only\\nORANGE = Shorts Allowed",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "text": "LONG ONLY",
+                  "color": "blue"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "text": "SHORTS OK",
+                  "color": "orange"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.5
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 3,
+        "x": 18,
+        "y": 38
+      },
+      "id": 32,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "title": "\ud83d\udd12 Mode",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "min_over_time(exposure_base_weight{kind=\"current\", instance=~\"$instance\"}[1h]) < 0",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Current regime state with hysteresis.\\n-1 = Mean Reversion\\n1 = Trend Following",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "-1": {
+                  "text": "MR",
+                  "color": "blue"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "text": "TREND",
+                  "color": "orange"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 3,
+        "x": 21,
+        "y": 38
+      },
+      "id": 33,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "title": "\ud83c\udfaf State",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "regime_state{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
           "refId": "A"
         }
       ]
