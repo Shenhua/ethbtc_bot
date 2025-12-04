@@ -344,12 +344,15 @@ def main():
         if cancelled:
             log.info(f"Cleaned up {len(cancelled)} zombie orders.")
     try:
-        # Fetch filters immediately so 'f' is always defined globally
         global_filters = adapter.get_filters(args.symbol)
         log.info(f"Loaded Filters: step={global_filters.step_size} tick={global_filters.tick_size} min={global_filters.min_notional}")
     except Exception as e:
-        log.error(f"CRITICAL: Could not load exchange filters for {args.symbol}. Exiting.")
-        raise e
+        log.error(f"CRITICAL: Could not load filters. {e}")
+        # In dry run we might survive, but in live this is fatal.
+        if args.mode != "dry": raise e
+        # Fallback for dry run
+        from core.exchange_adapter import Filters
+        global_filters = Filters(0.0001, 0.01, 5.0)
     
     state = load_state(args.state)
     if "session_start_W" not in state:
@@ -444,8 +447,8 @@ def main():
                         state["last_balance_log_ts"] = now_s
                     
                     # Spot Calculation
-                    min_base_val = f.min_notional / max(price, 1e-12)
-                    
+                    min_base_val = global_filters.min_notional / max(price, 1e-12)        
+
                     effective_base = base_bal
                     if base_bal > 0 and base_bal < min_base_val:
                         effective_base = 0.0
@@ -1067,6 +1070,7 @@ def main():
                 continue
 
             qty_abs = abs(delta_eth)
+
             qty_rounded = adapter.round_qty(qty_abs, global_filters.step_size)
 
             min_trade_quote = max(cfg.execution.min_trade_floor_btc,
@@ -1075,7 +1079,8 @@ def main():
                 min_trade_quote = min(min_trade_quote, cfg.execution.min_trade_cap_btc)
 
             notional_quote = qty_rounded * price
-            need = max(min_trade_quote, f.min_notional)
+
+            need = max(min_trade_quote, global_filters.min_notional)
             
             if notional_quote < need:
                 SKIPS.labels("min_notional").inc()
@@ -1096,14 +1101,14 @@ def main():
                 # FUTURES MODE: Margin-based trading
                 # For both BUY and SELL, we can use margin up to our available balance
                 # The exchange will handle position management
-                max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), f.step_size)
+                max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), global_filters.step_size)
                 log.debug(f"[FUTURES] Max qty by balance: {max_qty_by_balance:.8f} (margin={quote_bal:.2f})")
             else:
                 # SPOT MODE: Wallet-based trading
                 if side == "BUY":
-                    max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), f.step_size)
+                    max_qty_by_balance = adapter.round_qty(max((quote_bal * 0.999) / max(price, 1e-12), 0.0), global_filters.step_size)
                 else:  
-                    max_qty_by_balance = adapter.round_qty(max(base_bal, 0.0), f.step_size)
+                    max_qty_by_balance = adapter.round_qty(max(base_bal, 0.0), global_filters.step_size)
                 log.debug(f"[SPOT] Max qty by balance: {max_qty_by_balance:.8f} (side={side}, quote={quote_bal:.8f}, base={base_bal:.8f})")
 
             qty_exec = min(qty_rounded, max_qty_by_balance)
