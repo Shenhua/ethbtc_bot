@@ -1257,8 +1257,21 @@ def main():
             state["last_bar_close"] = bar_ts
             save_state(args.state, state)
 
+            # CRITICAL: Re-fetch actual position if we had unfilled orders
+            # This ensures Grafana shows REAL Binance data, not bot's assumptions
+            actual_current_w = new_w  # Default to calculated
+            if is_futures and executed_qty < qty_exec:
+                # Some or all of the order didn't fill - get truth from exchange
+                try:
+                    actual_position = adapter.get_position(args.symbol)
+                    actual_current_w = (actual_position * price) / max(W, 1e-12)
+                    if abs(actual_current_w - new_w) > 0.01:
+                        log.warning("Position mismatch! Bot calculated: %.4f, Actual: %.4f (unfilled orders)", new_w, actual_current_w)
+                except Exception as e:
+                    log.error("Failed to fetch actual position: %s", e)
+
             EXPOSURE_W.labels("target").set(target_w)
-            EXPOSURE_W.labels("current").set(new_w)
+            EXPOSURE_W.labels("current").set(actual_current_w)  # Use ACTUAL position
             PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
             last_seen_bar = bar_ts
             
