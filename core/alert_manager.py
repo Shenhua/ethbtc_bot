@@ -42,15 +42,25 @@ class AlertManager:
                 "color": colors.get(level, 3447003)
             }]
         }
-        try:
-            requests.post(self.discord_url, json=payload, timeout=3)
-        except Exception as e:
-            self.logger.error(f"Failed to send Discord alert: {e}")
+        for attempt in range(3):
+            try:
+                resp = requests.post(self.discord_url, json=payload, timeout=5)
+                if resp.status_code in [200, 204]:
+                    return
+                elif resp.status_code == 429: # Rate limit
+                    time.sleep(2)
+            except Exception as e:
+                self.logger.warning(f"Discord Alert Failed (Attempt {attempt+1}): {e}")
+                time.sleep(1)
+        
+        self.logger.error("Failed to send Discord alert after retries.")
 
     def _send_telegram(self, text):
         url = f"https://api.telegram.org/bot{self.tg_token}/sendMessage"
         payload = {"chat_id": self.tg_chat_id, "text": text}
-        try:
-            requests.post(url, json=payload, timeout=3)
-        except Exception as e:
-            self.logger.error(f"Failed to send Telegram alert: {e}")
+        for attempt in range(3):
+            try:
+                requests.post(url, json=payload, timeout=5)
+                return
+            except Exception:
+                time.sleep(1)
