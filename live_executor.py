@@ -675,7 +675,7 @@ def main():
                         cooldown_minutes=int(mr_merged.get("cooldown_minutes", 60)), # Individual Cooldown
                         step_allocation=float(mr_merged.get("step_allocation", 0.5)),
                         max_position=float(mr_merged.get("max_position", 1.0)),
-                        long_only=bool(mr_merged.get("long_only", True)),
+                        long_only=bool(int(mr_merged.get("long_only", 1))),  # Explicitly convert: 0->False, 1->True
                         funding_limit_long=float(mr_merged.get("funding_limit_long", 0.05)),
                         funding_limit_short=float(mr_merged.get("funding_limit_short", -0.05))
                     )
@@ -1216,11 +1216,20 @@ def main():
                         mark_decision("exec_buy" if side == "BUY" else "exec_sell")
                         log.info("EXEC TAKER %s %0.8f %s @ ~%0.8f (oid=%s)", side, remaining, args.symbol, price, oid)
                         
+                        # Wait briefly and check if market order filled (especially important on testnet)
+                        time.sleep(1.0)
+                        is_filled, filled_qty = adapter.check_order(args.symbol, oid)
+                        if is_filled:
+                            log.info("TAKER order %s FILLED: %.8f", oid, filled_qty)
+                            executed_qty += filled_qty
+                        else:
+                            log.warning("TAKER order %s NOT FILLED yet (status check after 1s). Filled: %.8f", oid, filled_qty)
+                            executed_qty += filled_qty  # Add partial fills
+                        
                         if side == "BUY":
                             TRADE_DECISION.labels("exec_buy").set(1)
                         else:
                             TRADE_DECISION.labels("exec_sell").set(1)
-                        executed_qty += remaining
                         
                         # Log trade to story
                         story.log_trade(bar_dt, side, delta_eth, price, base_asset, quote_asset)
