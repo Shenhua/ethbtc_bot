@@ -90,6 +90,46 @@ services:
       - .:/app
     command: python /app/tools/dust_sweeper.py --mode auto --schedule weekly
 
+  # pnl_reconciler:
+  #   build: .    
+  #   command: ["python", "tools/reconcile_pnl_daemon.py"]
+  #   restart: unless-stopped
+  #   environment:
+  #     - BINANCE_KEY=${FUTURES_TESTNET_KEY}
+  #     - BINANCE_SECRET=${FUTURES_TESTNET_SECRET}
+  #     - MODE=${MODE}
+  #     - SYMBOL=BTCUSDT
+  #     - BINANCE_BASE_URL=${BINANCE_BASE_URL:-https://api.binance.com}
+  #     - STATE_FILE=/data/state_live.json
+  #     - ALERT_WEBHOOK=${ALERT_WEBHOOK}           
+  #     # Optional: override interval (seconds)
+  #     # - PNL_RECONCILE_INTERVAL_SEC=14400
+  #   volumes:
+  #     # Needs to see the bot’s state.json
+  #     - ./data:/data
+  #   depends_on:
+  #     - bot_eth
+
+  # optimizer:
+  #     build: .
+  #     command: ["python", "tools/monthly_optimizer.py"]
+  #     restart: unless-stopped
+  #     environment:
+  #       - SYMBOL=ETHBTC
+  #       - OPT_INTERVALS=15m
+  #       - RAW_OUT_DIR=data/raw
+  #       - RUN_COMPLETE_SCRIPT=run_complete_optimization.sh
+  #       - SUGGESTED_CONFIG=configs/prod_meta_live_suggested.json
+  #       - MONTHLY_OPT_POLL_SEC=21600    # 6h poll
+  #       - ALERT_WEBHOOK=${ALERT_WEBHOOK}
+  #       # re-use whatever env your optimizer script needs
+  #     volumes:
+  #       - ./data:/data          # for raw CSV and state
+  #       - ./configs:/configs    # optional if you keep configs there
+  #       - .:/app                # or however your code is mounted in other services
+  #     depends_on:
+  #       - bot_eth
+
   # --- OBSERVABILITY STACK (Fixed) ---
   prometheus:
     image: prom/prometheus:latest

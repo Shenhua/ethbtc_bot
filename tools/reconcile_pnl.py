@@ -97,29 +97,29 @@ def main():
     # 4. Compare & Alert
     diff = real_wealth - start_w
     diff_pct = (diff / start_w) * 100 if start_w > 0 else 0.0
-    
-    # Drift Check (Bot Estimate vs Real Wallet)
-    # Note: 'risk_equity_high' is a high-water mark, not current wealth, so this is a rough check.
-    # A better check is if you save 'last_known_W' in state.json.
-    
+    abs_diff_pct = abs(diff_pct)
+
     msg = (
         f"🔍 **AUDIT REPORT ({symbol})**\n"
         f"• Bot Start W: {start_w:.6f}\n"
         f"• Real Wallet: {real_wealth:.6f} {quote_asset} (Base={real_base:.4f}, Quote={real_quote:.4f})\n"
-        f"• Actual PnL:  {diff_pct:+.2f}%"
+        f"• Actual PnL:  {diff_pct:+.2f}% (|Δ|={abs_diff_pct:.2f}%)"
     )
     print("\n" + msg)
-    
-    # Send routine check to logs/discord if AlertManager is available
+
     if AlertManager:
         alerter = AlertManager(prefix=f"AUDIT-{symbol}")
-        
-        # Critical Alert: If Wallet drops > 20% below start
-        if diff_pct < -20.0:
-             alerter.send(f"🚨 CRITICAL: Wallet Down {diff_pct:.2f}%! Check Bot Immediately.", level="CRITICAL")
+
+        # Alert when divergence is > 1% (up or down)
+        if abs_diff_pct > 1.0:
+            level = "CRITICAL" if abs_diff_pct > 5.0 else "WARNING"
+            alerter.send(
+                f"🚨 WALLET vs BOT DIVERGENCE {abs_diff_pct:.2f}% – check state & fills.\n\n{msg}",
+                level=level,
+            )
         else:
-             # Regular Info
-             alerter.send(msg, level="INFO")
+            # Optional: comment this out if you don’t want spam on healthy checks
+            alerter.send(msg, level="INFO")
 
 if __name__ == "__main__":
     main()

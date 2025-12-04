@@ -36,7 +36,7 @@ def suggest_params(trial):
     """
     Define the search space for Optuna.
     """
-        # --- THE SHORTING SWITCH ---
+    # --- THE SHORTING SWITCH ---
     # Choices depend on global LONG_ONLY_MODE
     if LONG_ONLY_MODE == "true":
         long_only_choices = [True]
@@ -163,7 +163,7 @@ class Objective:
 
         except Exception as e:
             log.error(f"Trial {tid} CRASHED: {e}", exc_info=True)
-            return -float('inf')
+            return -1e9
 
 def main():
     ap = argparse.ArgumentParser(description="Bayesian Optimizer (Optuna)")

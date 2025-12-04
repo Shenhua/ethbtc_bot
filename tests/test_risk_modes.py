@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from ethbtc_accum_bot import Backtester, FeeParams, StratParams, EthBtcStrategy
+from core.ethbtc_accum_bot import Backtester, FeeParams, StratParams, EthBtcStrategy
 
 
 def _make_trending_price_index():

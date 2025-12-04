@@ -540,7 +540,15 @@ def main():
                     p_exit = float(mr_opts.get("flip_band_exit", p_exit))
                     p_k = float(mr_opts.get("vol_adapt_k", p_k))
 
+            # Use the lookback from the active strategy override if available
             L = int(cfg.strategy.trend_lookback)
+            if strat_type == "meta":
+                 # If we are in Meta mode, try to pick the lookback of the active sub-strategy
+                 # (This is an approximation, assuming MR is the "default" view)
+                 mr_opts = cfg.strategy.mean_reversion_overrides
+                 if mr_opts:
+                     L = int(mr_opts.get("trend_lookback", L))
+                     
             ser_close = df["close"].astype(float)
             if cfg.strategy.trend_kind == "sma":
                 sma = ser_close.rolling(L).mean()
@@ -1070,8 +1078,21 @@ def main():
                 continue
 
             qty_abs = abs(delta_eth)
-
             qty_rounded = adapter.round_qty(qty_abs, global_filters.step_size)
+
+            # --- Anti-Zeno Deadlock (Force Exit) ---
+            # If Target is 0 (Exit) AND we have a position, but the calculated 
+            # partial step is too small to execute (0 or < min_notional),
+            # we force the entire position to close.
+            if target_w == 0.0 and is_futures and abs(current_position) > 0:
+                # Calculate value of the partial trade
+                partial_val = qty_rounded * price
+                
+                # If partial trade is invalid (0 or too small)
+                if qty_rounded == 0.0 or partial_val < global_filters.min_notional:
+                    log.info("Force Exit: Partial step too small (%.8f), closing FULL position (%.8f)", qty_rounded, abs(current_position))
+                    qty_rounded = adapter.round_qty(abs(current_position), global_filters.step_size)
+
 
             min_trade_quote = max(cfg.execution.min_trade_floor_btc,
                                 cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))

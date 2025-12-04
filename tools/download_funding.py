@@ -46,12 +46,18 @@ def main():
     ap.add_argument("--symbol", required=True, help="Futures Symbol (e.g. ETHUSDT, BNBUSDT)")
     ap.add_argument("--start", required=True, help="Start Date (YYYY-MM-DD)")
     ap.add_argument("--end", required=True, help="End Date (YYYY-MM-DD)")
-    ap.add_argument("--out", default="data/raw/", help="Output CSV file")
+    ap.add_argument("--out",default="",help="Output CSV path (default: data/raw/{symbol}_funding_{start}_{end}.csv)")
     args = ap.parse_args()
 
-    if not args.out:
-        args.out = f"{args.symbol}_funding_{args.start}_{args.end}.csv"
+    out_dir = "data/raw"
+    os.makedirs(out_dir, exist_ok=True)
 
+    if not args.out:
+        fname = f"{args.symbol}_funding_{args.start}_{args.end}_funding.csv"
+        args.out = os.path.join(out_dir, fname)
+
+    df.to_csv(args.out, index=False)
+    
     start_ms = get_timestamp(args.start)
     end_ms = get_timestamp(args.end)
     

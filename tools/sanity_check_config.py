@@ -67,7 +67,7 @@ def build_strategy_from_config(app_cfg, df: pd.DataFrame):
     strat_cfg = app_cfg.strategy
     exec_cfg = app_cfg.execution
 
-    interval_str = str(strat_cfg.strategy_type and exec_cfg.interval)
+    interval_str = exec_cfg.interval
     bar_minutes = _interval_to_minutes(interval_str)
 
     # --- Mean Reversion params (StratParams) ---

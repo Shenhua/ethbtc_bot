@@ -196,10 +196,6 @@ def main():
             print(f"No data found for {args.symbol} {interval} in range {args.start}..{args.end}")
             continue
 
-        if not all_frames:
-            print(f"No data found for {args.symbol} {interval} in range {args.start}..{args.end}")
-            continue
-
         merged = pd.concat(all_frames, ignore_index=True).drop_duplicates(subset=["open_time"]).sort_values("open_time")
         merged["open_time"]  = pd.to_numeric(merged["open_time"], errors="coerce").astype("Int64")
         merged["close_time"] = pd.to_numeric(merged["close_time"], errors="coerce").astype("Int64")
