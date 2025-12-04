@@ -343,7 +343,14 @@ def main():
         cancelled = adapter.cancel_open_orders(args.symbol)
         if cancelled:
             log.info(f"Cleaned up {len(cancelled)} zombie orders.")
-
+    try:
+        # Fetch filters immediately so 'f' is always defined globally
+        global_filters = adapter.get_filters(args.symbol)
+        log.info(f"Loaded Filters: step={global_filters.step_size} tick={global_filters.tick_size} min={global_filters.min_notional}")
+    except Exception as e:
+        log.error(f"CRITICAL: Could not load exchange filters for {args.symbol}. Exiting.")
+        raise e
+    
     state = load_state(args.state)
     if "session_start_W" not in state:
         state["session_start_W"] = 0.0
@@ -421,11 +428,7 @@ def main():
                         log.info("[FUTURES BALANCE] Margin=%.2f %s, Position=%.4f %s (%.2f%%)", 
                                  quote_bal, quote_asset, current_position, args.symbol, cur_w*100)
                         state["last_balance_log_ts"] = now_s
-                    
-                    # Fetch filters for order sizing
-                    f = adapter.get_filters(args.symbol)
-                    log.debug(f"[FUTURES] Filters: step_size={f.step_size}, min_notional={f.min_notional}")
-
+                                       
                 else:
                     # 2. SPOT MODE (Legacy Logic)
                     acct = client.account()
@@ -441,7 +444,6 @@ def main():
                         state["last_balance_log_ts"] = now_s
                     
                     # Spot Calculation
-                    f = adapter.get_filters(args.symbol)
                     min_base_val = f.min_notional / max(price, 1e-12)
                     
                     effective_base = base_bal
@@ -1065,7 +1067,7 @@ def main():
                 continue
 
             qty_abs = abs(delta_eth)
-            qty_rounded = adapter.round_qty(qty_abs, f.step_size)
+            qty_rounded = adapter.round_qty(qty_abs, global_filters.step_size)
 
             min_trade_quote = max(cfg.execution.min_trade_floor_btc,
                                 cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
@@ -1166,7 +1168,7 @@ def main():
                     log.info("Attempting MAKER execution for %s %s...", side, qty_exec)
                     try:
                         filled_maker = maker_chase(
-                            adapter, args.symbol, side, qty_exec, f.tick_size,
+                            adapter, args.symbol, side, qty_exec, global_filters.tick_size,
                             max_reprices=3, step_sec=8, stop_event=STOP_EVENT
                         )
                         executed_qty += filled_maker
