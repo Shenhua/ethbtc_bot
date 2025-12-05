@@ -654,7 +654,7 @@ def build_strategy_from_config(app_cfg, df: pd.DataFrame):
         
         # Merge overrides into base params
         # Pydantic models to dict
-        base_dict = strat_cfg.dict()
+        base_dict = strat_cfg.model_dump()
         
         mr_dict = {**base_dict, **mr_opts}
         tr_dict = {**base_dict, **tr_opts}

@@ -162,19 +162,31 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         log.debug(f"[FUTURES] Attempting to cancel order {order_id} for {symbol}")
         try:
             self.client.cancel_order(symbol=symbol, orderId=order_id)
+        except ClientError as e:
+            # Suppress "Unknown order sent" (code -2011) as it usually means it was already filled/cancelled
+            # Also check message content just in case code is missing/different
+            if e.error_code == -2011 or "Unknown order" in str(e):
+                log.debug(f"Order {order_id} already gone (Unknown order sent).")
+            else:
+                log.warning(f"Cancel failed for order {order_id}: {e}")
         except Exception as e:
             log.warning(f"Cancel failed for order {order_id}: {e}")
-            pass
 
     def check_order(self, symbol: str, order_id: str) -> Tuple[bool, float]:
-        """
-        Returns (is_filled, executed_qty).
-        """
         try:
             od = self.client.get_order(symbol=symbol, orderId=order_id)
             status = od.get("status", "")
             filled = float(od.get("executedQty", "0"))
-            return (status == "FILLED"), filled
-        except Exception:
-            # If order not found or error, assume not filled (caller handles retry/cancel)
+            # On Futures, PARTIALLY_FILLED is common, we treat it as "Filled So Far"
+            is_done = status in ["FILLED", "CANCELED", "EXPIRED", "REJECTED"]
+            return is_done, filled
+        except ClientError as e:
+            # If order does not exist (-2013), it's effectively "Done" with 0 fill (or we lost it)
+            if e.error_code == -2013:
+                log.warning(f"Order {order_id} not found (-2013). Assuming dead.")
+                return True, 0.0
+            log.error(f"Error checking order {order_id}: {e}")
+            return False, 0.0
+        except Exception as e:
+            log.error(f"Error checking order {order_id}: {e}")
             return False, 0.0
