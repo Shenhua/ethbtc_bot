@@ -393,6 +393,25 @@ def main():
                 df = df.sort_index()
                 # --- FIX END ---
 
+                # --- FIX: Repainting / Look-Ahead ---
+                # Binance returns the currently OPEN candle as the last element.
+                # We must ensure we only use CLOSED candles.
+                # Check if the last candle's close time is in the future.
+                if not df.empty:
+                    last_close_time = df.index[-1] + pd.Timedelta(cfg.execution.interval)
+                    # Actually, df.index is close_time (from line 389)? 
+                    # Line 389: df.index = pd.to_datetime(df["close_time"], unit="ms", utc=True)
+                    # So index IS the close time.
+                    if df.index[-1] > pd.Timestamp.now(tz="UTC"):
+                        log.debug("Dropping incomplete candle at %s (now=%s)", df.index[-1], pd.Timestamp.now(tz="UTC"))
+                        df = df.iloc[:-1]
+                
+                if df.empty:
+                    log.warning("No closed candles available after filtering.")
+                    time.sleep(5)
+                    continue
+                # ------------------------------------
+
                 price = float(df["close"].iloc[-1])
             except Exception as e:
                 log.error("Failed to fetch klines: %s", e)
