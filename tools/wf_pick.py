@@ -12,20 +12,25 @@ import pandas as pd
 import numpy as np
 
 # Keys to preserve in the final JSON config
-RICH_PARAM_KEYS = [
-    # Mean Reversion
+MR_PARAMS = [
     "trend_kind", "trend_lookback",
     "flip_band_entry", "flip_band_exit",
     "vol_window", "vol_adapt_k", "target_vol",
-    "min_mult", "max_mult", "gate_window_days", "gate_roc_threshold",
-    
-    # Trend
-    "fast_period", "slow_period", "ma_type",
-    
-    # Shared
+    "min_mult", "max_mult", "gate_window_days", "gate_roc_threshold"
+]
+
+TREND_PARAMS = [
+    "fast_period", "slow_period", "ma_type"
+]
+
+SHARED_PARAMS = [
     "cooldown_minutes", "step_allocation", "max_position",
     "long_only", "rebalance_threshold_w",
-    "funding_limit_long", "funding_limit_short", "strategy_type"
+    "funding_limit_long", "funding_limit_short", "strategy_type",
+    # Dynamic Position Sizing
+    "position_sizing_mode", "position_sizing_target_vol",
+    "position_sizing_min_step", "position_sizing_max_step",
+    "kelly_win_rate", "kelly_avg_win", "kelly_avg_loss"
 ]
 
 FEE_KEYS = ["maker_fee", "taker_fee", "slippage_bps", "bnb_discount", "pay_fees_in_bnb"]
@@ -84,8 +89,12 @@ def load_and_flatten(paths):
     }
     out.rename(columns=aliases, inplace=True)
     
+    # --- FIX: Deduplicate columns after rename ---
+    # If multiple columns map to 'test_final_btc', we keep the first one.
+    out = out.loc[:, ~out.columns.duplicated()]
+    
     # Ensure required columns exist (fill with NaN/0 if missing)
-    expected_cols = RICH_PARAM_KEYS + FEE_KEYS + [
+    expected_cols = MR_PARAMS + TREND_PARAMS + SHARED_PARAMS + FEE_KEYS + [
         "test_final_btc", "train_final_btc", "fees_btc", "turnover_btc", "turns_test"
     ]
     for c in expected_cols:
@@ -149,34 +158,86 @@ def make_family_key(row, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60)
     return ("MR", e_key, x_key, tlb_key, cd_key, long_only)
 
 def rank_families(df, penalty_turns=0.0, penalty_fees=1.0, penalty_turnover=0.5, disp_weight=0.25,
-                  band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
+                  band_round=4, step_round=2, lb_bucket=40, cd_bucket=60,
+                  consistency_weight=0.3):
+    """
+    Rank families by robustness score.
+    """
     df = df.copy()
+    
+    # --- FIX START: Ensure numeric types before aggregation ---
+    cols_to_numeric = ["test_final_btc", "train_final_btc", "fees_btc", "turnover_btc", "turns_test"]
+    for c in cols_to_numeric:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        else:
+            df[c] = 0.0  # Create missing columns to prevent KeyError/AttributeError
+    # --- FIX END ---
+
     df["__family"] = df.apply(
         lambda row: make_family_key(row, band_round, step_round, lb_bucket, cd_bucket), axis=1
     )
+    
+    # Groupby
     g = df.groupby("__family", dropna=False)
     
-    # Aggregation
-    agg = g.agg(
-        mean_test_btc=("test_final_btc","mean"),
-        mean_train_btc=("train_final_btc","mean"),
-        fees=("fees_btc","mean"),
-        turnover=("turnover_btc","mean"),
-        turns=("turns_test","mean"),
-        n=("test_final_btc","size"),
-        std_test=("test_final_btc","std")
-    ).reset_index()
+    # Aggregation - explicit dictionary to avoid ambiguity
+    # Aggregation - using dict syntax to avoid pandas bug with named aggregation
+    agg = g.agg({
+        "test_final_btc": ["mean", "size", "std"],
+        "train_final_btc": "mean",
+        "fees_btc": "mean",
+        "turnover_btc": "mean",
+        "turns_test": "mean"
+    }).reset_index()
 
-    # Scoring
+    # Flatten MultiIndex columns
+    new_cols = []
+    for c in agg.columns:
+        if isinstance(c, tuple):
+            if c[1] == "": new_cols.append(c[0])
+            else: new_cols.append(f"{c[0]}_{c[1]}")
+        else:
+            new_cols.append(c)
+    agg.columns = new_cols
+
+    # Rename to match expected output
+    # Rename to match expected output
+    agg.rename(columns={
+        "test_final_btc_mean": "mean_test_btc",
+        "test_final_btc_size": "n",
+        "test_final_btc_std": "std_test",
+        "train_final_btc_mean": "mean_train_btc",
+        "fees_btc_mean": "fees",
+        "turnover_btc_mean": "turnover",
+        "turns_test_mean": "turns"
+    }, inplace=True)
+
+    # NEW: Calculate train/test consistency
+    # Penalize configs where test >> train (overfitting) or test << train (doesn't generalize)
+    agg["train_test_gap"] = abs(agg["mean_test_btc"] - agg["mean_train_btc"])
+    agg["train_test_ratio"] = agg["mean_test_btc"] / agg["mean_train_btc"].replace(0, 1e-9)
+    
+    # Harmonic mean of train and test (only rewards if BOTH are good)
+    agg["harmonic_mean"] = 2 * (agg["mean_test_btc"] * agg["mean_train_btc"]) / \
+                           (agg["mean_test_btc"] + agg["mean_train_btc"] + 1e-9)
+    
+    # NEW SCORING: Base on harmonic mean + consistency penalties
     agg["score"] = (
-        agg["mean_test_btc"]
+        agg["harmonic_mean"]  # Requires BOTH train & test to be good
+        - consistency_weight * agg["train_test_gap"]  # Penalize large gaps
         - penalty_turns * (agg["turns"].fillna(0) / 800.0)
         - penalty_fees * agg["fees"].fillna(0)
         - penalty_turnover * agg["turnover"].fillna(0)
         - disp_weight * agg["std_test"].fillna(0)
     )
     
-    agg = agg.sort_values(["score", "mean_test_btc", "n"], ascending=[False, False, False])
+    # Additional filter: Reject if test/train ratio is too extreme
+    # Ratio > 1.5 means test is 50% better than train (overfitting red flag!)
+    # Ratio < 0.7 means test is 30% worse than train (doesn't generalize)
+    agg["suspicious"] = (agg["train_test_ratio"] > 1.5) | (agg["train_test_ratio"] < 0.7)
+    
+    agg = agg.sort_values(["score", "harmonic_mean", "n"], ascending=[False, False, False])
     return agg
 
 def pick_representative(df_all, family_tuple, band_round=4, step_round=2, lb_bucket=40, cd_bucket=60):
@@ -199,19 +260,38 @@ def pick_representative(df_all, family_tuple, band_round=4, step_round=2, lb_buc
 def build_config_from_row(row: dict, include_fees=True):
     cfg = {}
     
-    # 1. Copy Strategy Params
-    for k in RICH_PARAM_KEYS:
-        v = row.get(k)
-        if v is not None and v == v: # not NaN
-            cfg[k] = _to_native(v)
-
-    # 2. Infer Strategy Type if missing
-    if "fast_period" in cfg:
+    # 1. Detect strategy type
+    fast = row.get("fast_period")
+    has_trend_params = fast is not None and not np.isnan(fast) if isinstance(fast, float) else fast is not None
+    
+    flip = row.get("flip_band_entry")
+    has_mr_params = flip is not None and not np.isnan(flip) if isinstance(flip, float) else flip is not None
+    
+    # 2. Determine which params to copy
+    if has_trend_params and not has_mr_params:
+        # Trend strategy
+        relevant_params = TREND_PARAMS + SHARED_PARAMS
         cfg["strategy_type"] = "trend"
-    elif "trend_kind" in cfg:
+    elif has_mr_params and not has_trend_params:
+        # Mean Reversion strategy
+        relevant_params = MR_PARAMS + SHARED_PARAMS
         cfg["strategy_type"] = "mean_reversion"
+    else:
+        # Ambiguous or both - fall back to all params (shouldn't happen with clean data)
+        relevant_params = MR_PARAMS + TREND_PARAMS + SHARED_PARAMS
+        # Infer from presence
+        if has_trend_params:
+            cfg["strategy_type"] = "trend"
+        elif has_mr_params:
+            cfg["strategy_type"] = "mean_reversion"
+    
+    # 3. Copy only relevant params
+    for k in relevant_params:
+        v = row.get(k)
+        if v is not None and v == v:  # not NaN
+            cfg[k] = _to_native(v)
             
-    # 3. Copy Fees
+    # 4. Copy Fees
     if include_fees:
         for k in FEE_KEYS:
             v = row.get(k)

@@ -32,9 +32,13 @@ log = logging.getLogger("optimizer")
 # Enable Optuna logs
 optuna.logging.set_verbosity(optuna.logging.INFO)
 
+# Global force flags (set by CLI)
+FORCE_FLAGS = {}
+
 def suggest_params(trial):
     """
     Define the search space for Optuna.
+    Respects FORCE_FLAGS to lock specific parameters.
     """
     # --- THE SHORTING SWITCH ---
     # Choices depend on global LONG_ONLY_MODE
@@ -46,8 +50,8 @@ def suggest_params(trial):
         long_only_choices = [True, False]
     
     return StratParams(
-        trend_kind=trial.suggest_categorical("trend_kind", ["sma", "roc"]),
-        trend_lookback=trial.suggest_categorical("trend_lookback", [120, 160, 200, 240, 300]),
+        trend_kind=FORCE_FLAGS.get("trend_kind") or trial.suggest_categorical("trend_kind", ["sma", "roc"]),
+        trend_lookback=FORCE_FLAGS.get("trend_lookback") or trial.suggest_categorical("trend_lookback", [120, 160, 200, 240, 300]),
         
         flip_band_entry=trial.suggest_float("flip_band_entry", 0.01, 0.06),
         flip_band_exit=trial.suggest_float("flip_band_exit", 0.005, 0.03),
@@ -56,12 +60,18 @@ def suggest_params(trial):
         vol_adapt_k=trial.suggest_categorical("vol_adapt_k", [0.0, 0.0025, 0.005, 0.0075]),
         
         target_vol=trial.suggest_categorical("target_vol", [0.3, 0.4, 0.5, 0.6]),
-        min_mult=0.5, 
-        max_mult=1.5,
+        min_mult=trial.suggest_float("min_mult", 0.3, 0.7, step=0.1),
+        max_mult=trial.suggest_float("max_mult", 1.2, 2.0, step=0.1),
         
         cooldown_minutes=trial.suggest_categorical("cooldown_minutes", [60, 120, 180, 240]),
         step_allocation=trial.suggest_categorical("step_allocation", [0.33, 0.5, 0.66, 1.0]),
         max_position=trial.suggest_categorical("max_position", [0.6, 0.8, 1.0]),
+        
+        # Dynamic Position Sizing (NEW!)
+        position_sizing_mode=FORCE_FLAGS.get("position_sizing_mode") or trial.suggest_categorical("position_sizing_mode", ["static", "volatility"]),
+        position_sizing_target_vol=trial.suggest_float("position_sizing_target_vol", 0.3, 0.7),
+        position_sizing_min_step=trial.suggest_float("position_sizing_min_step", 0.1, 0.3),
+        position_sizing_max_step=1.0,  # Keep at 1.0 (full allocation)
         
         # Gates
         gate_window_days=trial.suggest_categorical("gate_window_days", [30, 60, 90]),
@@ -77,23 +87,26 @@ def suggest_params(trial):
         
         # --- THE SHORTING SWITCH ---
         # True = Only Buy ETH. False = Buy & Sell Short.
-        long_only=trial.suggest_categorical("long_only", long_only_choices),
+        long_only=FORCE_FLAGS.get("long_only") if "long_only" in FORCE_FLAGS else trial.suggest_categorical("long_only", long_only_choices),
     )
 
 class Objective:
-    def __init__(self, args, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test):
+    def __init__(self, args, fee, train_close, test_close, train_bnb, test_bnb, train_funding, test_funding, train_df, test_df):
         self.args = args
         self.fee = fee
         self.train_close = train_close
         self.test_close = test_close
-        self.bnb_train = bnb_train
-        self.bnb_test = bnb_test
-        self.funding_train = funding_train
-        self.funding_test = funding_test
+        self.train_bnb = train_bnb
+        self.test_bnb = test_bnb
+        self.train_funding = train_funding
+        self.test_funding = test_funding
+        self.train_df = train_df  # Full OHLC for MetaStrategy
+        self.test_df = test_df    # Full OHLC for MetaStrategy
+        self.bt = Backtester(fee)
 
     def __call__(self, trial):
+        tid = trial.number  # Use Optuna's trial number (0-indexed, matches their output)
         t0 = time.time()
-        tid = trial.number
         
         try:
             # 1. Sample
@@ -102,13 +115,15 @@ class Objective:
             # 2. Run Simulation (Train)
             bt = Backtester(self.fee)
             res_tr = bt.simulate(
-                self.train_close, EthBtcStrategy(p), 
-                funding_series=self.funding_train, bnb_price_series=self.bnb_train
+                self.train_close, EthBtcStrategy(p),  # Wrap params in strategy
+                funding_series=self.train_funding, bnb_price_series=self.train_bnb,
+                full_df=self.train_df  # Pass full OHLC for MetaStrategy
             )
             # 3. Run Simulation (Test)
             res_te = bt.simulate(
-                self.test_close, EthBtcStrategy(p), 
-                funding_series=self.funding_test, bnb_price_series=self.bnb_test
+                self.test_close, EthBtcStrategy(p),  # Wrap params in strategy
+                funding_series=self.test_funding, bnb_price_series=self.test_bnb,
+                full_df=self.test_df  # Pass full OHLC for MetaStrategy
             )
             
             # 4. Calculate Metrics
@@ -204,6 +219,14 @@ def main():
     ap.add_argument("--jobs", type=int, default=1, help="Parallel jobs")
     ap.add_argument("--storage", default="sqlite:///data/db/optuna.db")
     ap.add_argument("--study-name", default="ethbtc_study")
+    
+    # === NEW: Exploration Control ===
+    ap.add_argument("--n-startup-trials", type=int, default=50, help="Number of random exploration trials (default: 50)")
+    
+    # === NEW: Force Flags ===
+    ap.add_argument("--force-trend-kind", choices=["sma", "roc"], help="Lock trend_kind to specific value")
+    ap.add_argument("--force-sizing-mode", choices=["static", "volatility"], help="Lock position_sizing_mode")
+    ap.add_argument("--force-long-only", type=lambda x: x.lower() == 'true', help="Lock long_only (true/false)")
     ap.add_argument("--top-quantile", type=float, default=0.95)
     ap.add_argument("--emit-config")
     ap.add_argument("--no-excel", action="store_true")
@@ -217,9 +240,20 @@ def main():
     
     args = ap.parse_args()
 
-    # Wire CLI flag into global used by suggest_params
-    global LONG_ONLY_MODE
+    # Wire CLI flags into globals used by suggest_params
+    global LONG_ONLY_MODE, FORCE_FLAGS
     LONG_ONLY_MODE = args.long_only_mode
+    
+    # Set force flags
+    if args.force_trend_kind:
+        FORCE_FLAGS["trend_kind"] = args.force_trend_kind
+        log.info(f"🔒 Locked trend_kind = {args.force_trend_kind}")
+    if args.force_sizing_mode:
+        FORCE_FLAGS["position_sizing_mode"] = args.force_sizing_mode
+        log.info(f"🔒 Locked position_sizing_mode = {args.force_sizing_mode}")
+    if args.force_long_only is not None:
+        FORCE_FLAGS["long_only"] = args.force_long_only
+        log.info(f"🔒 Locked long_only = {args.force_long_only}")
 
     cfg = load_json_config(args.config)
     fee = FeeParams(
@@ -259,15 +293,28 @@ def main():
         funding_test  = funding_series.reindex(test_close.index, method="ffill").fillna(0.0)
 
     log.info(f"Starting Optuna study '{args.study_name}' with {args.n_trials} trials...")
+    log.info(f"🔍 Exploration: {args.n_startup_trials}/{args.n_trials} trials will explore randomly")
+    
+    # Create sampler with improved exploration
+    sampler = optuna.samplers.TPESampler(
+        n_startup_trials=args.n_startup_trials,  # Random exploration trials
+        multivariate=True,  # Consider parameter interactions
+        seed=42  # Reproducibility
+    )
     
     study = optuna.create_study(
         study_name=args.study_name, 
         direction="maximize",
         storage=args.storage,
-        load_if_exists=True
+        load_if_exists=True,
+        sampler=sampler
     )
     
-    obj = Objective(args, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test)
+    # Split dataframes for train/test
+    train_df = df.loc[args.train_start:args.train_end]
+    test_df = df.loc[args.test_start:args.test_end]
+    
+    obj = Objective(args, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test, train_df, test_df)
     
     try:
         study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
@@ -285,8 +332,16 @@ def main():
         rows.append(row)
         
     df_out = pd.DataFrame(rows)
-    if "robust_score" not in df_out.columns and "value" in df_out.columns:
-        df_out.rename(columns={"value": "robust_score"}, inplace=True)
+    
+    # Ensure robust_score column exists
+    if "robust_score" not in df_out.columns:
+        if "value" in df_out.columns:
+            df_out["robust_score"] = df_out["value"]
+        elif "test_final_btc" in df_out.columns:
+            df_out["robust_score"] = df_out["test_final_btc"]
+        else:
+            # Last resort: create a dummy column
+            df_out["robust_score"] = 0.0
 
     if not df_out.empty:
         df_out = df_out.sort_values("robust_score", ascending=False)

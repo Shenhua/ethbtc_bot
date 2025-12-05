@@ -117,6 +117,16 @@ class StratParams:
     gate_roc_threshold: float = 0.0
     profit_lock_dd: float = 0.0
     vol_scaled_step: bool = False
+    
+    # Dynamic Position Sizing
+    position_sizing_mode: str = "static"  # "static", "volatility", "kelly"
+    position_sizing_target_vol: float = 0.5
+    position_sizing_min_step: float = 0.1
+    position_sizing_max_step: float = 1.0
+    # Kelly Criterion
+    kelly_win_rate: float = 0.55
+    kelly_avg_win: float = 0.02
+    kelly_avg_loss: float = 0.01
 
     # Funding & Trend (New)
     funding_limit_long: float = 0.05
@@ -249,15 +259,40 @@ class Backtester:
     def __init__(self, fee: FeeParams): self.fee = fee
 
     def simulate(self, close: pd.Series, 
-                 strat: Union[EthBtcStrategy, TrendStrategy, MetaStrategy],
+                 strategy, 
                  funding_series: Optional[pd.Series] = None,
-                 initial_btc: float = 1.0, start_bnb: float = 0.05,
                  bnb_price_series: Optional[pd.Series] = None,
-                 max_daily_loss_btc=0.0, max_dd_btc=0.0,
-                 max_daily_loss_frac=0.0, max_dd_frac=0.0, risk_mode="fixed_basis",
-                 drawdown_reset_days=0.0, drawdown_reset_score=0.0, 
-                 full_df: Optional[pd.DataFrame] = None):
+                 full_df: Optional[pd.DataFrame] = None,
+                 story_writer=None,
+                 initial_btc: float = 1.0, 
+                 start_bnb: float = 0.05,
+                 max_daily_loss_btc=0.0, 
+                 max_dd_btc=0.0,
+                 max_daily_loss_frac=0.0, 
+                 max_dd_frac=0.0, 
+                 risk_mode="fixed_basis",
+                 drawdown_reset_days=0.0, 
+                 drawdown_reset_score=0.0):
+        """
+        Simulate trading strategy on historical price data.
         
+        Args:
+            close: Series of closing prices
+            strategy: Strategy instance  
+            funding_series: Optional funding rate series
+            bnb_price_series: Optional BNB price series
+            full_df: Optional full OHLC dataframe
+            story_writer: Optional StoryWriter for real-time narrative
+            initial_btc: Starting BTC balance
+            start_bnb: Starting BNB balance
+            max_daily_loss_btc: Daily loss limit in BTC
+            max_dd_btc: Max drawdown in BTC
+            max_daily_loss_frac: Daily loss limit as fraction
+            max_dd_frac: Max drawdown as fraction
+            risk_mode: Risk mode (fixed_basis or dynamic)
+            drawdown_reset_days: Days to wait before phoenix
+            drawdown_reset_score: ADX score needed for phoenix
+        """
         px = close.astype(float).copy()
         
         # Align Funding
@@ -266,19 +301,21 @@ class Backtester:
             aligned_funding = funding_series.reindex(close.index).ffill().fillna(0.0)
 
         # Generate Positions
-        if hasattr(strat, 'adx_threshold'): # MetaStrategy
+        if hasattr(strategy, 'adx_threshold'): # MetaStrategy
             if full_df is None: raise ValueError("MetaStrategy requires full OHLC dataframe (full_df).")
-            plan = strat.generate_positions(full_df, funding=aligned_funding)
-        elif hasattr(strat, 'generate_positions'):
-            if isinstance(strat, EthBtcStrategy):
-                plan = strat.generate_positions(px, funding=aligned_funding)
+            plan = strategy.generate_positions(full_df, funding=aligned_funding)
+        elif hasattr(strategy, 'generate_positions'):
+            if isinstance(strategy, EthBtcStrategy):
+                plan = strategy.generate_positions(px, funding=aligned_funding)
             else:
                 input_data = full_df if full_df is not None else px
-                plan = strat.generate_positions(input_data, funding=aligned_funding)
+                plan = strategy.generate_positions(input_data, funding=aligned_funding)
         
         target_w = plan["target_w"]
 
-        # --- PARAMETER SETUP (DYNAMIC) ---
+        # === DYNAMIC POSITION SIZING (matching live_executor.py) ===
+        from core.position_sizer import PositionSizer, PositionSizerConfig
+        
         step_mr = 1.0
         thresh_mr = 0.0
         step_trend = 1.0
@@ -286,18 +323,23 @@ class Backtester:
         adx_cutoff = 25.0
         is_meta = False
 
-        if hasattr(strat, 'adx_threshold'): # MetaStrategy
+        if hasattr(strategy, 'adx_threshold'): # MetaStrategy
             is_meta = True
-            adx_cutoff = strat.adx_threshold
-            step_mr = getattr(strat.mr.p, 'step_allocation', 1.0)
-            thresh_mr = getattr(strat.mr.p, 'rebalance_threshold_w', 0.0)
-            step_trend = getattr(strat.trend.p, 'step_allocation', 1.0)
-            thresh_trend = getattr(strat.trend.p, 'rebalance_threshold_w', 0.0)
-        elif hasattr(strat, 'p'):
-             step_mr = getattr(strat.p, 'step_allocation', 1.0)
-             thresh_mr = getattr(strat.p, 'rebalance_threshold_w', 0.0)
-             step_trend = step_mr
+            adx_cutoff = strategy.adx_threshold
+            
+            # Get thresholds (static)
+            thresh_mr = getattr(strategy.mr.p, 'rebalance_threshold_w', 0.0)
+            thresh_trend = 0.0
+            
+            step_mr =  getattr(strategy.mr.p, 'step_allocation', 1.0)
+            step_trend = getattr(strategy.trend.p, 'step_allocation', 1.0)
+            # Dynamic step sizing will be calculated per-bar below
+            # (we initialize to base values here, but will override in loop)
+            
+        elif hasattr(strategy, 'p'):
+             thresh_mr = getattr(strategy.p, 'rebalance_threshold_w', 0.0)
              thresh_trend = thresh_mr
+
 
         # --- Execution Loop ---
         btc = np.zeros(len(px))
@@ -307,10 +349,6 @@ class Backtester:
         btc[0] = initial_btc 
         bnb[0] = start_bnb
         
-        equity_high = initial_btc
-        maxdd_hit = False
-        maxdd_hit_ts = None
-        
         taker_fee = self.fee.taker_fee
         fee_disc = (1.0 - self.fee.bnb_discount) if self.fee.pay_fees_in_bnb else 1.0
         
@@ -319,6 +357,21 @@ class Backtester:
         trades = []
 
         cur_w = 0.0
+        
+        # Risk tracking variables
+        equity_high = initial_btc
+        maxdd_hit = False
+        maxdd_hit_ts = None
+        
+        # Story tracking
+        last_regime = None
+        
+        # === Story Logging Setup ===
+        if story_writer:
+            strategy_name = type(strategy).__name__ if hasattr(strategy, '__class__') else "Strategy"
+            mode = f"BACKTEST-{strategy_name}"
+            story_writer.log_startup(px.index[0], initial_btc, mode, "BTC")
+        
         
         # --- FIX ITEM 15: Daily Risk Tracking Variables ---
         current_day = px.index[0].date()
@@ -344,8 +397,17 @@ class Backtester:
             # Wealth Calculation
             wealth = btc[i] + eth[i] * price
             
+            # Story: Check for ATH
+            if story_writer:
+                story_writer.check_ath(timestamp, wealth, "BTC")
+            
             # --- FIX ITEM 15: Daily Loss Logic ---
             if timestamp.date() != current_day:
+                # Story: Log daily summary
+                if story_writer:
+                    daily_pnl = wealth - day_start_wealth
+                    story_writer.check_and_log_daily(timestamp, daily_pnl, wealth, "BTC")
+                
                 current_day = timestamp.date()
                 day_start_wealth = wealth # Reset for new day
                 daily_limit_hit = False
@@ -364,6 +426,9 @@ class Backtester:
                 if dd >= max_dd_frac: 
                     maxdd_hit = True
                     maxdd_hit_ts = timestamp
+                    # Story: Log safety breaker
+                    if story_writer:
+                        story_writer.log_safety_breaker(timestamp, dd)
             
             # Phoenix Reset
             if maxdd_hit and drawdown_reset_days > 0:
@@ -372,19 +437,72 @@ class Backtester:
                 if "regime_score" in plan.columns:
                     current_score = float(plan["regime_score"].iat[i])
                 
-                if (time_passed.total_seconds() >= (drawdown_reset_days * 86400)) and (current_score >= drawdown_reset_score):
+                if time_passed.days >= drawdown_reset_days and current_score >= drawdown_reset_score:
                     maxdd_hit = False
                     equity_high = wealth
-
-            # Target Weight (Force Close if Risk Hit)
-            tw = 0.0 if (maxdd_hit or daily_limit_hit) else float(target_w.iat[i])
+                    # Story: Log phoenix activation
+                    if story_writer:
+                        story_writer.log_phoenix_activation(timestamp, current_score, drawdown_reset_days)
             
+            # --- Rebalancing Logic ---
+            # Target weight at this bar
+            tw = float(target_w.iat[i]) if not np.isnan(float(target_w.iat[i])) else 0.0
+            
+            # === DYNAMIC STEP SIZING (per bar, matching live_executor.py) ===
+            # Get realized volatility at this bar (if available)
+            rv_at_i = float(plan["vol"].iat[i]) if "vol" in plan.columns and not np.isnan(float(plan["vol"].iat[i])) else 0.5
+            
+            # Calculate dynamic step based on strategy and volatility
+            active_step = 1.0
+            active_thresh = 0.0
+
+            if is_meta:
+                # MetaStrategy: use MR or Trend params based on regime
+                regime_val = float(plan["regime_state"].iat[i]) if "regime_state" in plan.columns else -1.0
+                
+                if regime_val < 0:  # Mean Reversion mode
+                    sizer_config = PositionSizerConfig(
+                        mode=getattr(strategy.mr.p, 'position_sizing_mode', 'static'),
+                        base_step=getattr(strategy.mr.p, 'step_allocation', 1.0),
+                        target_vol=getattr(strategy.mr.p, 'position_sizing_target_vol', 0.5),
+                        min_step=getattr(strategy.mr.p, 'position_sizing_min_step', 0.1),
+                        max_step=getattr(strategy.mr.p, 'position_sizing_max_step', 1.0),
+                    )
+                    active_step = PositionSizer(sizer_config).calculate_step(rv_at_i)
+                    active_thresh = thresh_mr
+                else:  # Trend mode
+                    tr_config = PositionSizerConfig(
+                        mode=getattr(strategy.trend.p, 'position_sizing_mode', 'static'),
+                        base_step=getattr(strategy.trend.p, 'step_allocation', 1.0),
+                        target_vol=getattr(strategy.trend.p, 'position_sizing_target_vol', 0.5),
+                        min_step=getattr(strategy.trend.p, 'position_sizing_min_step', 0.1),
+                        max_step=getattr(strategy.trend.p, 'position_sizing_max_step', 1.0),
+                    )
+                    active_step = PositionSizer(tr_config).calculate_step(rv_at_i)
+                    active_thresh = thresh_trend
+            else:
+                # Single strategy
+                single_config = PositionSizerConfig(
+                    mode=getattr(strategy.p, 'position_sizing_mode', 'static'),
+                    base_step=getattr(strategy.p, 'step_allocation', 1.0),
+                    target_vol=getattr(strategy.p, 'position_sizing_target_vol', 0.5),
+                    min_step=getattr(strategy.p, 'position_sizing_min_step', 0.1),
+                    max_step=getattr(strategy.p, 'position_sizing_max_step', 1.0),
+                )
+                active_step = PositionSizer(single_config).calculate_step(rv_at_i)
+                active_thresh = thresh_mr
+          
             # --- DYNAMIC PARAM SELECTION ---
-            step = step_mr
-            thresh = thresh_mr
+            step = active_step
+            thresh = active_thresh
             
             if is_meta and "regime_score" in plan.columns:
                 score = float(plan["regime_score"].iat[i])
+                
+                # Story: Log regime switch
+                if story_writer:
+                    story_writer.check_regime_switch(timestamp, score, adx_cutoff, "meta")
+                
                 if score > adx_cutoff:
                     step = step_trend
                     thresh = thresh_trend
@@ -393,6 +511,15 @@ class Backtester:
             # Rebalance Logic
             new_w = cur_w + step * (tw - cur_w)
             
+            # === SNAP-TO-ZERO (matching live_executor.py) ===
+            # Force full exit for small positions to clean up dust
+            if tw == 0.0 and abs(eth[i]) > 0:
+                eth_val_quote = abs(eth[i]) * price
+                min_trade_quote = 0.0001  # Minimum trade size in quote currency
+                # If position is small but not tiny, force full exit
+                if eth_val_quote > min_trade_quote and eth_val_quote < (3.0 * min_trade_quote):
+                    new_w = 0.0  # Force full exit (overrides smoothing)
+            
             # Threshold check
             if abs(new_w - cur_w) < thresh:
                 new_w = cur_w
@@ -400,15 +527,13 @@ class Backtester:
             target_eth = new_w * wealth / price
             delta = target_eth - eth[i]
             
-            # Execution
-            # --- FIX ITEM 12: Float Comparison ---
-            # Using 0.0001 as dust threshold relative to price, effectively checking "not zero"
-            # Here we assume min notional check is handled by 'min_trade_btc' or similar in live logic.
-            # For backtest, we check if the value of the trade is significant.
+            # === MIN TRADE SIZE CHECK (matching live_executor.py) ===
+            min_trade_btc = 0.0001  # Configurable minimum trade size
+            trade_value_btc = abs(delta * price)
             
-            trade_value = abs(delta * price)
-            if not math.isclose(trade_value, 0.0, abs_tol=1e-5):
-                notional = trade_value
+            # Execution (only if trade meets minimum size)
+            if trade_value_btc >= min_trade_btc:
+                notional = trade_value_btc
                 f_rate = taker_fee * fee_disc 
                 fee_val = notional * f_rate
                 
@@ -419,19 +544,24 @@ class Backtester:
                         if bnb[i] >= bnb_cost:
                             bnb[i] -= bnb_cost
                         else:
-                            btc[i] -= (fee_val - (bnb[i]*bnb_px))
-                            bnb[i] = 0
+                            # Not enough BNB, pay in BTC
+                            btc[i] -= fee_val
                 else:
                     btc[i] -= fee_val
                 
+                # Apply trade
+                eth[i] += delta
+                btc[i] -= delta * price
                 if delta > 0: # Buy
-                    btc[i] -= notional
-                    eth[i] += delta
                     trades.append({"time": px.index[i], "side":"BUY", "price":price, "qty":delta, "fee":fee_val})
+                    # Story: Log trade
+                    if story_writer:
+                        story_writer.log_trade(timestamp, "BUY", delta, price, "ETH", "BTC")
                 else: # Sell
-                    btc[i] += notional
-                    eth[i] += delta
                     trades.append({"time": px.index[i], "side":"SELL", "price":price, "qty":delta, "fee":fee_val})
+                    # Story: Log trade
+                    if story_writer:
+                        story_writer.log_trade(timestamp, "SELL", delta, price, "ETH", "BTC")
                 
                 total_fees_btc += fee_val
                 total_turnover += notional
@@ -439,6 +569,8 @@ class Backtester:
             cur_w = (eth[i] * price) / max(wealth, 1e-12)
 
         final_btc = btc[-1] + eth[-1] * float(px.iat[-1])
+        
+        port_df = pd.DataFrame({"wealth_btc": btc + eth*px}, index=px.index)
         
         summary = {
             "initial_btc": initial_btc,
@@ -451,12 +583,13 @@ class Backtester:
             "n_bars": len(px)
         }
         
-        port_df = pd.DataFrame({"wealth_btc": btc + eth*px}, index=px.index)
+        # Return
         return {
-            "summary": summary, 
-            "portfolio": port_df, 
+            "summary": summary,
+            "portfolio": port_df,
+            "balances": pd.DataFrame({"btc": btc, "eth": eth, "bnb": bnb}, index=px.index),
             "trades": pd.DataFrame(trades),
-            "diagnostics": plan if hasattr(strat, 'generate_positions') else None
+            "diagnostics": plan if hasattr(strategy, 'generate_positions') else None
         }
 
 # ------------------ CLI ------------------
@@ -548,7 +681,7 @@ def cmd_backtest(args):
     df = df.sort_index()
 
     app_cfg = load_config(args.config)
-    strat = build_strategy_from_config(app_cfg, df)
+    strategy = build_strategy_from_config(app_cfg, df)
     
     fees_cfg = app_cfg.fees
     fee = FeeParams(
@@ -571,7 +704,7 @@ def cmd_backtest(args):
 
     bt = Backtester(fee)
     res = bt.simulate(
-        df["close"], strat, funding_series=funding_series, full_df=df,
+        df["close"], strategy, funding_series=funding_series, full_df=df,
         initial_btc=basis, bnb_price_series=bnb_series,
         max_daily_loss_btc=risk_cfg.max_daily_loss_btc,
         max_dd_btc=risk_cfg.max_dd_btc,

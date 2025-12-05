@@ -20,7 +20,8 @@ from core.metrics import (
     GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, 
     PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, SIGNAL_BAND,
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
-    REGIME_STATE, PHOENIX_ACTIVE,    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
+    REGIME_STATE, PHOENIX_ACTIVE, POSITION_STEP, REALIZED_VOL,
+    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
 )
@@ -911,7 +912,29 @@ def main():
             mark_zone(zone)
 
             action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
-            step = cfg.strategy.step_allocation
+            
+            # === DYNAMIC POSITION SIZING ===
+            from core.position_sizer import PositionSizer, PositionSizerConfig
+            
+            # Create position sizer config
+            sizer_config = PositionSizerConfig(
+                mode=getattr(cfg.strategy, "position_sizing_mode", "static"),
+                base_step=cfg.strategy.step_allocation,
+                target_vol=getattr(cfg.strategy, "position_sizing_target_vol", 0.5),
+                min_step=getattr(cfg.strategy, "position_sizing_min_step", 0.1),
+                max_step=getattr(cfg.strategy, "position_sizing_max_step", 1.0),
+                kelly_win_rate=getattr(cfg.strategy, "kelly_win_rate", 0.55),
+                kelly_avg_win=getattr(cfg.strategy, "kelly_avg_win", 0.02),
+                kelly_avg_loss=getattr(cfg.strategy, "kelly_avg_loss", 0.01),
+            )
+            sizer = PositionSizer(sizer_config)
+            
+            # Calculate dynamic step based on realized volatility
+            step = sizer.calculate_step(realized_vol=rv)
+            
+            # Export metrics for Grafana
+            POSITION_STEP.set(step)
+            REALIZED_VOL.set(rv)
 
             # --- SNAP-TO-ZERO (Generic) ---
             # Bug Fix #7: Use position size for futures, base_bal for spot
@@ -924,13 +947,15 @@ def main():
                                     cfg.execution.min_trade_btc or (cfg.execution.min_trade_frac * cfg.risk.basis_btc))
                     
                     if total_val_quote > min_trade_quote and total_val_quote < (3.0 * min_trade_quote):
-                        step = 1.0
+                        step = 1.0  # Override dynamic step for snap-to-zero
                         position_type = "SHORT" if check_val < 0 else "LONG"
                         log.info("[EXEC] Snap-to-Zero: %s %s position small (%.6f %s). Forcing exit.", position_type, base_asset, total_val_quote, quote_asset)
 
+            # Legacy vol_scaled_step (deprecated, use position_sizing_mode instead)
             if getattr(cfg.strategy, "vol_scaled_step", False):
                 z = cur_ratio / max(rv, 1e-6)
                 step = min(1.0, max(0.1, step * min(2.0, abs(z))))
+
 
             # Final target calculation with smoothing
             new_w_ideal = cur_w + step * (target_w - cur_w)

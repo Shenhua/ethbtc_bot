@@ -21,13 +21,18 @@ TEST_END="2025-06-01"
 PRICE_DATA=$DEFAULT_PRICE
 FUNDING_DATA=$DEFAULT_FUND
 TAG=$DEFAULT_TAG
-USE_WFO=false
+WFO_MODE=false
+EXHAUSTIVE_MODE=false
 
 # Parse Arguments
 while [[ $# -gt 0 ]]; do
-  case $1 in
+  case "$1" in
     --wfo)
-      USE_WFO=true
+      WFO_MODE=true
+      shift
+      ;;
+    --exhaustive)
+      EXHAUSTIVE_MODE=true
       shift
       ;;
     --train-start)
@@ -68,10 +73,41 @@ done
 WINDOW_DAYS=180
 STEP_DAYS=30
 
-# Complexity
+# Optimization Complexity
 MR_TRIALS=50
 TR_TRIALS=30
 META_TRIALS=8
+
+# === PARALLELIZATION SETTINGS ===
+# Auto-detect CPU cores (use 75% for parallel work)
+AVAIL_CORES=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+MAX_PARALLEL_COMBOS=$((AVAIL_CORES > 8 ? 8 : AVAIL_CORES))  # Max 8 (one per combo)
+JOBS_PER_COMBO=$((AVAIL_CORES / MAX_PARALLEL_COMBOS))       # Distribute remaining
+
+# Ensure at least 1 job per combo
+[[ $JOBS_PER_COMBO -lt 1 ]] && JOBS_PER_COMBO=1
+
+# === SIGNAL TRAP (Ctrl+C Support) ===
+cleanup() {
+    echo ""
+    echo "🛑 Interrupt received! Killing background Optuna jobs..."
+    
+    # Kill all background jobs listed by the shell
+    # 'jobs -p' gets the PIDs of background processes
+    pids=$(jobs -p)
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null
+    fi
+    
+    echo "💀 Cleanup complete. Exiting."
+    exit 1
+}
+
+# Register the trap for SIGINT (Ctrl+C) and SIGTERM
+trap cleanup SIGINT SIGTERM
+
+echo "[INFO] Detected $AVAIL_CORES CPU cores"
+echo "[INFO] Parallelization: $MAX_PARALLEL_COMBOS combinations × $JOBS_PER_COMBO Optuna jobs each"
 
 # Filenames
 OUT_MR_CSV="results/opt_mr_${TAG}.csv"
@@ -87,30 +123,114 @@ OUT_TR_CONF="configs/best_trend_${TAG}.json"
 OUT_META_CSV="results/opt_meta_${TAG}.csv"
 FINAL_CONFIG="configs/meta_optimized_v2_${TAG}.json"
 
+# Common arguments for train/test dates
+TRAIN_TEST_ARGS="--train-start \"$TRAIN_START\" --train-end \"$TRAIN_END\" --test-start \"$TEST_START\" --test-end \"$TEST_END\""
+
+echo ""
 echo "========================================"
-echo "Optimization Workflow: ${TAG}"
-echo "Mode: $( [ "$USE_WFO" = true ] && echo "Walk-Forward (Rolling)" || echo "Static" )"
+echo "Optimization Workflow: $TAG"
+if [[ "$EXHAUSTIVE_MODE" == "true" ]]; then
+  echo "Mode: Exhaustive (All Combinations)"
+elif [[ "$WFO_MODE" == "true" ]]; then
+  echo "Mode: Walk-Forward (Rolling)"
+else
+  echo "Mode: Static (Optuna Auto-Exploration)"
+fi
 echo "----------------------------------------"
 echo "Train: $TRAIN_START -> $TRAIN_END"
 echo "Test:  $TEST_START -> $TEST_END"
-echo "========================================"
+echo ""
 
 mkdir -p results configs
 
 # =============================================
-# Step 1: Optimize Mean Reversion (Static)
+# Step 1: Optimize Mean Reversion
 # =============================================
-echo ""
-echo "[1/6] Optimizing Mean Reversion..."
-python3 tools/optimizer_cli.py \
-  --data "$PRICE_DATA" \
-  --funding-data "$FUNDING_DATA" \
-  --train-start "$TRAIN_START" --train-end "$TRAIN_END" \
-  --test-start "$TEST_START" --test-end "$TEST_END" \
-  --n-trials $MR_TRIALS \
-  --study-name "mr_${TAG}_study" \
-  --storage "sqlite:///data/db/optuna.db" \
-  --out "$OUT_MR_CSV"
+if [[ "$EXHAUSTIVE_MODE" == "true" ]]; then
+  echo "[1/6] Optimizing Mean Reversion (Exhaustive - All Combinations)..."
+  echo "  ⚡ Parallel Limit: $MAX_PARALLEL_COMBOS concurrent jobs"
+  
+  # Test all 8 combinations
+  COMBO_COUNT=0
+  for trend in sma roc; do
+    for sizing in static volatility; do
+      for long_only in true false; do
+        
+        # --- FIX: ROBUST THROTTLING ---
+        # While number of running jobs >= max, sleep briefly
+        while [[ $(jobs -r | wc -l) -ge $MAX_PARALLEL_COMBOS ]]; do
+           sleep 2
+        done
+        # ------------------------------
+
+        COMBO_COUNT=$((COMBO_COUNT + 1))
+        long_str=$([ "$long_only" == "true" ] && echo "long" || echo "short")
+        echo "  → [$COMBO_COUNT/8] Launching: trend=$trend, sizing=$sizing, long_only=$long_only"
+        
+        # Run in background
+        (
+          python3 tools/optimizer_cli.py \
+            --data "$PRICE_DATA" \
+            --funding-data "$FUNDING_DATA" \
+            --train-start "$TRAIN_START" --train-end "$TRAIN_END" \
+            --test-start "$TEST_START" --test-end "$TEST_END" \
+            --n-trials $MR_TRIALS \
+            --jobs $JOBS_PER_COMBO \
+            --force-trend-kind $trend \
+            --force-sizing-mode $sizing \
+            --force-long-only $long_only \
+            --storage "sqlite:///data/db/optuna.db" \
+            --study-name "mr_${TAG}_${trend}_${sizing}_${long_str}" \
+            --out "results/opt_mr_${TAG}_${trend}_${sizing}_${long_str}.csv" \
+            2>&1 | sed "s/^/    [$trend-$sizing-$long_str] /"
+        ) &
+        
+      done
+    done
+  done
+  
+  # Wait for all remaining background jobs to finish
+  echo "  ⏳ Waiting for final jobs to complete..."
+  wait
+  echo "  ✅ All combinations finished!"
+  
+  # Merge all results into single CSV
+  echo "  → Merging results..."
+  {
+    # Get header from a file that exists (using find to be safe)
+    FIRST_FILE=$(find results -name "opt_mr_${TAG}_*.csv" | head -n 1)
+    if [[ -n "$FIRST_FILE" ]]; then
+        head -1 "$FIRST_FILE"
+        # Append all data (skip headers)
+        for trend in sma roc; do
+          for sizing in static volatility; do
+            for long_only in true false; do
+              long_str=$([ "$long_only" == "true" ] && echo "long" || echo "short")
+              tail -n +2 "results/opt_mr_${TAG}_${trend}_${sizing}_${long_str}.csv" 2>/dev/null || true
+            done
+          done
+        done
+    fi
+  } > "$OUT_MR_CSV"
+  
+  TOTAL_ROWS=$(($(wc -l < "$OUT_MR_CSV") - 1))
+  echo "  ✅ Exhaustive optimization complete ($TOTAL_ROWS configs tested)"
+  
+else
+  # Normal mode: Let Optuna explore automatically with parallel jobs
+  echo "[1/6] Optimizing Mean Reversion..."
+  echo "  ⚡ Using $AVAIL_CORES parallel Optuna jobs"
+  python3 tools/optimizer_cli.py \
+    --data "$PRICE_DATA" \
+    --funding-data "$FUNDING_DATA" \
+    --train-start "$TRAIN_START" --train-end "$TRAIN_END" \
+    --test-start "$TEST_START" --test-end "$TEST_END" \
+    --n-trials $MR_TRIALS \
+    --jobs $AVAIL_CORES \
+    --study-name "mr_${TAG}_study" \
+    --storage "sqlite:///data/db/optuna.db" \
+    --out "$OUT_MR_CSV"
+fi
 
 # Step 2: Pick Best MR
 echo "[2/6] Selecting Best MR..."
@@ -158,35 +278,12 @@ if [ "$USE_WFO" = true ]; then
       --study-name "trend_${TAG}_wfo" \
       --out "$OUT_TR_WFO_CSV"
 
-    echo "[4/6] Extracting Latest WFO Params..."
-    python3 - <<PYTHON
-import pandas as pd
-import json
-import sys
-
-try:
-    df = pd.read_csv("$OUT_TR_WFO_CSV")
-    latest = df.iloc[-1] 
-    print(f"Selected Window ending: {latest['window_end']}")
-    print(f"OOS Profit: {latest['oos_profit']}")
-
-    params_str = latest["best_params"]
-    try:
-        params = json.loads(params_str)
-    except json.JSONDecodeError:
-        import ast
-        params = ast.literal_eval(params_str)
-
-    print(f"Latest Params (LongOnly={params.get('long_only')}): Saved.")
-
-    with open("$OUT_TR_PARAMS", "w") as f:
-        json.dump(params, f, indent=2)
-
-except Exception as e:
-    print(f"Error extracting params: {e}")
-    sys.exit(1)
-PYTHON
-
+    echo "[4/6] Smart WFO Selection..."
+    python3 tools/wfo_select_best.py \
+      --wfo-csv "$OUT_TR_WFO_CSV" \
+      --out "$OUT_TR_PARAMS" \
+      --strategy weighted
+    echo ""
 else
     # --- STATIC PATH ---
     echo "Running Static Optimization..."

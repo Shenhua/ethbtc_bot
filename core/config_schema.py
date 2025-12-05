@@ -41,11 +41,21 @@ class Strategy(BaseModel):
     # --- Shared / Global ---
     cooldown_minutes: int = Field(0, ge=0, le=100000)
     step_allocation: float = Field(0.33, ge=0.0, le=1.0)
-    max_position: float = Field(1.0, ge=0.0, le=1.0)
+    max_position: float = Field(1.0, ge=0.0)
     long_only: bool = True
-    rebalance_threshold_w: float = Field(0.0, ge=0.0, le=1.0)
+    rebalance_threshold_w: float = Field(0.0, ge=0.0)
     profit_lock_dd: float = Field(0.0, ge=0.0, le=1.0)
+    # Volatility
     vol_scaled_step: bool = False
+    # Dynamic Position Sizing
+    position_sizing_mode: str = Field("static", pattern="^(static|volatility|kelly)$")
+    position_sizing_target_vol: float = Field(0.5, ge=0.1, le=2.0)
+    position_sizing_min_step: float = Field(0.1, ge=0.0, le=1.0)
+    position_sizing_max_step: float = Field(1.0, ge=0.0, le=1.0)
+    # Kelly Criterion params (optional)
+    kelly_win_rate: float = Field(0.55, ge=0.0, le=1.0)
+    kelly_avg_win: float = Field(0.02, ge=0.0)
+    kelly_avg_loss: float = Field(0.01, ge=0.0)
     
     funding_limit_long: float = Field(0.05, ge=0.0, le=1.0)
     funding_limit_short: float = Field(-0.05, ge=-1.0, le=0.0)

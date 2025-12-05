@@ -49,10 +49,17 @@ def main():
             }
         },
         "execution": {
+            "exchange_type": "futures",  # Set to futures for BTC trading
+            "leverage": 1,
             "interval": "15m",
             "poll_sec": 5,
             "ttl_sec": 30,
             "taker_fallback": True,
+            "max_taker_btc": 0.002,
+            "max_spread_bps_for_taker": 2.0,
+            "min_trade_frac": 0.0015,
+            "min_trade_floor_btc": 0.0,
+            "min_trade_cap_btc": 0.0,
             "min_trade_btc": 0.0001
         },
         "risk": {

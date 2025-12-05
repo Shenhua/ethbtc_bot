@@ -19,6 +19,12 @@ class TrendParams:
     # Funding Rate Filters
     funding_limit_long: float = 0.05
     funding_limit_short: float = -0.05
+    
+    # Dynamic Position Sizing
+    position_sizing_mode: str = "static"
+    position_sizing_target_vol: float = 0.5
+    position_sizing_min_step: float = 0.1
+    position_sizing_max_step: float = 1.0
 
     # Legacy compatibility (ignored but prevents config crashes)
     trend_kind: str = "trend"

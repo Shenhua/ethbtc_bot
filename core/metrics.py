@@ -60,6 +60,8 @@ REGIME_THRESHOLD = Gauge("regime_threshold", "ADX Threshold for Regime Switch")
 STRATEGY_MODE = Gauge("strategy_mode", "Active Strategy: 0=MeanRev, 1=Trend")
 REGIME_STATE = Gauge("regime_state", "Regime State: -1=MR, 1=Trend (with hysteresis)")
 PHOENIX_ACTIVE = Gauge("phoenix_active", "Phoenix Protocol Status: 1=Waiting for Reset, 0=Normal Trading")
+POSITION_STEP = Gauge("position_step_size", "Dynamic position step size (0.0-1.0)")
+REALIZED_VOL = Gauge("realized_volatility", "Current realized volatility (annualized)")
 
 # ---- Helper functions -----------------------------------------------------
 

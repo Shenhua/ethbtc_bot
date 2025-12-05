@@ -34,6 +34,11 @@ def suggest_params(trial, allow_shorts=False):
     funding_long = trial.suggest_float("funding_limit_long", 0.01, 0.10)
     funding_short = trial.suggest_float("funding_limit_short", -0.10, -0.01)
 
+    # Dynamic Position Sizing (NEW!)
+    position_sizing_mode = trial.suggest_categorical("position_sizing_mode", ["static", "volatility"])
+    position_sizing_target_vol = trial.suggest_float("position_sizing_target_vol", 0.3, 0.7)
+    position_sizing_min_step = trial.suggest_float("position_sizing_min_step", 0.1, 0.3)
+
     # Shorting Logic
     if allow_shorts:
         long_only = trial.suggest_categorical("long_only", [True, False])
@@ -43,14 +48,21 @@ def suggest_params(trial, allow_shorts=False):
     return TrendParams(
         fast_period=fast, slow_period=slow, ma_type=ma_type,
         cooldown_minutes=cooldown, step_allocation=1.0, max_position=1.0,
-        long_only=long_only, funding_limit_long=funding_long, funding_limit_short=funding_short
+        long_only=long_only, funding_limit_long=funding_long, funding_limit_short=funding_short,
+        # Dynamic sizing
+        position_sizing_mode=position_sizing_mode,
+        position_sizing_target_vol=position_sizing_target_vol,
+        position_sizing_min_step=position_sizing_min_step,
+        position_sizing_max_step=1.0
     )
 
 class Objective:
-    def __init__(self, fee, train_close, funding_train, allow_shorts=False):
+    def __init__(self, fee, train_close, test_close, funding_train, funding_test, allow_shorts=False):
         self.fee = fee
         self.train_close = train_close
+        self.test_close = test_close
         self.funding_train = funding_train
+        self.funding_test = funding_test
         self.allow_shorts = allow_shorts
 
     def __call__(self, trial):
@@ -59,29 +71,53 @@ class Objective:
             if p.fast_period >= p.slow_period:
                 raise optuna.TrialPruned("Fast >= Slow")
 
-            # 1. Run Simulation ONLY on Training Data (No Cheating!)
+            # 1. Run Simulation on TRAINING Data
             bt = Backtester(self.fee)
             res_tr = bt.simulate(
                 self.train_close, TrendStrategy(p), 
                 funding_series=self.funding_train
             )
             
-            summ_tr = res_tr["summary"]
+            # 2. Run Simulation on TEST Data (for every trial!)
+            res_te = bt.simulate(
+                self.test_close, TrendStrategy(p),
+                funding_series=self.funding_test
+            )
             
-            # 2. Calculate Score based on Training Data
+            summ_tr = res_tr["summary"]
+            summ_te = res_te["summary"]
+            
+            # 3. Calculate Score based on TRAINING Data (optimizer optimizes train)
             train_profit = float(summ_tr["final_btc"])
-            turns = float(summ_tr["n_trades"])
-            dd = float(summ_tr["max_drawdown_pct"])
+            train_turns = float(summ_tr["n_trades"])
+            train_dd = float(summ_tr["max_drawdown_pct"])
+            
+            # 4. Store TEST metrics (for later analysis)
+            test_profit = float(summ_te["final_btc"])
+            test_turns = float(summ_te["n_trades"])
+            
+            # Extract fees and turnover from both train and test
+            train_fees = float(summ_tr.get("total_fees_btc", 0.0))
+            train_turnover = float(summ_tr.get("total_turnover", 0.0))
+            test_fees = float(summ_te.get("total_fees_btc", 0.0))
+            test_turnover = float(summ_te.get("total_turnover", 0.0))
             
             # Score: Profit penalized by extreme DD
             score = train_profit
-            if dd < -0.25: score -= 0.5 
-            if turns < 5: score -= 1.0 # Penalize inactive strategies
+            if train_dd < -0.25: score -= 0.5 
+            if train_turns < 5: score -= 1.0 # Penalize inactive strategies
             
-            # Store Training Metrics
+            # 5. Store ALL Metrics
             trial.set_user_attr("train_final_btc", train_profit)
-            trial.set_user_attr("train_dd", dd)
-            trial.set_user_attr("train_turns", turns)
+            trial.set_user_attr("train_dd", train_dd)
+            trial.set_user_attr("train_turns", train_turns)
+            trial.set_user_attr("test_final_btc", test_profit)  # Real OOS!
+            trial.set_user_attr("test_turns", test_turns)
+            
+            # NEW: Store fees and turnover (for wf_pick.py compatibility)
+            trial.set_user_attr("fees_btc", test_fees)  # Use test fees
+            trial.set_user_attr("turnover_btc", test_turnover)  # Use test turnover
+            trial.set_user_attr("turns_test", test_turns)  # Alias for compatibility
             
             return score
 
@@ -112,35 +148,18 @@ def run_slice_optimization(args, fee, df, start_idx, end_idx, test_end_idx, fund
         storage=args.storage, load_if_exists=True
     )
     
-    # Optimize using ONLY Training Data + Allow Shorts setting
-    obj = Objective(fee, train_close, f_tr, allow_shorts=args.allow_shorts)
+    # Optimize using train data, evaluate on test (ALL trials!)
+    obj = Objective(fee, train_close, test_close, f_tr, f_te, allow_shorts=args.allow_shorts)
     study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
     
-    # --- VALIDATION STEP ---
-    # Take the best params from the PAST and test them on the FUTURE
+    # Get best trial (now has real test scores!)
     best_trial = study.best_trial
-    best_params = best_trial.params
     
-    # Re-construct params object safely
-    p_best = TrendParams(
-        fast_period=best_params["fast_period"],
-        slow_period=best_params["slow_period"],
-        ma_type=best_params["ma_type"],
-        cooldown_minutes=best_params["cooldown_minutes"],
-        funding_limit_long=best_params.get("funding_limit_long", 0.05),
-        funding_limit_short=best_params.get("funding_limit_short", -0.05),
-        long_only=best_params.get("long_only", True), # Respect the optimizer's choice
-        step_allocation=1.0, max_position=1.0
-    )
-
-    # Run the "Out of Sample" Test
-    bt = Backtester(fee)
-    res_te = bt.simulate(test_close, TrendStrategy(p_best), funding_series=f_te)
+    # Fallback for old trials without test_final_btc
+    oos_profit = best_trial.user_attrs.get("test_final_btc", best_trial.value)
+    train_profit = best_trial.user_attrs.get("train_final_btc", best_trial.value)
     
-    oos_profit = float(res_te["summary"]["final_btc"])
-    train_profit = best_trial.value
-    
-    log.info(f"Window {train_close.index[-1].date()}: Train={train_profit:.4f} | OOS={oos_profit:.4f} | LongOnly={p_best.long_only}")
+    log.info(f"Window {train_close.index[-1].date()}: Train={train_profit:.4f} | OOS={oos_profit:.4f} | LongOnly={best_trial.params.get('long_only', True)}")
     
     return {
         "window_end": train_close.index[-1],
@@ -148,7 +167,7 @@ def run_slice_optimization(args, fee, df, start_idx, end_idx, test_end_idx, fund
         "oos_end": test_close.index[-1],
         "oos_profit": oos_profit,
         "train_profit": train_profit,
-        "best_params": json.dumps(best_params)
+        "best_params": json.dumps(best_trial.params)
     }
 
 def main():
@@ -257,22 +276,25 @@ def main():
             storage=args.storage, load_if_exists=True
         )
         
-        # Use the same Objective class (Unified logic)
-        obj = Objective(fee, train_close, f_tr, allow_shorts=args.allow_shorts)
+        # Use the updated Objective class (evaluates ALL trials on test!)
+        obj = Objective(fee, train_close, test_close, f_tr, f_te, allow_shorts=args.allow_shorts)
         study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
         
-        # Save output
+        # Fallback for old trials without test_final_btc
+        train_final = study.best_trial.user_attrs.get("train_final_btc", study.best_trial.value)
+        test_final = study.best_trial.user_attrs.get("test_final_btc", study.best_trial.value)
+        log.info(f"Best params: Train={train_final:.4f} | Test={test_final:.4f}")
+        
+        # Save output with REAL test results (all trials have them now!)
         rows = []
         for t in study.trials:
             if t.state == optuna.trial.TrialState.COMPLETE:
                 d = t.user_attrs.copy()
                 d.update(t.params)
                 
-                # CRITICAL: Ensure the picker sees the "Test" score even if it's just training data
-                if "test_final_btc" not in d:
-                    # Fallback: Use training score if test wasn't run separately
-                    d["test_final_btc"] = t.value
-                    d["turns"] = d.get("train_turns", 0) 
+                # Set turns column for compatibility
+                if "test_turns" in d:
+                    d["turns"] = d["test_turns"]
                 
                 rows.append(d)
         
