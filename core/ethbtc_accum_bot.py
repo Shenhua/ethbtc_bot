@@ -229,17 +229,22 @@ class EthBtcStrategy:
             
             desired = state
             
-            # Buy Logic
-            if state <= 0:
-                if r < -be and gb_arr[i] and ab_arr[i]:
-                    desired = 1.0
+            # --- 3-STATE LOGIC (Long / Neutral / Short) ---
             
-            # Sell Logic
-            if state >= 0:
-                if r > be and gs_arr[i] and as_arr[i]:
-                     desired = -1.0 
-                elif r > -bx and state > 0:
-                     desired = -1.0
+            # 1. Check Exits (Mean Reversion)
+            # If we are in a position, check if we should exit to Neutral (0.0)
+            if state == 1.0:        # Currently Long
+                if r > -bx:         # Price rose back to "Exit Band" -> Take Profit/Close
+                    desired = 0.0
+            elif state == -1.0:     # Currently Short
+                if r < bx:          # Price fell back to "Exit Band" -> Take Profit/Close
+                    desired = 0.0
+
+            # 2. Check Entries (Strong Signals override Exits)
+            if r < -be and gb_arr[i] and ab_arr[i]:
+                desired = 1.0       # Strong Dip -> Buy Long
+            elif r > be and gs_arr[i] and as_arr[i]:
+                desired = -1.0      # Strong Rally -> Sell Short
 
             if desired != state:
                 state = desired
@@ -521,7 +526,14 @@ class Backtester:
             # -------------------------------
 
             # === MIN TRADE SIZE ===
-            min_trade_btc = 0.0001
+            # Fix: Use configured value, fallback to 0.0001
+            # Handle MetaStrategy which doesn't have .p directly
+            if hasattr(strategy, 'p'):
+                min_trade_btc = getattr(strategy.p, 'min_trade_btc', 0.0001) or 0.0001
+            elif hasattr(strategy, 'mr') and hasattr(strategy.mr, 'p'):
+                min_trade_btc = getattr(strategy.mr.p, 'min_trade_btc', 0.0001) or 0.0001
+            else:
+                min_trade_btc = 0.0001
 
             # Rebalance Logic
             new_w = cur_w + step * (tw - cur_w)

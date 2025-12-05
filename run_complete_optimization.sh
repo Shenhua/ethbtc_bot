@@ -178,7 +178,7 @@ if [[ "$EXHAUSTIVE_MODE" == "true" ]]; then
             --jobs $JOBS_PER_COMBO \
             --force-trend-kind $trend \
             --force-sizing-mode $sizing \
-            --force-long-only $long_only \
+            --force-long-only $long_only \ #falseto force short testonly
             --storage "sqlite:///data/db/optuna.db" \
             --study-name "mr_${TAG}_${trend}_${sizing}_${long_str}" \
             --out "results/opt_mr_${TAG}_${trend}_${sizing}_${long_str}.csv" \
