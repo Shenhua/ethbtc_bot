@@ -520,27 +520,40 @@ class Backtester:
                     thresh = thresh_trend
             # -------------------------------
 
+            # === MIN TRADE SIZE ===
+            min_trade_btc = 0.0001
+
             # Rebalance Logic
             new_w = cur_w + step * (tw - cur_w)
             
-            # === SNAP-TO-ZERO (matching live_executor.py) ===
-            # Force full exit for small positions to clean up dust
+            # === SNAP-TO-ZERO (Anti-Zeno) ===
+            force_exit = False
             if tw == 0.0 and abs(eth[i]) > 0:
+                # 1. Dust Cleanup
                 eth_val_quote = abs(eth[i]) * price
-                min_trade_quote = 0.0001  # Minimum trade size in quote currency
-                # If position is small but not tiny, force full exit
-                if eth_val_quote > min_trade_quote and eth_val_quote < (3.0 * min_trade_quote):
-                    new_w = 0.0  # Force full exit (overrides smoothing)
+                if eth_val_quote > min_trade_btc and eth_val_quote < (3.0 * min_trade_btc):
+                    new_w = 0.0
+                    force_exit = True
+                
+                # 2. Anti-Zeno: Force Exit if partial step is too small
+                implied_target = new_w * wealth / price
+                implied_delta = implied_target - eth[i]
+                implied_trade_val = abs(implied_delta * price)
+                
+                if implied_trade_val < min_trade_btc:
+                    new_w = 0.0
+                    force_exit = True
             
             # Threshold check
-            if abs(new_w - cur_w) < thresh:
-                new_w = cur_w
+            if not force_exit:
+                if abs(new_w - cur_w) < thresh:
+                    new_w = cur_w
 
             target_eth = new_w * wealth / price
             delta = target_eth - eth[i]
             
             # === MIN TRADE SIZE CHECK (matching live_executor.py) ===
-            min_trade_btc = 0.0001  # Configurable minimum trade size
+            # min_trade_btc defined above
             trade_value_btc = abs(delta * price)
             
             # Execution (only if trade meets minimum size)

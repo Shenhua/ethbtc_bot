@@ -76,6 +76,9 @@ def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
     log.debug(f"Resampled to 30m: {len(df_30m)} bars")
     if len(df_30m) > adx_period:
         adx_30m = calculate_adx(df_30m['high'], df_30m['low'], df_30m['close'], period=adx_period)
+        # FIX: Shift by 1 to avoid look-ahead (use previous completed bar)
+        adx_30m = adx_30m.shift(1)
+        
         # Manual forward fill to avoid monotonicity issues
         adx_30m_aligned = pd.Series(index=clean_index, dtype=float)
         adx_30m_sorted = adx_30m.sort_index()  # Ensure source is sorted
@@ -94,6 +97,9 @@ def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
     df_1h = df.resample('1h', label='left', closed='left').agg(agg_dict).dropna()
     if len(df_1h) > adx_period:
         adx_1h = calculate_adx(df_1h['high'], df_1h['low'], df_1h['close'], period=adx_period)
+        # FIX: Shift by 1 to avoid look-ahead
+        adx_1h = adx_1h.shift(1)
+        
         # Manual forward fill
         adx_1h_aligned = pd.Series(index=clean_index, dtype=float)
         adx_1h_sorted = adx_1h.sort_index()
