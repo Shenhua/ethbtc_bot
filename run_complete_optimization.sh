@@ -261,7 +261,7 @@ PYTHON
 echo ""
 echo "[3/6] Optimizing Trend..."
 
-if [ "$USE_WFO" = true ]; then
+if [ "$WFO_MODE" = true ]; then
     # --- WFO PATH ---
     # Note: WFO ignores train/test dates because it slices the whole file.
     # We pass them anyway for consistency but the script handles slicing.

@@ -206,6 +206,10 @@ def main():
 
     df = load_vision_csv(args.data).dropna()
     
+    # Hardened Index Cleaning
+    df = df[df.index.notna()]
+    df = df[~df.index.duplicated(keep='first')]
+    
     if not df.index.is_monotonic_increasing:
         log.warning("Data index was not monotonic. Sorting...")
         df = df.sort_index()

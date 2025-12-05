@@ -359,6 +359,7 @@ def main():
     if "session_start_W" not in state:
         state["session_start_W"] = 0.0
     last_seen_bar = 0
+    startup_logged_this_run = False
 
     while True:
         t0 = time.time()
@@ -478,9 +479,17 @@ def main():
 
             # Bug Fix #3: Removed duplicate balance calculation (already done above in lines 336-390)            
 
+            # Log startup once per process execution (not just once per state file)
+            if not startup_logged_this_run and W >= 0:
+                story.log_startup(bar_dt, W, args.mode, quote_asset)
+                startup_logged_this_run = True
+            
+            if W <= 0 and state.get("last_balance_log_ts", 0) < now_s - 300:
+                log.warning(f"⚠️ Zero Balance detected ({W} {quote_asset}). Bot will not trade.")
+                story.log_custom(bar_dt, "⚠️", "ZERO BALANCE", f"Wallet is empty: {W} {quote_asset}")
+
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
-                story.log_startup(bar_dt, W, args.mode, quote_asset) # Log bot startup to story
 
             _ensure_risk_state(state, W, bar_dt)
             _update_risk_state(state, W, bar_dt, cfg)

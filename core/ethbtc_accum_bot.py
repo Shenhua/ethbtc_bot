@@ -25,9 +25,8 @@ log = logging.getLogger("ethbtc_accum_bot")
 
 # --- Strategy Imports (Safe) ---
 try:
-    from core.trend_strategy import TrendStrategy, TrendParams
-    from core.meta_strategy import MetaStrategy
     from core.alert_manager import AlertManager
+    from core.story_writer import StoryWriter
 except ImportError:
     pass
 
@@ -74,7 +73,13 @@ def load_vision_csv(path: str) -> pd.DataFrame:
     for c in ["open","high","low","close","volume"]:
         if c in df.columns: df[c] = pd.to_numeric(df[c], errors="coerce")
     
-    return df.dropna(subset=["close"]).set_index("close_time").sort_index()
+    df = df.dropna(subset=["close"]).set_index("close_time")
+    
+    # Hardened Index Cleaning
+    df = df[df.index.notna()]
+    df = df[~df.index.duplicated(keep='first')]
+    
+    return df.sort_index()
 
 def _write_excel(path: str, sheets: dict):
     """Helper for multi-interval summary tools."""
@@ -272,7 +277,9 @@ class Backtester:
                  max_dd_frac=0.0, 
                  risk_mode="fixed_basis",
                  drawdown_reset_days=0.0, 
-                 drawdown_reset_score=0.0):
+                 drawdown_reset_score=0.0,
+                 base_asset="ETH",
+                 quote_asset="BTC"):
         """
         Simulate trading strategy on historical price data.
         
@@ -292,6 +299,8 @@ class Backtester:
             risk_mode: Risk mode (fixed_basis or dynamic)
             drawdown_reset_days: Days to wait before phoenix
             drawdown_reset_score: ADX score needed for phoenix
+            base_asset: Name of base asset (e.g. ETH)
+            quote_asset: Name of quote asset (e.g. BTC)
         """
         px = close.astype(float).copy()
         
@@ -370,7 +379,7 @@ class Backtester:
         if story_writer:
             strategy_name = type(strategy).__name__ if hasattr(strategy, '__class__') else "Strategy"
             mode = f"BACKTEST-{strategy_name}"
-            story_writer.log_startup(px.index[0], initial_btc, mode, "BTC")
+            story_writer.log_startup(px.index[0], initial_btc, mode, quote_asset)
         
         
         # --- FIX ITEM 15: Daily Risk Tracking Variables ---
@@ -399,14 +408,17 @@ class Backtester:
             
             # Story: Check for ATH
             if story_writer:
-                story_writer.check_ath(timestamp, wealth, "BTC")
+                story_writer.check_ath(timestamp, wealth, quote_asset)
             
             # --- FIX ITEM 15: Daily Loss Logic ---
             if timestamp.date() != current_day:
                 # Story: Log daily summary
                 if story_writer:
                     daily_pnl = wealth - day_start_wealth
-                    story_writer.check_and_log_daily(timestamp, daily_pnl, wealth, "BTC")
+                    story_writer.check_and_log_daily(timestamp, daily_pnl, wealth, quote_asset)
+                    story_writer.check_and_log_weekly(timestamp, wealth, quote_asset)
+                    story_writer.check_and_log_monthly(timestamp, wealth, quote_asset)
+                    story_writer.check_and_log_annual(timestamp, wealth, quote_asset)
                 
                 current_day = timestamp.date()
                 day_start_wealth = wealth # Reset for new day
@@ -556,12 +568,12 @@ class Backtester:
                     trades.append({"time": px.index[i], "side":"BUY", "price":price, "qty":delta, "fee":fee_val})
                     # Story: Log trade
                     if story_writer:
-                        story_writer.log_trade(timestamp, "BUY", delta, price, "ETH", "BTC")
+                        story_writer.log_trade(timestamp, "BUY", delta, price, base_asset, quote_asset)
                 else: # Sell
                     trades.append({"time": px.index[i], "side":"SELL", "price":price, "qty":delta, "fee":fee_val})
                     # Story: Log trade
                     if story_writer:
-                        story_writer.log_trade(timestamp, "SELL", delta, price, "ETH", "BTC")
+                        story_writer.log_trade(timestamp, "SELL", delta, price, base_asset, quote_asset)
                 
                 total_fees_btc += fee_val
                 total_turnover += notional
@@ -616,6 +628,10 @@ def build_strategy_from_config(app_cfg, df: pd.DataFrame):
     exec_cfg = app_cfg.execution
     interval_str = str(strat_cfg.strategy_type and exec_cfg.interval)
     bar_minutes = _interval_to_minutes(interval_str)
+    
+    # Local imports to avoid circular dependency
+    from core.trend_strategy import TrendStrategy, TrendParams
+    from core.meta_strategy import MetaStrategy
     
     # Common parameters shared across MR and Trend
     common_kwargs = dict(
@@ -702,17 +718,34 @@ def cmd_backtest(args):
         bnb_df = load_vision_csv(args.bnb_data)
         bnb_series = bnb_df["close"].reindex(df.index, method="ffill")
 
+    story_writer = None
+    
+    # Infer symbols from args or default
+    base_asset = args.base if args.base else "ETH"
+    quote_asset = args.quote if args.quote else "BTC"
+    symbol_str = f"{base_asset}{quote_asset}"
+
+    if args.story:
+        try:
+            story_writer = StoryWriter(args.story, symbol=symbol_str, alerter=None)
+            log.info(f"Story logging enabled: {args.story}")
+        except Exception as e:
+            log.warning(f"Failed to initialize StoryWriter: {e}")
+
     bt = Backtester(fee)
     res = bt.simulate(
         df["close"], strategy, funding_series=funding_series, full_df=df,
         initial_btc=basis, bnb_price_series=bnb_series,
+        story_writer=story_writer,
         max_daily_loss_btc=risk_cfg.max_daily_loss_btc,
         max_dd_btc=risk_cfg.max_dd_btc,
         max_daily_loss_frac=risk_cfg.max_daily_loss_frac,
         max_dd_frac=risk_cfg.max_dd_frac,
         risk_mode=risk_cfg.risk_mode,
         drawdown_reset_days=reset_days,
-        drawdown_reset_score=reset_score
+        drawdown_reset_score=reset_score,
+        base_asset=base_asset,
+        quote_asset=quote_asset
     )
     
     print(json.dumps(res["summary"], indent=2))
@@ -736,6 +769,9 @@ if __name__ == "__main__":
     bt.add_argument("--end")
     bt.add_argument("--bnb-data")
     bt.add_argument("--basis-btc", type=float)
+    bt.add_argument("--story", help="Path to output story log file")
+    bt.add_argument("--base", help="Base asset name (default: ETH)")
+    bt.add_argument("--quote", help="Quote asset name (default: BTC)")
     
     bt.set_defaults(func=cmd_backtest)
     
