@@ -590,7 +590,7 @@ def main():
             
             # 1. Trend Gate (Legacy)
             if cfg.strategy.gate_window_days and cfg.strategy.gate_roc_threshold:
-                day_close = ser_close.resample("1D").last()
+                day_close = ser_close.resample("1D").last().shift(1)
                 if len(day_close) > cfg.strategy.gate_window_days:
                     droc = float(day_close.iloc[-1] / max(day_close.shift(cfg.strategy.gate_window_days).iloc[-1], 1e-12) - 1.0)
                     if abs(droc) < cfg.strategy.gate_roc_threshold:

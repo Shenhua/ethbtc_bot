@@ -179,7 +179,7 @@ class EthBtcStrategy:
         gate_sell_mask = pd.Series(True, index=close.index)
 
         if self.p.gate_window_days > 0:
-            daily = close.resample("1D").last()
+            daily = close.resample("1D").last().shift(1)
             roc_daily = daily.pct_change(self.p.gate_window_days, fill_method=None)            
             roc = roc_daily.reindex(close.index).ffill().fillna(0.0)
             
