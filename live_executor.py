@@ -487,6 +487,7 @@ def main():
             if W <= 0 and state.get("last_balance_log_ts", 0) < now_s - 300:
                 log.warning(f"⚠️ Zero Balance detected ({W} {quote_asset}). Bot will not trade.")
                 story.log_custom(bar_dt, "⚠️", "ZERO BALANCE", f"Wallet is empty: {W} {quote_asset}")
+                alerter.send(f"⚠️ ZERO BALANCE [{args.symbol}]\nWallet is empty: {W} {quote_asset}. Bot will not trade.", level="WARNING")
 
             if state.get("session_start_W", 0.0) == 0.0 and W > 0:
                 state["session_start_W"] = W
@@ -509,7 +510,7 @@ def main():
                 eq_high = float(state.get("risk_equity_high", W))
                 dd_pct = (eq_high - W) / eq_high if eq_high > 0 else 0.0
                 log.warning("🚨 MAX DD HIT: %.2f%%. Halting all trading.", dd_pct * 100)
-                alerter.send(f"🚨 MAX DRAWDOWN HIT! Trading Halted. DD: {dd_pct:.2%}", level="CRITICAL")
+                # alerter.send(...) -> Moved to StoryWriter.log_safety_breaker
                 story.log_safety_breaker(bar_dt, dd_pct)
                 state["alert_sent_maxdd"] = True
             
@@ -661,7 +662,7 @@ def main():
                         last_regime = state.get("last_regime", current_regime)
                         
                         if current_regime != last_regime:
-                            alerter.send(f"🔄 Regime Switch: {last_regime} ➜ {current_regime} (Score: {current_score:.1f})", level="WARNING")
+                            # alerter.send(...) -> Moved to StoryWriter.check_regime_switch
                             state["last_regime"] = current_regime
                         
                         # Update Metrics
@@ -790,7 +791,7 @@ def main():
                             state["alert_sent_maxdd"] = False
                             
                             # Notify User
-                            alerter.send(f"✅ Phoenix Protocol Activated: Market is Trending (Score {current_score:.1f}). Resuming Trading.", level="INFO")
+                            # alerter.send(...) -> Moved to StoryWriter.log_phoenix_activation
                             PHOENIX_ACTIVE.set(0.0)  # Phoenix reset complete
                             
                             # Log Phoenix activation to story

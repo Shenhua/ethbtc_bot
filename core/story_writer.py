@@ -80,6 +80,14 @@ class StoryWriter:
         self._write_line(timestamp, "🚀", "BOT STARTED", 
                          f"Mode: {mode.upper()} | Wealth: {initial_wealth:.6f} {quote_asset}")
         self._write_line(timestamp, "=" * 80, "", "")
+
+        # Send to Discord if enabled
+        if self.alerter:
+            self.alerter.send(
+                f"🚀 BOT STARTED [{self.symbol}]\n"
+                f"Mode: {mode.upper()} | Wealth: {initial_wealth:.6f} {quote_asset}",
+                level="INFO"
+            )
     
     def check_ath(self, timestamp: datetime, current_wealth: float, quote_asset: str) -> bool:
         """
@@ -126,6 +134,14 @@ class StoryWriter:
         if self.last_regime is not None and current_regime != self.last_regime:
             self._write_line(timestamp, "🔄", f"REGIME SWITCH: {current_regime:<15}", 
                             f"Score: {score:.1f} (Threshold: {threshold:.1f})")
+            
+            # Send to Discord if enabled
+            if self.alerter:
+                self.alerter.send(
+                    f"🔄 REGIME SWITCH [{self.symbol}]\n"
+                    f"{self.last_regime} ➜ {current_regime} (Score: {score:.1f})",
+                    level="WARNING"
+                )
         
         # Track regime for summaries (even if no switch)
         self._track_regime(current_regime)
@@ -185,6 +201,14 @@ class StoryWriter:
         
         self._write_line(timestamp, icon, "DAILY SUMMARY", 
                          f"PnL: {sign}{daily_pnl:.6f} {quote_asset} | Wealth: {current_wealth:.6f} {quote_asset}")
+
+        # Send to Discord if enabled
+        if self.alerter:
+            self.alerter.send(
+                f"📈 DAILY SUMMARY [{self.symbol}]\n"
+                f"PnL: {sign}{daily_pnl:.6f} {quote_asset} | Wealth: {current_wealth:.6f} {quote_asset}",
+                level="INFO"
+            )
     
     def check_and_log_daily(self, timestamp: datetime, daily_pnl: float, 
                           current_wealth: float, quote_asset: str):
