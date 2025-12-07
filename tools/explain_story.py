@@ -1,9 +1,24 @@
 #!/usr/bin/env python3
+"""
+tools/explain_story.py - Backtest Narrative Generator
+
+This script analyzes a backtest result CSV and generates a human-readable "story"
+similar to the live StoryWriter. It highlights regime changes, trades, ATHs,
+and monthly PnL summaries.
+"""
 import pandas as pd
 import argparse
 import sys
 
 def analyze_story(csv_path, adx_threshold=10.0, output_file=None):
+    """
+    Analyzes backtest data and prints a chronological narrative.
+
+    Args:
+        csv_path: Path to the backtest result CSV.
+        adx_threshold: Threshold used for regime switching.
+        output_file: Optional path to save the narrative to a file.
+    """
     output_lines = []
 
     # Helper to print to screen AND buffer for file

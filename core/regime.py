@@ -6,7 +6,18 @@ log = logging.getLogger("regime")
 
 
 def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-    # ... (Calculation logic remains standard, omitted for brevity but assumed present) ...
+    """
+    Calculates the Average Directional Index (ADX) for a given OHLC series.
+
+    Args:
+        high: Series of high prices.
+        low: Series of low prices.
+        close: Series of close prices.
+        period: The period for ADX calculation.
+
+    Returns:
+        pd.Series: The ADX values.
+    """
     # 1. Directional Movement
     plus_dm = high.diff()
     minus_dm = low.diff()
@@ -33,6 +44,16 @@ def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
     """
     Multi-Timeframe Regime Analysis.
     Combines 15m ADX and 1h ADX to form a consensus 'Trend Score'.
+
+    It resamples the 15m data to 30m and 1h intervals, calculates ADX for each,
+    and computes a weighted average score.
+
+    Args:
+        df_15m: DataFrame containing 15-minute OHLC data.
+        adx_period: The period for ADX calculation.
+
+    Returns:
+        pd.Series: A series of consensus trend scores (0-100), aligned to the input index.
     """
     df = df_15m.copy()
     

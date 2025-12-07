@@ -3,9 +3,19 @@ import logging
 import requests
 import json
 from datetime import datetime
+import time
 
 class AlertManager:
+    """
+    Manages sending alerts to external services (Discord, Telegram).
+    """
     def __init__(self, prefix="BOT"):
+        """
+        Initializes the AlertManager.
+
+        Args:
+            prefix: Prefix string for alert messages (e.g. "ETHBTC").
+        """
         self.prefix = prefix
         self.discord_url = os.getenv("DISCORD_WEBHOOK_URL", "")
         self.tg_token = os.getenv("TELEGRAM_TOKEN", "")
@@ -15,7 +25,10 @@ class AlertManager:
     def send(self, message: str, level: str = "INFO"):
         """
         Sends an alert to all configured channels.
-        Levels: INFO, WARNING, ERROR, CRITICAL
+
+        Args:
+            message: The message content.
+            level: Severity level (INFO, WARNING, ERROR, CRITICAL).
         """
         timestamp = datetime.now().strftime("%H:%M:%S")
         formatted_msg = f"[{level}] {self.prefix} ({timestamp}): {message}"
@@ -29,6 +42,13 @@ class AlertManager:
             self._send_telegram(formatted_msg)
 
     def _send_discord(self, text, level):
+        """
+        Sends a message to Discord via Webhook.
+
+        Args:
+            text: Message text.
+            level: Severity level (determines color).
+        """
         colors = {
             "INFO": 3447003,      # Blue
             "WARNING": 16776960,  # Yellow
@@ -56,6 +76,12 @@ class AlertManager:
         self.logger.error("Failed to send Discord alert after retries.")
 
     def _send_telegram(self, text):
+        """
+        Sends a message to Telegram via Bot API.
+
+        Args:
+            text: Message text.
+        """
         url = f"https://api.telegram.org/bot{self.tg_token}/sendMessage"
         payload = {"chat_id": self.tg_chat_id, "text": text}
         for attempt in range(3):

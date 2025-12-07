@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""
+tools/optimize_meta.py - Meta Strategy Optimization
+
+This script performs a grid search over ADX thresholds for the Meta Strategy.
+It takes pre-optimized configurations for Mean Reversion and Trend components,
+and finds the best ADX threshold to switch between them.
+"""
 import sys
 import os
 import argparse
@@ -21,17 +28,34 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s [META-OPT] %(message
 log = logging.getLogger("meta_opt")
 
 def clean_params(params_dict, cls):
-    """Filters dict keys to only those accepted by the dataclass"""
+    """
+    Filters a dictionary to only include keys that are valid fields in the given dataclass.
+
+    Args:
+        params_dict: The dictionary of parameters.
+        cls: The dataclass type to validate against.
+
+    Returns:
+        dict: A filtered dictionary.
+    """
     valid_keys = cls.__annotations__.keys()
     return {k: v for k, v in params_dict.items() if k in valid_keys}
 
 def main():
+    """
+    Main execution loop:
+    1. Loads historical data.
+    2. Loads base configurations for MR and Trend strategies.
+    3. Iterates through candidate ADX thresholds.
+    4. Runs backtest for each threshold.
+    5. Saves results to CSV.
+    """
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", required=True)
-    ap.add_argument("--funding-data")
-    ap.add_argument("--mr-config", required=True, help="Path to best Mean Reversion config")
-    ap.add_argument("--trend-config", required=True, help="Path to best Trend config")
-    ap.add_argument("--out", default="results/opt_meta.csv")
+    ap.add_argument("--data", required=True, help="Path to OHLC data CSV")
+    ap.add_argument("--funding-data", help="Path to funding rate CSV")
+    ap.add_argument("--mr-config", required=True, help="Path to best Mean Reversion config JSON")
+    ap.add_argument("--trend-config", required=True, help="Path to best Trend config JSON")
+    ap.add_argument("--out", default="results/opt_meta.csv", help="Output CSV path")
     args = ap.parse_args()
 
     # 1. Load Data

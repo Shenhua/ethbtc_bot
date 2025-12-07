@@ -2,24 +2,14 @@
 """
 ASCII signal meters for live trading logs.
 
+This module provides tools to visualize the current signal ratio relative to
+trading bands (entry/exit) using ASCII art. It helps in quickly understanding
+the bot's state from the console logs.
+
 Exports
 -------
-- ascii_level_bar(ratio, entry, exitb, width=48, ascii_only=False) -> str
-    Visual meter with landmarks: [-entry ... -exit ... 0 ... +exit ... +entry]
-    Markers: B=buy entry, b=buy exit, 0=zero, s=sell exit, S=sell entry, |=current ratio
-
-- dist_to_buy_sell_bps(ratio, entry, exitb) -> (dist_to_buy_bps, dist_to_sell_bps)
-    Positive distances in bps to the next BUY/SELL entry thresholds. 0 if already inside that zone.
-
-- live_block(current, target, min_val, max_val, width=40, history=None, label="", units="", ascii_only=False) -> str
-    Backwards compatible simple bar + optional sparkline (used elsewhere in your logs).
-
-Notes
------
-- "entry" and "exitb" are positive numbers representing +entry / +exit magnitudes.
-  Negative side thresholds are symmetric: -entry, -exitb.
-- The meter range is chosen to be a bit wider than ±entry so you can see when you're close.
-- Colors are used only if stdout is a TTY; otherwise ASCII-safe output is returned.
+- ascii_level_bar: Generates a visual meter string.
+- dist_to_buy_sell_bps: Calculates distance to trading thresholds in basis points.
 """
 
 from __future__ import annotations
@@ -45,9 +35,19 @@ def _clamp(x: float, lo: float, hi: float) -> float:
 
 def ascii_level_bar(ratio: float, entry: float, exitb: float, width: int = 44) -> str:
     """
-    Visual meter showing buy/sell entries & exits with the current ratio.
+    Generates a visual ASCII meter showing buy/sell entries & exits with the current ratio.
+
     Layout: [-entry.....-exit.....0.....+exit.....+entry]
             markers: B=buy entry, b=buy exit, s=sell exit, S=sell entry, | = current
+
+    Args:
+        ratio: Current trend ratio/deviation.
+        entry: Entry threshold (absolute value).
+        exitb: Exit threshold (absolute value).
+        width: Width of the ASCII bar in characters.
+
+    Returns:
+        str: The ASCII meter string.
     """
     # Key thresholds (symmetric bands)
     neg_entry = -entry
@@ -94,12 +94,21 @@ def ascii_level_bar(ratio: float, entry: float, exitb: float, width: int = 44) -
     return "[" + "".join(bar) + "]"
 
 def dist_to_buy_sell_bps(ratio: float, entry: float, exitb: float) -> Tuple[float, float]:
-    """Return (dist_to_buy_bps, dist_to_sell_bps).
-    
+    """
+    Calculates the distance to the nearest buy and sell entry thresholds in basis points.
+
     - Distance to BUY is how many bps you need to move *down* to reach -entry.
       If already in BUY zone (ratio <= -entry) → 0.0.
     - Distance to SELL is how many bps you need to move *up* to reach +entry.
       If already in SELL zone (ratio >= +entry) → 0.0.
+
+    Args:
+        ratio: Current trend ratio/deviation.
+        entry: Entry threshold (absolute value).
+        exitb: Exit threshold (unused in this calc but kept for interface consistency).
+
+    Returns:
+        Tuple[float, float]: (distance_to_buy_bps, distance_to_sell_bps).
     """
     entry = abs(entry)
     neg_entry = -entry

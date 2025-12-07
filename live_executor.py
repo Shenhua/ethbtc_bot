@@ -1,4 +1,21 @@
 # live_executor.py
+"""
+Live Execution Module for the Trading Bot.
+
+This module is the main entry point for running the trading bot in live or testnet modes (and dry-run).
+It handles:
+- Initialization of exchange adapters (Spot or Futures).
+- Loading and saving of state.
+- Main trading loop:
+    - Fetching market data (klines, prices).
+    - Calculating wealth and position exposure.
+    - Executing strategies (Mean Reversion, Trend, Meta).
+    - Risk management (Drawdown checks, daily limits).
+    - Order execution (Maker/Taker logic).
+    - Metric reporting to Prometheus.
+    - Status reporting via a lightweight HTTP server.
+"""
+
 from __future__ import annotations
 import os, json, time, logging, argparse, math, threading
 from dotenv import load_dotenv
@@ -50,6 +67,12 @@ DECISION_KEYS = (
 )
 
 def reset_trade_decision():
+    """
+    Resets all trade decision metrics to zero.
+
+    This ensures that metrics reflecting the decision for the current bar (e.g., 'exec_buy', 'skip_threshold')
+    are cleared before the next evaluation cycle.
+    """
     for k in DECISION_KEYS:
         try:
             TRADE_DECISION.labels(k).set(0)
@@ -57,11 +80,28 @@ def reset_trade_decision():
             pass
 
 def start_status_server(port: int = 9110):
+    """
+    Starts a lightweight HTTP server in a background thread to serve the bot's current status.
+
+    Args:
+        port: The port number to listen on. Defaults to 9110.
+
+    Returns:
+        function: A closure `update_status(payload: dict = None, **kwargs)` that allows updating
+                  the status dictionary served at the /status endpoint.
+    """
     log = logging.getLogger("live_enhanced")
     _status_lock = Lock()
     _STATUS = {}
 
     def update_status(payload: dict = None, **kwargs) -> None:
+        """
+        Updates the internal status dictionary.
+
+        Args:
+            payload: A dictionary containing status updates.
+            **kwargs: Keyword arguments can also be used for updates.
+        """
         if payload is None:
             payload = kwargs
         with _status_lock:
@@ -93,6 +133,12 @@ def start_status_server(port: int = 9110):
     return update_status
 
 def inc_rejection(reason: str = "error") -> None:
+    """
+    Increments the Prometheus counter for order rejections.
+
+    Args:
+        reason: A string describing the reason for rejection (e.g., "insufficient_balance").
+    """
     try:
         REJECTIONS.labels(reason=reason).inc()
     except Exception:
@@ -105,11 +151,30 @@ log = logging.getLogger("live_enhanced")
 STOP_EVENT = threading.Event()
 
 def last_closed_bar_ts(now_s: int, interval: str) -> int:
+    """
+    Calculates the timestamp of the last closed bar based on the interval.
+
+    Args:
+        now_s: The current timestamp in seconds.
+        interval: The bar interval string (e.g., "15m", "1h").
+
+    Returns:
+        int: The timestamp of the last closed bar.
+    """
     units = {"m":60, "h":3600, "d":86400}
     sec = int(interval[:-1]) * units[interval[-1]]
     return now_s - (now_s % sec) - 1
 
 def load_state(path: str) -> Dict[str, Any]:
+    """
+    Loads the bot's state from a JSON file.
+
+    Args:
+        path: The file path to the state JSON.
+
+    Returns:
+        Dict[str, Any]: The loaded state dictionary, or an empty dict if loading fails.
+    """
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -117,6 +182,13 @@ def load_state(path: str) -> Dict[str, Any]:
         return {}
 
 def save_state(path: str, st: Dict[str, Any]) -> None:
+    """
+    Saves the bot's state to a JSON file atomically.
+
+    Args:
+        path: The file path to save the state to.
+        st: The state dictionary to save.
+    """
     import json, os, errno
     p = Path(path)
     try:
@@ -137,6 +209,14 @@ def save_state(path: str, st: Dict[str, Any]) -> None:
             raise
 
 def _ensure_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp) -> None:
+    """
+    Ensures that the necessary risk state variables exist in the state dictionary.
+
+    Args:
+        state: The state dictionary to update.
+        wealth: The current wealth value to initialize with if missing.
+        ts: The current timestamp for date initialization.
+    """
     if "risk_equity_high" not in state:
         state["risk_equity_high"] = wealth
     if "risk_current_date" not in state:
@@ -151,8 +231,16 @@ def _ensure_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp) -
 def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, cfg) -> None:
     """
     Updates the risk state (High Water Mark, Daily Loss, Max Drawdown).
-    Detects crashes but DOES NOT handle resets (Phoenix Protocol).
+
+    Detects if risk limits (daily loss or max drawdown) have been hit.
+    This function detects crashes but DOES NOT handle resets (Phoenix Protocol).
     Resets are handled in the main execution loop.
+
+    Args:
+        state: The persistent state dictionary.
+        wealth: The current total wealth.
+        ts: The current timestamp.
+        cfg: The application configuration object containing risk parameters.
     """
     risk = cfg.risk
     risk_mode = getattr(risk, "risk_mode", "fixed_basis")
@@ -227,6 +315,12 @@ def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, c
     state["risk_maxdd_hit"] = maxdd_hit
 
 def main():
+    """
+    Main execution loop for the trading bot.
+
+    Parses arguments, initializes clients (Spot/Futures), loads configuration,
+    and enters the infinite trading loop.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--params", required=True)
     ap.add_argument("--mode", choices=["dry","testnet","live"], default="dry")

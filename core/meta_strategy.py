@@ -9,21 +9,43 @@ from core.regime import get_regime_score
 log = logging.getLogger("meta_strategy")
 
 class MetaStrategy:
+    """
+    An Ensemble Strategy that switches between Mean Reversion (accumulating) and Trend Following
+    based on a market regime score (ADX-based).
+
+    When the market is chopping (low ADX), it uses Mean Reversion.
+    When the market is trending (high ADX), it uses Trend Following.
+    """
     def __init__(self, 
                  mr_params: StratParams, 
                  trend_params: TrendParams, 
                  adx_threshold: float = 25.0):
         """
-        Ensemble Strategy.
-        :param adx_threshold: The 'Regime Switch' level. 
-                              ADX < threshold = Mean Reversion.
-                              ADX > threshold = Trend.
+        Initializes the MetaStrategy.
+
+        Args:
+            mr_params: Parameters for the Mean Reversion strategy.
+            trend_params: Parameters for the Trend strategy.
+            adx_threshold: The ADX level that triggers a regime switch.
+                           ADX < threshold -> Mean Reversion
+                           ADX > threshold -> Trend
         """
         self.mr = EthBtcStrategy(mr_params)
         self.trend = TrendStrategy(trend_params)
         self.adx_threshold = adx_threshold
 
     def generate_positions(self, df: pd.DataFrame, funding=None) -> pd.DataFrame:
+        """
+        Generates target positions by combining signals from sub-strategies based on the regime.
+
+        Args:
+            df: OHLC DataFrame.
+            funding: Optional funding rates.
+
+        Returns:
+            pd.DataFrame: DataFrame containing 'target_w' (final weight), 'regime_score',
+                          'regime_state', and individual sub-strategy signals.
+        """
         if isinstance(df, pd.Series): raise ValueError("Need OHLC")
 
         # 1. Generate Sub-Signals

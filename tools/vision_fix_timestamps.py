@@ -1,4 +1,10 @@
+#!/usr/bin/env python3
+"""
+tools/vision_fix_timestamps.py - Fix broken timestamps in CSVs
 
+A utility to repair CSV files where timestamps might have been corrupted (e.g. wrong unit scaling).
+It reconstructs a clean DatetimeIndex based on the filename or arguments and a fixed frequency.
+"""
 import argparse, re
 import pandas as pd
 from datetime import datetime, timezone
@@ -10,7 +16,9 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ----------------------
 def parse_start_from_name(name: str):
-    # try patterns like: ..._2021-01_2025-12_...
+    """
+    Tries to infer start/end dates from filename patterns like ..._2021-01_2025-12_...
+    """
     m = re.search(r'_(\d{4}-\d{2})_(\d{4}-\d{2})_', name)
     if not m: return None, None
     s_ym, e_ym = m.group(1), m.group(2)
@@ -22,6 +30,14 @@ def parse_start_from_name(name: str):
         return None, None
 
 def main():
+    """
+    Main execution loop:
+    1. Reads input CSV.
+    2. Infers or parses start date.
+    3. Generates a new DatetimeIndex based on frequency.
+    4. Overwrites timestamps with clean values.
+    5. Saves to output CSV.
+    """
     ap = argparse.ArgumentParser(description="Fix Binance Vision CSV timestamps that were written with wrong unit scaling.")
     ap.add_argument("--in", dest="inp", required=True, help="Input CSV path")
     ap.add_argument("--out", dest="out", required=True, help="Output CSV path")

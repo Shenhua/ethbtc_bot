@@ -8,10 +8,24 @@ log = logging.getLogger("maker_chase")
 def maker_chase(adapter: ExchangeAdapter, symbol: str, side: str, qty: float, tick: float,
                 max_reprices: int = 3, step_sec: int = 10, stop_event=None) -> float:
     """
-    Aggressive Maker Strategy (Interruptible).
-    
-    :param stop_event: Optional threading.Event or object with is_set() method 
-                       to signal immediate abort (e.g. on shutdown/crash).
+    Executes a 'Maker Chase' strategy to fill an order by placing Post-Only limit orders
+    at the best bid/ask and updating them if the price moves.
+
+    This logic attempts to capture the spread (or at least avoid taker fees) by
+    aggressively re-pricing limit orders.
+
+    Args:
+        adapter: Exchange adapter instance.
+        symbol: Trading pair symbol.
+        side: "BUY" or "SELL".
+        qty: Total quantity to fill.
+        tick: Price tick size (for rounding).
+        max_reprices: Maximum number of times to cancel and replace the order.
+        step_sec: Seconds to wait before checking/re-pricing.
+        stop_event: Optional threading.Event to signal immediate abort (e.g., shutdown).
+
+    Returns:
+        float: Total quantity filled.
     """
     filled_total = 0.0
     remaining_qty = qty

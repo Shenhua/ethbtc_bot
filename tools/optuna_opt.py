@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""
+tools/optuna_opt.py - Legacy Optuna Optimizer (CLI Wrapper)
+
+This is a simpler, wrapper-based optimizer that calls `ethbtc_accum_bot.py backtest`
+as a subprocess for each trial. It is less efficient than `optimizer_cli.py` (which
+imports the logic directly) but demonstrates how to wrap external processes with Optuna.
+
+Note: `optimizer_cli.py` is recommended for serious optimization.
+"""
 from __future__ import annotations
 import argparse, subprocess, json, tempfile, os, sys
 
@@ -13,25 +22,29 @@ except Exception:
     print("This tool requires 'optuna'. Install with: pip install optuna", file=sys.stderr); sys.exit(1)
 
 def run_backtest(data, bnb_data, params_json, start, end, basis_btc=0.16):
+    """
+    Runs a backtest subprocess and parses the output for a score.
+    """
     cmd = [
-        sys.executable, "ethbtc_accum_bot.py", "backtest",
+        sys.executable, "core/ethbtc_accum_bot.py", "backtest",
         "--data", data, "--bnb-data", bnb_data, "--basis-btc", str(basis_btc),
         "--config", params_json, "--start", start, "--end", end
     ]
     p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     out = p.stdout
-    # naive parsing fallback — adapt to your output
+    # naive parsing fallback — adapt to your output structure
     score = 0.0
     for line in out.splitlines():
-        if "final_btc" in line or "wealth" in line.lower():
-            for tok in line.replace(","," ").split():
-                try:
-                    score = float(tok)
-                except Exception:
-                    pass
+        # Heuristic to find the final BTC value in JSON output
+        if '"final_btc":' in line:
+            try:
+                score = float(line.split(":")[1].strip().strip(","))
+            except Exception:
+                pass
     return score
 
 def suggest_params(trial):
+    """Defines the search space."""
     return {
         "trend_kind": trial.suggest_categorical("trend_kind", ["roc","sma"]),
         "trend_lookback": trial.suggest_int("trend_lookback", 20, 360),
@@ -49,7 +62,10 @@ def suggest_params(trial):
     }
 
 def main():
-    ap = argparse.ArgumentParser("optuna optimizer")
+    """
+    Main execution loop.
+    """
+    ap = argparse.ArgumentParser("optuna optimizer (legacy wrapper)")
     ap.add_argument("--data", required=True)
     ap.add_argument("--bnb-data", required=True)
     ap.add_argument("--train-start", required=True)
@@ -63,15 +79,25 @@ def main():
 
     def objective(trial):
         params = suggest_params(trial)
+        # Wrap params in required config structure
+        full_config = {
+            "fees": {"maker_fee": 0.0002, "taker_fee": 0.0004},
+            "strategy": params,
+            "execution": {"interval": "1h"},
+            "risk": {"basis_btc": args.basis_btc}
+        }
+
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
-            json.dump(params, tf); tf.flush()
+            json.dump(full_config, tf); tf.flush()
+            # Run backtest with temp config
             train_score = run_backtest(args.data, args.bnb_data, tf.name, args.train_start, args.train_end, args.basis_btc)
         return train_score
 
     study = optuna.create_study(direction="maximize")
     study.optimize(objective, n_trials=args.trials, n_jobs=1)
 
-    best = suggest_params(study.best_trial)
+    best = suggest_params(study.best_trial) # Re-generate struct from best trial
+
     os.makedirs(os.path.dirname(args.emit_config), exist_ok=True)
     with open(args.emit_config, "w") as f:
         json.dump(best, f, indent=2)

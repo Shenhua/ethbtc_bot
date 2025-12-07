@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+tools/reconcile_pnl_daemon.py - PnL Reconciliation Service
+
+A simple daemon that runs `reconcile_pnl.py` periodically (e.g. every 4 hours).
+This ensures audits happen continuously without manual intervention.
+"""
 import time
 import os
 import sys
@@ -10,6 +16,9 @@ from tools import reconcile_pnl  # type: ignore
 
 
 def main():
+    """
+    Main loop: calls reconcile_pnl.main() periodically.
+    """
     interval_sec = float(os.getenv("PNL_RECONCILE_INTERVAL_SEC", 4 * 60 * 60))
 
     while True:

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
 dust_sweeper.py — Periodic Janitor for Dust Assets.
-Syncs with global MODE:
- - MODE=dry     -> Preview only
- - MODE=testnet -> Execute Sweep (Wet) -> Fails gracefully (Not supported on Testnet)
- - MODE=live    -> Execute Sweep (Wet)
+
+This script scans a Binance Spot account for small "dust" balances (below a
+configurable USD threshold) and converts them to BNB using the Binance
+`dust_transfer` endpoint.
+
+It can run in "dry" mode (preview only) or "wet" mode (execute sweep).
+It respects a whitelist of assets to ignore (e.g. BNB, BTC, and custom list).
 
 Configuration:
  - Reads SWEEPER_IGNORE from .env (e.g. SWEEPER_IGNORE=SHIB,DOGE)
@@ -25,7 +28,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [SWEEPER] %(message)
 log = logging.getLogger("dust_sweeper")
 
 def get_deployment_mode():
-    """Infers the operational mode from the global MODE environment variable."""
+    """
+    Infers the operational mode from the global MODE environment variable.
+
+    Returns:
+        str: "wet" if MODE is 'testnet' or 'live', else "dry".
+    """
     env_mode = os.getenv("MODE", "dry").lower()
     
     if env_mode in ["testnet", "live"]:
@@ -33,6 +41,15 @@ def get_deployment_mode():
     return "dry"
 
 def run_sweep(client, threshold_usd, ignore_list, dry_run=True):
+    """
+    Performs the dust sweep operation.
+
+    Args:
+        client: Authenticated Binance Spot client.
+        threshold_usd: Maximum value in USD to consider as dust.
+        ignore_list: List of assets to exclude from sweeping.
+        dry_run: If True, only lists candidates without executing the swap.
+    """
     mode_label = "DRY" if dry_run else "WET"
     log.info(f"--- Starting Dust Sweep ({mode_label}) ---")
     log.info(f"Ignoring protected assets: {ignore_list}")
@@ -98,6 +115,9 @@ def run_sweep(client, threshold_usd, ignore_list, dry_run=True):
             log.error(f"Sweep failed (Unknown): {e}")
 
 def main():
+    """
+    Main entry point for the dust sweeper.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--mode", choices=["auto", "dry", "wet"], default="auto")
     ap.add_argument("--threshold-usd", type=float, default=5.0)

@@ -5,6 +5,9 @@ import numpy as np
 
 @dataclass
 class TrendParams:
+    """
+    Configuration parameters for the TrendStrategy.
+    """
     # Core Trend Params
     fast_period: int = 50    # e.g. 50-bar EMA
     slow_period: int = 200   # e.g. 200-bar EMA
@@ -37,10 +40,29 @@ class TrendParams:
     gate_roc_threshold: float = 0.0
 
 class TrendStrategy:
-    def __init__(self, p: TrendParams): 
+    """
+    Implements a Trend Following strategy using Moving Averages.
+    """
+    def __init__(self, p: TrendParams):
+        """
+        Initializes the TrendStrategy.
+
+        Args:
+            p: Strategy parameters.
+        """
         self.p = p
 
-    def generate_positions(self, df: pd.DataFrame | pd.Series, funding: pd.Series = None) -> pd.DataFrame:          # Support both Series (just close) and DataFrame (OHLC)
+    def generate_positions(self, df: pd.DataFrame | pd.Series, funding: pd.Series = None) -> pd.DataFrame:
+        """
+        Generates target positions based on trend indicators.
+
+        Args:
+            df: DataFrame containing OHLC data or a Series containing close prices.
+            funding: Optional series of funding rates for filtering entries.
+
+        Returns:
+            pd.DataFrame: DataFrame containing 'target_w' (target weight).
+        """
         if isinstance(df, pd.Series):
             close = df
         else:

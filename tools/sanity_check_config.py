@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-sanity_check_config.py
+tools/sanity_check_config.py - Configuration Validator & Backtester
 
-Run a full backtest over a long dataset with a given config and print summary stats.
+This tool serves two purposes:
+1. Validates that a configuration file (JSON) is correctly structured and loadable.
+2. Runs a "sanity check" backtest using the config against historical data to ensure
+   it produces valid trades and doesn't crash.
 
 Usage example:
-
-    python sanity_check_config.py \
+    python tools/sanity_check_config.py \
         --data data/ETHBTC_15m_full.csv \
-        --config configs/selected_params.json \
+        --config configs/prod_meta_live.json \
         --funding-data data/ETHBTC_funding.csv
 """
 
@@ -42,6 +44,7 @@ from core.config_schema import load_config  # type: ignore
 
 
 def _interval_to_minutes(interval: str) -> int:
+    """Helper to parse interval strings (e.g. '15m' -> 15)."""
     mapping = {
         "1m": 1,
         "3m": 3,
@@ -61,8 +64,14 @@ def _interval_to_minutes(interval: str) -> int:
 
 def build_strategy_from_config(app_cfg, df: pd.DataFrame):
     """
-    app_cfg: config_schema.AppConfig
-    df: OHLC dataframe (with 'close' column and datetime index)
+    Constructs the appropriate strategy object (MR, Trend, or Meta) from the configuration.
+
+    Args:
+        app_cfg: AppConfig object loaded from JSON.
+        df: OHLC DataFrame (required for some strategies).
+
+    Returns:
+        Strategy instance.
     """
     strat_cfg = app_cfg.strategy
     exec_cfg = app_cfg.execution
@@ -145,6 +154,9 @@ def build_strategy_from_config(app_cfg, df: pd.DataFrame):
 
 
 def load_funding_series(path: Optional[str], ref_index: pd.DatetimeIndex) -> Optional[pd.Series]:
+    """
+    Loads funding rates from CSV and aligns them to the main data index.
+    """
     if not path:
         return None
     f_df = pd.read_csv(path)
@@ -159,6 +171,9 @@ def load_funding_series(path: Optional[str], ref_index: pd.DatetimeIndex) -> Opt
 
 
 def main():
+    """
+    Main entry point.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="Path to OHLC CSV (vision format).")
     ap.add_argument("--config", required=True, help="JSON config file (nested or legacy flat).")

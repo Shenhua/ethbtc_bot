@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""
+tools/multi_interval_summary.py - Compare Optimization Runs
+
+This script ingests CSV results from multiple Optuna optimization runs (e.g.
+one for 15m candles, one for 1h candles) and produces a comparative summary.
+It calculates metrics for the "elite" subset of trials (top N%) to estimate
+which interval/configuration is most robust.
+"""
 from __future__ import annotations
 
 import argparse, json
@@ -11,11 +19,22 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ----------------------
 
 def load_runs(label: str, path: str) -> pd.DataFrame:
+    """Load an optimization result CSV and tag it."""
     df = pd.read_csv(path)
     df["__interval"] = label
     return df
 
 def summarize_interval(df: pd.DataFrame, top_quantile: float = 0.2) -> dict:
+    """
+    Summarize statistics for the top-performing trials in a dataset.
+
+    Args:
+        df: DataFrame containing trial results.
+        top_quantile: Fraction of top results to include (e.g., 0.2 for top 20%).
+
+    Returns:
+        dict: Summary statistics (mean scores, returns, etc. for elite trials).
+    """
     if "robust_score" not in df.columns:
         raise ValueError("Expected 'robust_score' in Optuna CSV.")
     
@@ -44,6 +63,9 @@ def summarize_interval(df: pd.DataFrame, top_quantile: float = 0.2) -> dict:
     }
 
 def main():
+    """
+    Main entry point. Parses args, loads runs, computes summaries, and prints/saves results.
+    """
     ap = argparse.ArgumentParser(
         description="Compare Optuna runs for multiple intervals (15m, 30m, 1h, ...)."
     )

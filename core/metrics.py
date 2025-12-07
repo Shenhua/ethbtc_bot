@@ -1,4 +1,11 @@
 # core/metrics.py
+"""
+Prometheus Metrics Registry.
+
+This module defines all the Prometheus metrics (Counters, Gauges, Summaries) used
+for observability. It also provides helper functions to update groups of metrics
+atomically or logically.
+"""
 from prometheus_client import Counter, Gauge, Summary, start_http_server, REGISTRY
 import threading
 from http.server import HTTPServer
@@ -66,6 +73,10 @@ PHOENIX_ACTIVE = Gauge("phoenix_active", "Phoenix Protocol Status: 1=Waiting for
 def start_metrics_server(port: int, story_file: str = None) -> None:
     """
     Start Prometheus metrics HTTP server with optional /story endpoint.
+
+    Args:
+        port: Port to listen on.
+        story_file: Path to the story text file.
     """
     if story_file:
         # Use custom handler that serves both /metrics and /story
@@ -82,6 +93,14 @@ def start_metrics_server(port: int, story_file: str = None) -> None:
         start_http_server(port)
 
 def mark_signal_metrics(ratio: float, dist_buy: float, dist_sell: float) -> None:
+    """
+    Updates signal-related metrics.
+
+    Args:
+        ratio: Current trend ratio/deviation.
+        dist_buy: Distance to buy threshold (bps).
+        dist_sell: Distance to sell threshold (bps).
+    """
     SIGNAL_RATIO.set(ratio)
     DIST_TO_BUY_BPS.set(dist_buy)
     DIST_TO_SELL_BPS.set(dist_sell)
@@ -91,14 +110,32 @@ def mark_signal_metrics(ratio: float, dist_buy: float, dist_sell: float) -> None
         pass
 
 def mark_gate(open_: bool) -> None:
+    """
+    Updates gate status metrics.
+
+    Args:
+        open_: True if gate is OPEN, False if CLOSED.
+    """
     GATE_STATE.labels("open").set(1.0 if open_ else 0.0)
     GATE_STATE.labels("closed").set(0.0 if open_ else 1.0)
 
 def mark_zone(zone: str) -> None:
+    """
+    Updates the current signal zone metric.
+
+    Args:
+        zone: "buy_band", "sell_band", or "neutral".
+    """
     for z in ("buy_band", "sell_band", "neutral"):
         SIGNAL_ZONE.labels(z).set(1.0 if z == zone else 0.0)
 
 def mark_decision(kind: str) -> None:
+    """
+    Updates the trade decision metric for the current bar.
+
+    Args:
+        kind: Decision string (e.g., "exec_buy", "skip_threshold").
+    """
     all_kinds = [
         "exec_buy", "exec_sell", "skip_threshold", "skip_balance", 
         "skip_min_notional", "skip_cooldown", "skip_gate_closed", 
@@ -108,14 +145,34 @@ def mark_decision(kind: str) -> None:
         TRADE_DECISION.labels(k).set(1.0 if k == kind else 0.0)
 
 def mark_risk_mode(active_mode: str) -> None:
+    """
+    Updates the risk mode metric.
+
+    Args:
+        active_mode: "fixed_basis" or "dynamic".
+    """
     for mode in ("fixed_basis", "dynamic"):
         RISK_MODE.labels(mode=mode).set(1.0 if mode == active_mode else 0.0)
 
 def mark_risk_flags(*, daily_limit_hit: bool, maxdd_hit: bool) -> None:
+    """
+    Updates risk flag metrics.
+
+    Args:
+        daily_limit_hit: True if daily loss limit reached.
+        maxdd_hit: True if max drawdown reached.
+    """
     RISK_FLAGS.labels(kind="daily_limit_hit").set(1.0 if daily_limit_hit else 0.0)
     RISK_FLAGS.labels(kind="maxdd_hit").set(1.0 if maxdd_hit else 0.0)
 
 def set_delta_metrics(delta_w: float, delta_base: float) -> None:
+    """
+    Updates planned delta metrics.
+
+    Args:
+        delta_w: Change in weight.
+        delta_base: Change in base asset quantity.
+    """
     DELTA_W.set(delta_w)
     DELTA_BASE.set(delta_base)
 
@@ -127,12 +184,34 @@ def snapshot_wealth_balances(
     quote_asset: str,
     base_asset: str
 ) -> None:
+    """
+    Updates wealth and balance snapshots.
+
+    Args:
+        wealth_total: Total portfolio value.
+        price_mid: Mid price.
+        quote_val: Quote asset balance.
+        base_val: Base asset balance.
+        quote_asset: Symbol for quote asset.
+        base_asset: Symbol for base asset.
+    """
     WEALTH_TOTAL.set(wealth_total)
     PRICE_MID.set(price_mid)
     BAL_FREE.labels(quote_asset.lower()).set(quote_val)
     BAL_FREE.labels(base_asset.lower()).set(base_val)
 
 def mark_trade_readiness(*, zone_ok: bool, gate_ok: bool, delta_ok: bool, risk_ok: bool, balance_ok: bool, size_ok: bool) -> None:
+    """
+    Updates trade readiness breakdown metrics.
+
+    Args:
+        zone_ok: Signal in trade zone.
+        gate_ok: Gate is open.
+        delta_ok: Delta > threshold.
+        risk_ok: Risk checks passed.
+        balance_ok: Sufficient balance.
+        size_ok: Size > min notional.
+    """
     ready = all([zone_ok, gate_ok, delta_ok, risk_ok, balance_ok, size_ok])
     TRADE_READY.set(1.0 if ready else 0.0)
     TRADE_READY_COND.labels(cond="zone_ok").set(1.0 if zone_ok else 0.0)
@@ -143,7 +222,20 @@ def mark_trade_readiness(*, zone_ok: bool, gate_ok: bool, delta_ok: bool, risk_o
     TRADE_READY_COND.labels(cond="size_ok").set(1.0 if size_ok else 0.0)
 
 def mark_funding_rate(rate: float) -> None:
+    """
+    Updates funding rate metric.
+
+    Args:
+        rate: Funding rate percentage.
+    """
     FUNDING_RATE.set(rate)
 
 def mark_asset_price_usd(asset: str, price: float) -> None:
+    """
+    Updates approx USD price for an asset.
+
+    Args:
+        asset: Asset symbol.
+        price: Price in USD.
+    """
     PRICE_ASSET_USD.labels(asset=asset.lower()).set(price)

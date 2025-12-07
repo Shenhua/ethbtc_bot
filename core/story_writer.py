@@ -1,7 +1,9 @@
 """
 core/story_writer.py - Real-time Trading Narrative Logger
 
-Tracks and logs key trading events to create a human-readable story file.
+This module handles the creation and maintenance of a "Story Log" - a human-readable,
+chronological narrative of the bot's activities. It tracks wealth, PnL, trades,
+and significant events like regime switches or risk triggers.
 """
 import os
 from datetime import datetime
@@ -9,16 +11,19 @@ from typing import Optional
 
 
 class StoryWriter:
-    """Writes real-time trading events to a story log file."""
+    """
+    Writes real-time trading events to a persistent text file (story log).
+    Also calculates and reports periodic summaries (Daily, Weekly, Monthly, Annual).
+    """
     
     def __init__(self, filepath: str, symbol: str = "ASSET", alerter=None):
         """
-        Initialize the story writer.
+        Initialize the StoryWriter.
         
         Args:
-            filepath: Path to the story log file
-            symbol: Trading symbol for display
-            alerter: Optional AlertManager instance for Discord/Telegram integration
+            filepath: Path to the output text file.
+            symbol: Trading symbol (e.g. "ETHBTC") for display purposes.
+            alerter: Optional AlertManager instance to forward critical events to chat apps.
         """
         self.filepath = filepath
         self.symbol = symbol
@@ -61,7 +66,15 @@ class StoryWriter:
         os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", exist_ok=True)
         
     def _write_line(self, timestamp: datetime, icon: str, event: str, details: str = ""):
-        """Write a formatted line to the story file."""
+        """
+        Internal helper to write a formatted line to the log file.
+
+        Args:
+            timestamp: Event time.
+            icon: Emoji icon for the event type.
+            event: Short event title.
+            details: Detailed description.
+        """
         ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
         line = f"{ts_str} | {icon} {event:<40} | {details}\n"
         
@@ -73,7 +86,15 @@ class StoryWriter:
             print(f"[StoryWriter] Warning: Failed to write to {self.filepath}: {e}")
     
     def log_startup(self, timestamp: datetime, initial_wealth: float, mode: str, quote_asset: str):
-        """Log bot startup."""
+        """
+        Logs the bot startup event.
+
+        Args:
+            timestamp: Time of startup.
+            initial_wealth: Starting capital.
+            mode: Operational mode (dry, testnet, live).
+            quote_asset: Quote currency symbol.
+        """
         self.peak_wealth = initial_wealth
         self.last_wealth = initial_wealth
         
@@ -83,10 +104,16 @@ class StoryWriter:
     
     def check_ath(self, timestamp: datetime, current_wealth: float, quote_asset: str) -> bool:
         """
-        Check for All-Time High and log if detected.
-        
+        Checks if the current wealth is a new All-Time High (ATH).
+        Logs the event if a significant new high is reached.
+
+        Args:
+            timestamp: Current time.
+            current_wealth: Current total wealth.
+            quote_asset: Quote currency symbol.
+
         Returns:
-            True if new ATH was detected
+            bool: True if a new ATH was detected and logged.
         """
         # BUG FIX: If peak_wealth is 0 (initial state), just set it and return
         if self.peak_wealth <= 1e-9:
@@ -117,7 +144,15 @@ class StoryWriter:
     
     def check_regime_switch(self, timestamp: datetime, score: float, 
                             threshold: float, strategy_type: str = "meta"):
-        """Check for regime switch and log if detected."""
+        """
+        Checks for a change in market regime (Trend vs Mean Reversion) and logs it.
+
+        Args:
+            timestamp: Current time.
+            score: Current trend score.
+            threshold: Threshold for regime change.
+            strategy_type: Strategy name (only 'meta' is logged).
+        """
         if strategy_type != "meta":
             return  # Only log for meta strategy
         
@@ -134,7 +169,17 @@ class StoryWriter:
     
     def log_trade(self, timestamp: datetime, side: str, quantity: float, 
                   price: float, base_asset: str, quote_asset: str):
-        """Log a trade execution."""
+        """
+        Logs a trade execution.
+
+        Args:
+            timestamp: Time of trade.
+            side: "BUY" or "SELL".
+            quantity: Amount traded.
+            price: Execution price.
+            base_asset: Base currency symbol.
+            quote_asset: Quote currency symbol.
+        """
         icon = "🟢" if side == "BUY" else "🔴"
         notional = abs(quantity * price)
         
@@ -145,7 +190,13 @@ class StoryWriter:
         self._increment_trade_count()
     
     def log_safety_breaker(self, timestamp: datetime, drawdown_pct: float):
-        """Log safety breaker trip."""
+        """
+        Logs a risk management trigger (max drawdown hit).
+
+        Args:
+            timestamp: Event time.
+            drawdown_pct: Current drawdown as a percentage (0.0-1.0).
+        """
         if not self.is_halted:
             self._write_line(timestamp, "🚨", "SAFETY BREAKER TRIPPED", 
                              f"Drawdown: -{drawdown_pct:.1%} | Trading HALTED")
@@ -162,7 +213,14 @@ class StoryWriter:
     
     def log_phoenix_activation(self, timestamp: datetime, score: float, 
                                cooldown_days: float):
-        """Log Phoenix Protocol activation (reset)."""
+        """
+        Logs the activation of the Phoenix Protocol (auto-reset after crash).
+
+        Args:
+            timestamp: Event time.
+            score: Current trend score confirming recovery condition.
+            cooldown_days: Days passed since crash.
+        """
         if self.is_halted:
             self._write_line(timestamp, "🔥", "PHOENIX PROTOCOL ACTIVATED", 
                              f"Score: {score:.1f} | Cooldown: {cooldown_days:.1f}d | Resuming Trading")
@@ -179,7 +237,15 @@ class StoryWriter:
     
     def log_daily_summary(self, timestamp: datetime, daily_pnl: float, 
                           current_wealth: float, quote_asset: str):
-        """Log daily summary (call once per day)."""
+        """
+        Writes a daily summary line.
+
+        Args:
+            timestamp: Time of summary.
+            daily_pnl: Profit/Loss for the day.
+            current_wealth: Total wealth at end of day.
+            quote_asset: Quote currency symbol.
+        """
         icon = "📈" if daily_pnl >= 0 else "📉"
         sign = "+" if daily_pnl >= 0 else ""
         
@@ -188,7 +254,15 @@ class StoryWriter:
     
     def check_and_log_daily(self, timestamp: datetime, daily_pnl: float, 
                           current_wealth: float, quote_asset: str):
-        """Check if day changed and log summary."""
+        """
+        Checks if a new day has started and logs the daily summary if needed.
+
+        Args:
+            timestamp: Current time.
+            daily_pnl: PnL for the completed day.
+            current_wealth: Current wealth.
+            quote_asset: Quote currency symbol.
+        """
         if self.last_daily_report_date and self.last_daily_report_date.day == timestamp.day:
             return
 
@@ -202,16 +276,24 @@ class StoryWriter:
         self.last_daily_report_date = timestamp
 
     def log_custom(self, timestamp: datetime, icon: str, event: str, details: str = ""):
-        """Log a custom event."""
+        """
+        Logs a custom, arbitrary event.
+
+        Args:
+            timestamp: Event time.
+            icon: Emoji icon.
+            event: Event title.
+            details: Event description.
+        """
         self._write_line(timestamp, icon, event, details)
     
     def _increment_trade_count(self):
-        """Increment trade counters for all periods."""
+        """Internal: Increments trade counters for all tracking periods."""
         for period in ['daily', 'weekly', 'monthly', 'annual']:
             self.period_trade_count[period] += 1
     
     def _track_regime(self, regime: str):
-        """Track regime for weekly/monthly stats."""
+        """Internal: Tracks regime duration for weekly/monthly stats."""
         if regime == "TREND":
             self.period_regime_counts['weekly_trend'] += 1
             self.period_regime_counts['monthly_trend'] += 1
@@ -220,7 +302,7 @@ class StoryWriter:
             self.period_regime_counts['monthly_mr'] += 1
     
     def _reset_period_stats(self, period: str, current_wealth: float):
-        """Reset stats for a given period."""
+        """Internal: Resets statistics for a specific period."""
         if period in self.period_start_wealth:
             self.period_start_wealth[period] = current_wealth
             self.period_trade_count[period] = 0
@@ -233,7 +315,14 @@ class StoryWriter:
             self.period_regime_counts['monthly_mr'] = 0
     
     def check_and_log_weekly(self, timestamp: datetime, current_wealth: float, quote_asset: str):
-        """Check if Sunday (week end) and log weekly summary."""
+        """
+        Checks for end of week (Sunday) and logs weekly summary.
+
+        Args:
+            timestamp: Current time.
+            current_wealth: Current wealth.
+            quote_asset: Quote currency symbol.
+        """
         # Check if it's Sunday (weekday() returns 6 for Sunday)
         if timestamp.weekday() != 6:
             return
@@ -279,7 +368,14 @@ class StoryWriter:
         self.last_weekly_report_date = timestamp
     
     def check_and_log_monthly(self, timestamp: datetime, current_wealth: float, quote_asset: str):
-        """Check if 1st of month and log monthly summary."""
+        """
+        Checks for start of new month and logs monthly summary.
+
+        Args:
+            timestamp: Current time.
+            current_wealth: Current wealth.
+            quote_asset: Quote currency symbol.
+        """
         # Check if it's the 1st of the month
         if timestamp.day != 1:
             return
@@ -326,7 +422,14 @@ class StoryWriter:
         self.last_monthly_report_date = timestamp
     
     def check_and_log_annual(self, timestamp: datetime, current_wealth: float, quote_asset: str):
-        """Check if Jan 1st and log annual summary."""
+        """
+        Checks for start of new year and logs annual summary.
+
+        Args:
+            timestamp: Current time.
+            current_wealth: Current wealth.
+            quote_asset: Quote currency symbol.
+        """
         # Check if it's January 1st
         if timestamp.month != 1 or timestamp.day != 1:
             return

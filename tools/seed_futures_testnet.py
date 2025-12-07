@@ -1,22 +1,19 @@
 #!/usr/bin/env python3
 """
-Seed a small Futures TESTNET position using binance-connector.
+tools/seed_futures_testnet.py - Futures Testnet Seeder
+
+Manually opens a position on the Binance Futures Testnet to test connectivity,
+permissions, and state tracking logic.
 
 Usage:
-  pip install binance-connector
   export FUTURES_TESTNET_KEY=YOUR_TESTNET_KEY
   export FUTURES_TESTNET_SECRET=YOUR_TESTNET_SECRET
 
   # Open a LONG position (buy 0.01 BTC worth of contracts)
-  python seed_futures_testnet.py --symbol BTCUSDT --side BUY --qty 0.01
+  python tools/seed_futures_testnet.py --symbol BTCUSDT --side BUY --qty 0.01
 
   # Open a SHORT position (sell 0.01 BTC worth of contracts)
-  python seed_futures_testnet.py --symbol BTCUSDT --side SELL --qty 0.01
-
-Notes:
-- For BTCUSDT, quantity is in BTC units (base asset).
-- Checks LOT_SIZE.stepSize and MIN_NOTIONAL, rounds qty down.
-- Default base URL is Futures TESTNET: https://testnet.binancefuture.com
+  python tools/seed_futures_testnet.py --symbol BTCUSDT --side SELL --qty 0.01
 """
 import os
 import sys
@@ -37,7 +34,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEF_BASE_URL = "https://testnet.binancefuture.com"
 
 def round_to_step(qty: float, step_size: float) -> float:
-    """Floor quantity to the nearest multiple of step_size."""
+    """
+    Floors a quantity to the nearest multiple of step_size.
+
+    Args:
+        qty: Input quantity.
+        step_size: Step size filter.
+
+    Returns:
+        float: Rounded quantity.
+    """
     if not step_size:
         return float(qty)
     q = Decimal(str(qty))
@@ -45,7 +51,16 @@ def round_to_step(qty: float, step_size: float) -> float:
     return float((q // s) * s)
 
 def fetch_filters(c: UMFutures, symbol: str) -> Tuple[float, float]:
-    """Return (step_size, min_notional) using exchangeInfo."""
+    """
+    Fetches LOT_SIZE and MIN_NOTIONAL filters for a symbol.
+
+    Args:
+        c: UMFutures client.
+        symbol: Trading symbol.
+
+    Returns:
+        tuple: (step_size, min_notional)
+    """
     ex = c.exchange_info()
     sym = None
     for s in ex["symbols"]:
@@ -68,6 +83,9 @@ def fetch_filters(c: UMFutures, symbol: str) -> Tuple[float, float]:
     return step_size, min_notional
 
 def main():
+    """
+    Main function. Parses args, connects to Testnet, checks filters, and places order.
+    """
     ap = argparse.ArgumentParser(description="Place a MARKET order on Binance Futures TESTNET.")
     ap.add_argument("--symbol", default="BTCUSDT", help="Trading pair symbol, e.g., BTCUSDT")
     ap.add_argument("--side", choices=["BUY","SELL"], default="BUY", help="Order side (BUY=long, SELL=short)")

@@ -1,4 +1,16 @@
 #!/usr/bin/env python3
+"""
+tools/optimizer_cli.py - Main Strategy Optimizer
+
+This script uses Optuna to optimize hyperparameters for the Mean Reversion (EthBtcStrategy).
+It supports training on a historical window and testing on a subsequent "out-of-sample" window
+to ensure robustness.
+
+Features:
+- Optimization of lookback, volatility window, bands, cooldown, etc.
+- Walk-forward validation concept (train/test split).
+- Custom objective function penalizing inactivity and overfitting.
+"""
 from __future__ import annotations
 
 import sys
@@ -34,7 +46,13 @@ optuna.logging.set_verbosity(optuna.logging.INFO)
 
 def suggest_params(trial):
     """
-    Define the search space for Optuna.
+    Define the search space for Optuna (Mean Reversion).
+
+    Args:
+        trial: Optuna Trial object.
+
+    Returns:
+        StratParams: Sampled parameters.
     """
     # --- THE SHORTING SWITCH ---
     # Choices depend on global LONG_ONLY_MODE
@@ -81,6 +99,10 @@ def suggest_params(trial):
     )
 
 class Objective:
+    """
+    Optuna Objective for Mean Reversion Strategy.
+    Simulates strategy on Training set, then validates on Test set.
+    """
     def __init__(self, args, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test):
         self.args = args
         self.fee = fee
@@ -92,6 +114,10 @@ class Objective:
         self.funding_test = funding_test
 
     def __call__(self, trial):
+        """
+        Executes a single optimization trial.
+        Returns the 'robust_score' which balances Profit, Activity, and Generalization.
+        """
         t0 = time.time()
         tid = trial.number
         
@@ -166,6 +192,9 @@ class Objective:
             return -1e9
 
 def main():
+    """
+    Main CLI entry point for Mean Reversion Optimization.
+    """
     ap = argparse.ArgumentParser(description="Bayesian Optimizer (Optuna)")
     ap.add_argument("--data", required=True)
     ap.add_argument("--funding-data", help="Path to funding rates CSV")

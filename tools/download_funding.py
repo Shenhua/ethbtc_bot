@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
 download_funding.py — Downloads historical Funding Rates from Binance Futures.
+
+This script fetches historical funding rate data from the Binance Futures API
+and saves it to a CSV file.
+
 Usage:
   python download_funding.py --symbol ETHUSDT --start 2023-01-01 --end 2024-12-31
 """
@@ -20,12 +24,30 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 API_URL = "https://fapi.binance.com/fapi/v1/fundingRate"
 
 def get_timestamp(dt_str):
-    """Convert YYYY-MM-DD to milliseconds timestamp"""
+    """
+    Converts a date string (YYYY-MM-DD) to a milliseconds timestamp.
+
+    Args:
+        dt_str: Date string.
+
+    Returns:
+        int: Timestamp in milliseconds.
+    """
     dt = pd.to_datetime(dt_str, utc=True)
     return int(dt.timestamp() * 1000)
 
 def fetch_chunk(symbol, start_ts, end_ts):
-    """Fetch one chunk of 1000 records"""
+    """
+    Fetches one chunk of 1000 funding rate records from Binance.
+
+    Args:
+        symbol: Futures symbol.
+        start_ts: Start timestamp (ms).
+        end_ts: End timestamp (ms).
+
+    Returns:
+        list: List of funding rate dictionaries.
+    """
     params = {
         "symbol": symbol,
         "startTime": start_ts,
@@ -42,6 +64,9 @@ def fetch_chunk(symbol, start_ts, end_ts):
         return []
 
 def main():
+    """
+    Main function to run the downloader.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--symbol", required=True, help="Futures Symbol (e.g. ETHUSDT, BNBUSDT)")
     ap.add_argument("--start", required=True, help="Start Date (YYYY-MM-DD)")
@@ -55,8 +80,6 @@ def main():
     if not args.out:
         fname = f"{args.symbol}_funding_{args.start}_{args.end}_funding.csv"
         args.out = os.path.join(out_dir, fname)
-
-    df.to_csv(args.out, index=False)
     
     start_ms = get_timestamp(args.start)
     end_ms = get_timestamp(args.end)

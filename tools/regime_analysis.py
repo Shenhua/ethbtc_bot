@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+"""
+tools/regime_analysis.py - Performance by Regime
+
+This script segments a backtest's performance based on the market regime (ADX score).
+It helps identify if a strategy performs better in low, medium, or high volatility/trend environments.
+"""
 from __future__ import annotations
 
 import sys, os, argparse
@@ -14,6 +20,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.regime import get_regime_score  
 
 def load_ohlc(path: str) -> pd.DataFrame:
+    """Load OHLC CSV into DataFrame."""
     df = pd.read_csv(path)
     if "time" in df.columns:
         df["time"] = pd.to_datetime(df["time"], utc=True, format="mixed")
@@ -22,9 +29,21 @@ def load_ohlc(path: str) -> pd.DataFrame:
     return df[["open", "high", "low", "close"]]
 
 def compute_regime(df_ohlc: pd.DataFrame) -> pd.Series:
+    """Calculate regime score from OHLC."""
     return get_regime_score(df_ohlc)
 
 def analyze_by_regime(backtest_csv: str, ohlc_csv: str, adx_thresholds=(20, 30)):
+    """
+    Groups backtest performance by ADX buckets (low, medium, high).
+
+    Args:
+        backtest_csv: Path to backtest result CSV.
+        ohlc_csv: Path to original OHLC data.
+        adx_thresholds: Tuple (low_cutoff, high_cutoff).
+
+    Returns:
+        pd.DataFrame: Summary table of Return and MaxDD per bucket.
+    """
     bt = pd.read_csv(backtest_csv, index_col=0, parse_dates=True)
     ohlc = load_ohlc(ohlc_csv)
     ohlc = ohlc.reindex(bt.index).ffill()
@@ -66,6 +85,9 @@ def analyze_by_regime(backtest_csv: str, ohlc_csv: str, adx_thresholds=(20, 30))
     return pd.DataFrame(results).set_index("regime")
 
 def main():
+    """
+    Main entry point.
+    """
     ap = argparse.ArgumentParser(description="Analyze backtest performance by ADX regime.")
     ap.add_argument("--backtest-csv", required=True, help="CSV from cmd_backtest --out.")
     ap.add_argument("--ohlc-csv", required=True, help="Original OHLC CSV (vision format).")

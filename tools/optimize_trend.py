@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""
+tools/optimize_trend.py - Trend Strategy Optimizer (Static & Walk-Forward)
+
+This script optimizes the TrendStrategy parameters using Optuna.
+It supports two modes:
+1. Static Optimization: Runs on a fixed train/test split.
+2. Walk-Forward Optimization (WFO): Simulates a rolling window optimization process
+   to estimate real-world performance drift.
+
+Supports Futures (shorting) via the --allow-shorts flag.
+"""
 from __future__ import annotations
 import sys, os
 
@@ -24,7 +35,16 @@ log = logging.getLogger("optimizer")
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 def suggest_params(trial, allow_shorts=False):
-    """Search Space for Trend Strategy"""
+    """
+    Defines the hyperparameter search space for the Trend Strategy.
+
+    Args:
+        trial: Optuna Trial object.
+        allow_shorts: Whether to explore short-enabled configurations.
+
+    Returns:
+        TrendParams: A parameter object populated with suggested values.
+    """
     fast = trial.suggest_int("fast_period", 10, 200, step=10)
     slow = trial.suggest_int("slow_period", 40, 400, step=20)
     ma_type = trial.suggest_categorical("ma_type", ["ema", "sma"])
@@ -47,13 +67,32 @@ def suggest_params(trial, allow_shorts=False):
     )
 
 class Objective:
+    """
+    Optuna Objective class to evaluate a single trial.
+    """
     def __init__(self, fee, train_close, funding_train, allow_shorts=False):
+        """
+        Args:
+            fee: FeeParams object.
+            train_close: Series of close prices for training.
+            funding_train: Series of funding rates for training.
+            allow_shorts: Whether to allow short positions.
+        """
         self.fee = fee
         self.train_close = train_close
         self.funding_train = funding_train
         self.allow_shorts = allow_shorts
 
     def __call__(self, trial):
+        """
+        Executes the trial.
+
+        Args:
+            trial: Optuna Trial object.
+
+        Returns:
+            float: The objective value (profit score) to maximize.
+        """
         try:
             p = suggest_params(trial, self.allow_shorts)
             if p.fast_period >= p.slow_period:
@@ -91,7 +130,21 @@ class Objective:
             return -1e9
 
 def run_slice_optimization(args, fee, df, start_idx, end_idx, test_end_idx, funding_series):
-    """Runs optimization for a specific window slice"""
+    """
+    Runs optimization for a specific window slice (WFO helper).
+
+    Args:
+        args: Command line arguments.
+        fee: FeeParams.
+        df: Dataframe containing OHLC data.
+        start_idx: Start index of the training window.
+        end_idx: End index of the training window (and start of test).
+        test_end_idx: End index of the test window.
+        funding_series: Funding rate series.
+
+    Returns:
+        dict: Result dictionary containing OOS performance metrics.
+    """
     train_close = df["close"].iloc[start_idx:end_idx]
     test_close = df["close"].iloc[end_idx:test_end_idx]
     
@@ -152,6 +205,10 @@ def run_slice_optimization(args, fee, df, start_idx, end_idx, test_end_idx, fund
     }
 
 def main():
+    """
+    Main execution loop.
+    Parses arguments, loads data, and triggers either WFO or Static optimization.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True)
     ap.add_argument("--funding-data")

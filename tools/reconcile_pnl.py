@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""
+tools/reconcile_pnl.py - Balance Auditor
+
+This script compares the bot's internal state (session_start_W) against the
+actual wallet balance on Binance. It calculates the divergence and sends alerts
+if the discrepancy is significant (indicating missed fills, fees drift, or manual intervention).
+"""
 import os
 import sys
 import json
@@ -16,6 +23,13 @@ except ImportError:
 load_dotenv()
 
 def main():
+    """
+    Main audit loop:
+    1. Reads environment config.
+    2. Loads bot state file.
+    3. Fetches real exchange balances.
+    4. Computes divergence and alerts if needed.
+    """
     # 1. Environment & Configuration
     symbol = os.getenv("SYMBOL", "ETHBTC")
     mode = os.getenv("MODE", "testnet")

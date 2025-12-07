@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-Seed a small Spot TESTNET position using binance-connector (version-agnostic init).
+tools/seed_testnet_order.py - Spot Testnet Seeder
+
+Manually places a Spot market order on the Binance Testnet to seed the account with assets
+or test permissions. It handles different versions of the `binance-connector` library
+and validates order parameters against exchange filters (LOT_SIZE, MIN_NOTIONAL).
 
 Usage:
-  pip install binance-connector
   export BINANCE_API_KEY=YOUR_TESTNET_KEY
   export BINANCE_API_SECRET=YOUR_TESTNET_SECRET
 
   # Buy 0.02 ETH on ETHBTC (spends BTC) on Spot TESTNET
-  python seed_testnet_order.py --symbol ETHBTC --side BUY --qty 0.02
-
-Notes:
-- For ETHBTC, quantity is in ETH units (base asset).
-- Checks LOT_SIZE.stepSize and MIN_NOTIONAL/NOTIONAL, rounds qty down, ensures notional >= min.
-- Default base URL is Spot TESTNET: https://testnet.binance.vision
+  python tools/seed_testnet_order.py --symbol ETHBTC --side BUY --qty 0.02
 """
 import os
 import sys
@@ -35,7 +33,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEF_BASE_URL = "https://testnet.binance.vision"
 
 def make_client(api_key: str, api_secret: str, base_url: str) -> Spot:
-    """Construct Spot client across connector versions (key/secret vs api_key/api_secret)."""
+    """
+    Constructs a Spot client, handling version differences in the connector library.
+
+    Args:
+        api_key: Binance API Key.
+        api_secret: Binance API Secret.
+        base_url: Base URL for the API (Testnet or Mainnet).
+
+    Returns:
+        Spot: Authenticated client instance.
+    """
     params = inspect.signature(Spot.__init__).parameters
     if "key" in params and "secret" in params:
         return Spot(key=api_key, secret=api_secret, base_url=base_url)
@@ -49,7 +57,16 @@ def make_client(api_key: str, api_secret: str, base_url: str) -> Spot:
             raise SystemExit(f"Unsupported binance-connector Spot signature: {params}") from te
 
 def round_to_step(qty: float, step_size: float) -> float:
-    """Floor quantity to the nearest multiple of step_size."""
+    """
+    Floors quantity to the nearest multiple of step_size.
+
+    Args:
+        qty: Input quantity.
+        step_size: Step size filter.
+
+    Returns:
+        float: Rounded quantity.
+    """
     if not step_size:
         return float(qty)
     q = Decimal(str(qty))
@@ -58,7 +75,16 @@ def round_to_step(qty: float, step_size: float) -> float:
     return float((q // s) * s)
 
 def fetch_filters(c: Spot, symbol: str) -> Tuple[float, float]:
-    """Return (step_size, min_notional) using exchangeInfo."""
+    """
+    Fetches LOT_SIZE and MIN_NOTIONAL filters for a symbol.
+
+    Args:
+        c: Spot client.
+        symbol: Trading symbol.
+
+    Returns:
+        tuple: (step_size, min_notional)
+    """
     ex = c.exchange_info(symbol=symbol)
     sym = ex["symbols"][0]
     step_size = 0.0
@@ -75,6 +101,9 @@ def fetch_filters(c: Spot, symbol: str) -> Tuple[float, float]:
     return step_size, min_notional
 
 def main():
+    """
+    Main function. Parses args, connects to Spot Testnet, validates filters, and places order.
+    """
     ap = argparse.ArgumentParser(description="Place a MARKET order on Binance Spot TESTNET (or change base-url for mainnet)." )
     ap.add_argument("--symbol", default="ETHBTC", help="Trading pair symbol, e.g., ETHBTC")
     ap.add_argument("--side", choices=["BUY","SELL"], default="BUY", help="Order side")

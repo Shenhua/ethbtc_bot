@@ -1,3 +1,15 @@
+#!/usr/bin/env python3
+"""
+download_vision.py — Robust Downloader for Binance Vision Data.
+
+This script downloads historical kline (candlestick) data from Binance Vision
+(https://data.binance.vision/). It supports both monthly and daily zip files,
+merges them, handles timestamps, and saves the result as a CSV.
+
+Usage:
+  python download_vision.py --symbol ETHBTC --start 2023-01-01 --end 2023-12-31 --intervals 15m,1h
+"""
+
 import os, sys, argparse, io, time, zipfile, hashlib
 from datetime import datetime, timedelta
 from urllib.parse import urljoin
@@ -11,6 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE = "https://data.binance.vision/"
 
 def month_range(start: datetime, end: datetime):
+    """Yields datetimes for the 1st of each month in the range."""
     cur = datetime(start.year, start.month, 1)
     while cur <= end:
         yield cur
@@ -21,18 +34,21 @@ def month_range(start: datetime, end: datetime):
             cur = datetime(cur.year, cur.month+1, 1)
 
 def day_range(start: datetime, end: datetime):
+    """Yields datetimes for each day in the range."""
     cur = start
     while cur <= end:
         yield cur
         cur += timedelta(days=1)
 
 def url_monthly(symbol, interval, y, m):
+    """Constructs the URL for a monthly zip file."""
     mm = f"{m:02d}"
     fname = f"{symbol}-{interval}-{y}-{mm}.zip"
     path = f"data/spot/monthly/klines/{symbol}/{interval}/{fname}"
     return urljoin(BASE, path), fname
 
 def url_daily(symbol, interval, y, m, d):
+    """Constructs the URL for a daily zip file."""
     dd = f"{d:02d}"
     mm = f"{m:02d}"
     fname = f"{symbol}-{interval}-{y}-{mm}-{dd}.zip"
@@ -40,6 +56,7 @@ def url_daily(symbol, interval, y, m, d):
     return urljoin(BASE, path), fname
 
 def head_ok(url):
+    """Checks if a URL exists (HEAD request)."""
     try:
         r = requests.head(url, timeout=10)
         return r.status_code == 200
@@ -47,11 +64,13 @@ def head_ok(url):
         return False
 
 def download(url):
+    """Downloads content from a URL."""
     r = requests.get(url, timeout=60)
     r.raise_for_status()
     return r.content
 
 def verify_checksum(zip_bytes, chk_bytes):
+    """Verifies the SHA256 checksum of downloaded content."""
     # Binance provides .CHECKSUM with "sha256  filename.zip"
     try:
         expected = chk_bytes.decode("utf-8").strip().split()[0]
@@ -62,6 +81,7 @@ def verify_checksum(zip_bytes, chk_bytes):
         return None  # unknown
  
 def load_zip_csvs(content):
+    """Extracts and loads CSVs from a zip file into a pandas DataFrame."""
     with zipfile.ZipFile(io.BytesIO(content)) as z:
         dfs = []
         for name in z.namelist():
@@ -75,6 +95,7 @@ def load_zip_csvs(content):
         return pd.DataFrame(columns=["open_time","open","high","low","close","volume","close_time","qav","trades","taker_base","taker_quote","ignore"])
 
 def maybe_to_datetime(df):
+    """Converts timestamp columns to datetime objects, handling ms/us ambiguity."""
     # robust per-row handling: if >1e13 assume microseconds else milliseconds
     import numpy as np
     ot = pd.to_numeric(df["open_time"], errors="coerce")
@@ -93,6 +114,14 @@ def maybe_to_datetime(df):
 
 
 def main():
+    """
+    Main execution loop:
+    1. Parse arguments.
+    2. Iterate over requested intervals.
+    3. Download monthly files first (more efficient).
+    4. Fill gaps with daily files.
+    5. Merge, sort, and save to CSV.
+    """
     ap = argparse.ArgumentParser(description="Download Binance Vision klines (monthly with daily fallback) and merge to CSV.")
     ap.add_argument("--symbol", default=os.getenv("SYMBOL","ETHBTC"))
     ap.add_argument("--intervals", default="1m,15m,30m", help="Comma-separated intervals")

@@ -8,10 +8,33 @@ from .exchange_adapter import ExchangeAdapter, Book, Filters
 log = logging.getLogger("futures_adapter")
 
 class BinanceFuturesAdapter(ExchangeAdapter):
+    """
+    Adapter for Binance USDS-M Futures API.
+
+    Handles interactions with the futures market, including leverage setting,
+    position tracking, and order execution (supporting shorts).
+    """
     def __init__(self, client: UMFutures):
+        """
+        Initializes the Futures adapter.
+
+        Args:
+            client: Authenticated UMFutures client.
+        """
         self.client = client
 
     def get_klines(self, symbol: str, interval: str, limit: int = 500) -> List[Dict[str, Any]]:
+        """
+        Fetches kline data from Futures API.
+
+        Args:
+            symbol: Trading pair symbol.
+            interval: Kline interval.
+            limit: Number of klines.
+
+        Returns:
+            List[Dict[str, Any]]: List of kline dictionaries.
+        """
         # Futures API uses same format as Spot for Klines
         ks = self.client.klines(symbol, interval, limit=limit)
         out = []
@@ -28,10 +51,28 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         return out
 
     def get_book(self, symbol: str) -> Book:
+        """
+        Fetches current order book ticker.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            Book: Best bid and ask.
+        """
         t = self.client.book_ticker(symbol)
         return Book(best_bid=float(t["bidPrice"]), best_ask=float(t["askPrice"]))
 
     def get_filters(self, symbol: str) -> Filters:
+        """
+        Fetches trading filters for Futures.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            Filters: Step size, tick size, and min notional.
+        """
         info = self.client.exchange_info()
         s_info = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
         if not s_info:
@@ -52,18 +93,43 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         )
 
     def get_usd_price(self, symbol: str) -> float:
+        """
+        Fetches USD price for a symbol.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            float: Current price or 0.0 if not found.
+        """
         if "USDT" in symbol or "USDC" in symbol:
             t = self.client.ticker_price(symbol)
             return float(t["price"])
         return 0.0
 
     def get_funding_rate(self, symbol: str) -> float:
+        """
+        Fetches current funding rate.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            float: Funding rate percentage.
+        """
         f = self.client.mark_price(symbol)
         return float(f["lastFundingRate"]) * 100.0
 
     # --- Execution & State ---
 
     def set_leverage(self, symbol: str, leverage: int):
+        """
+        Sets the leverage for a symbol.
+
+        Args:
+            symbol: Trading pair symbol.
+            leverage: Leverage multiplier (e.g., 1, 2, 5).
+        """
         log.debug(f"[FUTURES] Attempting to set leverage for {symbol} to {leverage}")
         try:
             self.client.change_leverage(symbol, leverage)
@@ -72,23 +138,51 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             log.warning(f"Could not set leverage: {e}")
 
     def get_position(self, symbol: str) -> float:
-        """Get current position size (can be negative for short)."""
+        """
+        Gets current position size (can be negative for short).
+        Correctly sums Long and Short positions if Hedge Mode is active.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            float: Position size (signed).
+        """
         log.debug(f"[FUTURES] Fetching position for {symbol}")
         try:
             positions = self.client.get_position_risk(symbol=symbol)
+            net_position = 0.0
+            found = False
+
             for pos in positions:
                 if pos["symbol"] == symbol:
-                    position_amt = float(pos["positionAmt"])
-                    log.debug(f"[FUTURES] Position: {position_amt} {symbol} @ {pos['entryPrice']}")
-                    return position_amt
-            log.debug(f"[FUTURES] No position found for {symbol}")
-            return 0.0
+                    amt = float(pos["positionAmt"])
+                    net_position += amt
+                    if amt != 0:
+                        log.debug(f"[FUTURES] Partial Position: {amt} {symbol} @ {pos['entryPrice']}")
+                    found = True
+
+            if not found:
+                log.debug(f"[FUTURES] No position found for {symbol}")
+                return 0.0
+
+            log.debug(f"[FUTURES] Net Position for {symbol}: {net_position}")
+            return net_position
+
         except Exception as e:
             log.error(f"Error fetching position for {symbol}: {e}")
             return 0.0
 
     def get_account_balance(self, asset: str) -> float:
-        """Get Margin Balance (Wallet + PnL) for the asset"""
+        """
+        Get Margin Balance (Wallet + PnL) for the asset.
+
+        Args:
+            asset: Asset name (e.g., 'USDT').
+
+        Returns:
+            float: Margin balance.
+        """
         log.debug(f"[FUTURES] Fetching account balance for {asset}")
         try:
             acct = self.client.account()
@@ -104,6 +198,15 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             return 0.0
 
     def cancel_open_orders(self, symbol: str) -> List[str]:
+        """
+        Cancels all open orders for a symbol.
+
+        Args:
+            symbol: Trading pair symbol.
+
+        Returns:
+            List[str]: List of cancelled order IDs.
+        """
         log.debug(f"[FUTURES] Attempting to cancel all open orders for {symbol}")
         try:
             open_orders = self.client.get_orders(symbol=symbol)
@@ -131,8 +234,16 @@ class BinanceFuturesAdapter(ExchangeAdapter):
 
     def place_limit_maker(self, symbol: str, side: str, quantity: float, price: float) -> str:
         """
-        Futures Post-Only Order.
-        Uses timeInForce='GTX' which is Binance Futures equivalent of LIMIT_MAKER.
+        Places a Futures Post-Only Order (GTX).
+
+        Args:
+            symbol: Trading pair symbol.
+            side: 'BUY' or 'SELL'.
+            quantity: Order quantity.
+            price: Limit price.
+
+        Returns:
+            str: Order ID.
         """
         log.debug(f"[FUTURES] Placing POST_ONLY {side} order: {quantity:.8f} {symbol} @ {price:.8f}")
         resp = self.client.new_order(
@@ -147,7 +258,17 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         return str(resp["orderId"])
 
     def market_order(self, symbol: str, side: str, quantity: float) -> str:
-        """Execute market order on Futures."""
+        """
+        Execute market order on Futures.
+
+        Args:
+            symbol: Trading pair symbol.
+            side: 'BUY' or 'SELL'.
+            quantity: Order quantity.
+
+        Returns:
+            str: Order ID.
+        """
         log.debug(f"[FUTURES] Placing MARKET {side} order: {quantity:.8f} {symbol}")
         resp = self.client.new_order(
             symbol=symbol,
@@ -159,6 +280,13 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         return str(resp["orderId"])
 
     def cancel(self, symbol: str, order_id: str) -> None:
+        """
+        Cancels a specific order.
+
+        Args:
+            symbol: Trading pair symbol.
+            order_id: Order ID to cancel.
+        """
         log.debug(f"[FUTURES] Attempting to cancel order {order_id} for {symbol}")
         try:
             self.client.cancel_order(symbol=symbol, orderId=order_id)
@@ -168,7 +296,14 @@ class BinanceFuturesAdapter(ExchangeAdapter):
 
     def check_order(self, symbol: str, order_id: str) -> Tuple[bool, float]:
         """
-        Returns (is_filled, executed_qty).
+        Checks order status.
+
+        Args:
+            symbol: Trading pair symbol.
+            order_id: Order ID.
+
+        Returns:
+            Tuple[bool, float]: (is_filled, executed_qty).
         """
         try:
             od = self.client.get_order(symbol=symbol, orderId=order_id)

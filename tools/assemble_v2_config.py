@@ -1,9 +1,24 @@
 #!/usr/bin/env python3
+"""
+tools/assemble_v2_config.py - Meta-Strategy Config Assembler
+
+This script combines optimized parameters from separate Mean Reversion (MR)
+and Trend optimization runs into a single "Meta Strategy" configuration file.
+It also picks the best ADX threshold from a meta-optimization result CSV.
+"""
 import json
 import argparse
 import pandas as pd
 
 def main():
+    """
+    Main execution flow:
+    1. Load optimized MR and Trend config JSONs.
+    2. Load Meta optimization CSV results.
+    3. Select the best ADX threshold.
+    4. Construct the final JSON configuration structure.
+    5. Save to disk.
+    """
     ap = argparse.ArgumentParser()
     ap.add_argument("--mr", required=True, help="Best MR config (json)")
     ap.add_argument("--trend", required=True, help="Best Trend config (json)")

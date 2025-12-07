@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
 ethbtc_accum_bot.py — v5.3 (Optimized & Fixed)
+
+This module defines the core strategy components and backtesting infrastructure for the
+ETH/BTC accumulation bot. It includes:
+- Data classes for strategy and fee parameters.
+- The `EthBtcStrategy` class implementing a mean-reversion strategy.
+- The `Backtester` class for simulating strategy performance.
+- CLI entry points for running backtests.
 """
 
 from __future__ import annotations
@@ -39,6 +46,12 @@ def load_json_config(path: Optional[str]) -> Dict:
     """
     Legacy helper: Loads a JSON file and flattens the structure for easy access.
     Required by optimizer_cli.py and other tools.
+
+    Args:
+        path: Path to the JSON config file.
+
+    Returns:
+        Dict: Flattened dictionary containing configuration parameters.
     """
     if not path: return {}
     with open(path, "r") as f: data = json.load(f)
@@ -51,6 +64,15 @@ def load_json_config(path: Optional[str]) -> Dict:
     return flat
 
 def load_vision_csv(path: str) -> pd.DataFrame:
+    """
+    Loads OHLCV data from a CSV file (Vision format) and cleans it.
+
+    Args:
+        path: Path to the CSV file.
+
+    Returns:
+        pd.DataFrame: Cleaned DataFrame with a DatetimeIndex and standard columns (open, high, low, close, volume).
+    """
     df = pd.read_csv(path)
     df.columns = [c.strip().lower().replace(" ", "_") for c in df.columns]
     alias = {"opentime":"open_time","closetime":"close_time"}
@@ -77,7 +99,13 @@ def load_vision_csv(path: str) -> pd.DataFrame:
     return df.dropna(subset=["close"]).set_index("close_time").sort_index()
 
 def _write_excel(path: str, sheets: dict):
-    """Helper for multi-interval summary tools."""
+    """
+    Helper for multi-interval summary tools to write multiple DataFrames to an Excel file.
+
+    Args:
+        path: Destination path for the Excel file.
+        sheets: Dictionary mapping sheet names to DataFrames or objects.
+    """
     import pandas as _pd
     with _pd.ExcelWriter(path, engine="xlsxwriter") as w:
         for name, obj in sheets.items():
@@ -96,6 +124,9 @@ def _write_excel(path: str, sheets: dict):
 
 @dataclass
 class StratParams:
+    """
+    Configuration parameters for the EthBtcStrategy (Mean Reversion) and general strategy settings.
+    """
     # Mean Reversion
     trend_kind: str = "sma"
     trend_lookback: int = 200
@@ -129,6 +160,9 @@ class StratParams:
 
 @dataclass
 class FeeParams:
+    """
+    Configuration parameters for trading fees and slippage.
+    """
     maker_fee: float = 0.0002
     taker_fee: float = 0.0004
     slippage_bps: float = 1.0
@@ -136,9 +170,33 @@ class FeeParams:
     pay_fees_in_bnb: bool = True
 
 class EthBtcStrategy:
-    def __init__(self, p: StratParams): self.p = p
+    """
+    Implements a mean-reversion trading strategy for ETH/BTC.
+
+    The strategy uses moving averages or other trend indicators to establish a baseline,
+    then defines entry and exit bands based on volatility. It generates target weights
+    for the portfolio (how much ETH to hold relative to BTC).
+    """
+    def __init__(self, p: StratParams):
+        """
+        Initializes the strategy with parameters.
+
+        Args:
+            p: Strategy parameters.
+        """
+        self.p = p
 
     def generate_positions(self, close: pd.Series, funding: Optional[pd.Series] = None) -> pd.DataFrame:
+        """
+        Generates target positions based on price history and optional funding rates.
+
+        Args:
+            close: Series of close prices.
+            funding: Optional series of funding rates.
+
+        Returns:
+            pd.DataFrame: DataFrame containing 'target_w' (target weight) and internal signals.
+        """
         # --- FIX ITEM 4: Optimized Vectorized Calculation ---
         
         # 1. Indicators
@@ -246,7 +304,17 @@ class EthBtcStrategy:
         return pd.DataFrame({"target_w": target_w})
 
 class Backtester:
-    def __init__(self, fee: FeeParams): self.fee = fee
+    """
+    Simulator for backtesting trading strategies.
+    """
+    def __init__(self, fee: FeeParams):
+        """
+        Initializes the backtester.
+
+        Args:
+            fee: Fee parameters.
+        """
+        self.fee = fee
 
     def simulate(self, close: pd.Series, 
                  strat: Union[EthBtcStrategy, TrendStrategy, MetaStrategy],
@@ -257,6 +325,28 @@ class Backtester:
                  max_daily_loss_frac=0.0, max_dd_frac=0.0, risk_mode="fixed_basis",
                  drawdown_reset_days=0.0, drawdown_reset_score=0.0, 
                  full_df: Optional[pd.DataFrame] = None):
+        """
+        Runs the backtest simulation.
+
+        Args:
+            close: Series of close prices.
+            strat: The strategy instance (EthBtcStrategy, TrendStrategy, or MetaStrategy).
+            funding_series: Optional funding rates series.
+            initial_btc: Initial capital in BTC (base currency).
+            start_bnb: Initial capital in BNB (for fees).
+            bnb_price_series: Series of BNB prices for fee calculation.
+            max_daily_loss_btc: Risk limit: max daily loss in BTC.
+            max_dd_btc: Risk limit: max drawdown in BTC.
+            max_daily_loss_frac: Risk limit: max daily loss fraction.
+            max_dd_frac: Risk limit: max drawdown fraction.
+            risk_mode: "fixed_basis" or "dynamic".
+            drawdown_reset_days: Days to wait before resetting after a crash (Phoenix Protocol).
+            drawdown_reset_score: Trend score required to reset (Phoenix Protocol).
+            full_df: Full OHLC dataframe (required for MetaStrategy).
+
+        Returns:
+            dict: Simulation results containing 'summary', 'portfolio', 'trades', and 'diagnostics'.
+        """
         
         px = close.astype(float).copy()
         
@@ -461,6 +551,9 @@ class Backtester:
 
 # ------------------ CLI ------------------
 def _interval_to_minutes(interval: str) -> int:
+    """
+    Helper to convert an interval string to minutes.
+    """
     mapping = {
         "1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30,
         "1h": 60, "2h": 120, "4h": 240, "6h": 360, "8h": 480,
@@ -469,6 +562,9 @@ def _interval_to_minutes(interval: str) -> int:
     return mapping.get(interval, 15)
 
 def load_funding_series(path: Optional[str], ref_index: pd.DatetimeIndex) -> Optional[pd.Series]:
+    """
+    Loads funding rates from a CSV and aligns them to a reference index.
+    """
     if not path: return None
     f_df = pd.read_csv(path)
     if "time" not in f_df.columns: raise ValueError("Funding CSV must have 'time'")
@@ -479,6 +575,9 @@ def load_funding_series(path: Optional[str], ref_index: pd.DatetimeIndex) -> Opt
     return funding
 
 def build_strategy_from_config(app_cfg, df: pd.DataFrame):
+    """
+    Factory function to build a strategy instance from configuration.
+    """
     strat_cfg = app_cfg.strategy
     exec_cfg = app_cfg.execution
     interval_str = str(strat_cfg.strategy_type and exec_cfg.interval)
@@ -538,6 +637,9 @@ def build_strategy_from_config(app_cfg, df: pd.DataFrame):
     return EthBtcStrategy(StratParams(**common_kwargs))
 
 def cmd_backtest(args):
+    """
+    CLI command handler for backtesting.
+    """
     df = load_vision_csv(args.data)
     
     # Date Slicing

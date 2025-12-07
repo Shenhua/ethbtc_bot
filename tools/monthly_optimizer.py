@@ -1,4 +1,13 @@
 #!/usr/bin/env python3
+"""
+tools/monthly_optimizer.py - Automated Monthly Optimization Scheduler
+
+This script runs periodically (daemon mode) to check if a new month has started.
+If so, it downloads the previous month's data from Binance Vision and runs the
+full optimization pipeline to generate suggested parameters for the new month.
+
+It sends notifications (Slack/Discord) upon success or failure.
+"""
 from __future__ import annotations
 
 import os
@@ -19,6 +28,15 @@ STATE_FILE = Path(os.getenv("MONTHLY_OPT_STATE", "/data/monthly_opt_state.json")
 
 
 def previous_month_range(now: datetime):
+    """
+    Calculates the start and end datetime of the previous month.
+
+    Args:
+        now: Current datetime.
+
+    Returns:
+        tuple: (start_of_prev_month, end_of_prev_month)
+    """
     first_this_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     last_prev_month = first_this_month - timedelta(seconds=1)
     first_prev_month = last_prev_month.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -26,6 +44,16 @@ def previous_month_range(now: datetime):
 
 
 def already_ran_for(year: int, month: int) -> bool:
+    """
+    Checks if optimization has already run for the specified year/month.
+
+    Args:
+        year: Year to check.
+        month: Month to check.
+
+    Returns:
+        bool: True if already run.
+    """
     if not STATE_FILE.exists():
         return False
     try:
@@ -38,6 +66,13 @@ def already_ran_for(year: int, month: int) -> bool:
 
 
 def mark_ran_for(year: int, month: int):
+    """
+    Marks the optimization as complete for the specified year/month.
+
+    Args:
+        year: Year.
+        month: Month.
+    """
     try:
         import json
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -48,6 +83,9 @@ def mark_ran_for(year: int, month: int):
 
 
 def run_once_for_previous_month():
+    """
+    Runs the optimization pipeline for the previous month.
+    """
     now = datetime.now(timezone.utc)
     start, end = previous_month_range(now)
     year, month = start.year, start.month
@@ -113,6 +151,10 @@ def run_once_for_previous_month():
 
 
 def main():
+    """
+    Main loop for the monthly optimizer daemon.
+    Checks date every N hours.
+    """
     # Simple scheduler: wake up every 6 hours, run for previous month if today is 1st and not done yet
     sleep_sec = float(os.getenv("MONTHLY_OPT_POLL_SEC", 6 * 60 * 60))
 

@@ -28,32 +28,27 @@ class TestFixes(unittest.TestCase):
         adapter = BinanceFuturesAdapter(mock_client)
         
         # Scenario 1: Hedge Mode (Long 1.5, Short -0.5) -> Net 1.0
-        mock_client.account.return_value = {
-            "positions": [
-                {"symbol": "ETHUSDT", "positionAmt": "1.5"},   # Long Side
-                {"symbol": "ETHUSDT", "positionAmt": "-0.5"},  # Short Side
-                {"symbol": "BTCUSDT", "positionAmt": "10.0"}   # Irrelevant symbol
-            ]
-        }
+        # FIX: Mock get_position_risk instead of account
+        mock_client.get_position_risk.return_value = [
+            {"symbol": "ETHUSDT", "positionAmt": "1.5", "entryPrice": "100"},   # Long Side
+            {"symbol": "ETHUSDT", "positionAmt": "-0.5", "entryPrice": "100"},  # Short Side
+            {"symbol": "BTCUSDT", "positionAmt": "10.0", "entryPrice": "2000"}   # Irrelevant symbol
+        ]
         
         net_pos = adapter.get_position("ETHUSDT")
         print(f"\n[Test] Hedge Mode: Long(1.5) + Short(-0.5) = {net_pos}")
         self.assertAlmostEqual(net_pos, 1.0)
         
         # Scenario 2: One-Way Mode (Single entry)
-        mock_client.account.return_value = {
-            "positions": [
-                {"symbol": "ETHUSDT", "positionAmt": "2.5"}
-            ]
-        }
+        mock_client.get_position_risk.return_value = [
+            {"symbol": "ETHUSDT", "positionAmt": "2.5", "entryPrice": "100"}
+        ]
         net_pos = adapter.get_position("ETHUSDT")
         print(f"[Test] One-Way Mode: Pos(2.5) = {net_pos}")
         self.assertAlmostEqual(net_pos, 2.5)
         
         # Scenario 3: No Position
-        mock_client.account.return_value = {
-            "positions": []
-        }
+        mock_client.get_position_risk.return_value = []
         net_pos = adapter.get_position("ETHUSDT")
         print(f"[Test] No Position: {net_pos}")
         self.assertAlmostEqual(net_pos, 0.0)
