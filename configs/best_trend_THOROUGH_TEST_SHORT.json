@@ -1,0 +1,35 @@
+{
+  "fees": {
+    "maker_fee": 0.0002,
+    "taker_fee": 0.0004,
+    "slippage_bps": 1.0,
+    "bnb_discount": 0.25,
+    "pay_fees_in_bnb": true
+  },
+  "strategy": {
+    "fast_period": 140,
+    "slow_period": 400,
+    "ma_type": "ema",
+    "cooldown_minutes": 240,
+    "funding_limit_long": 0.043577458410603,
+    "funding_limit_short": -0.08369377552706173,
+    "position_sizing_mode": "volatility",
+    "position_sizing_target_vol": 0.3600089586685621,
+    "position_sizing_min_step": 0.25713160051179557,
+    "long_only": false,
+    "strategy_type": "trend",
+    "step_allocation": 1.0,
+    "max_position": 1.0,
+    "rebalance_threshold_w": 0.03
+  },
+  "execution": {
+    "interval": "15m",
+    "poll_sec": 5
+  },
+  "risk": {
+    "basis_btc": 1.0,
+    "risk_mode": "fixed_basis",
+    "drawdown_reset_days": 7.0,
+    "drawdown_reset_score": 30.0
+  }
+}

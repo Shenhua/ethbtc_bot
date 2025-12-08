@@ -1,0 +1,10 @@
+# .pre-commit-config.yaml
+repos:
+  - repo: local
+    hooks:
+      - id: check-parity
+        name: Check Backtest-Live Parity
+        entry: ./scripts/check_parity.sh
+        language: system
+        files: ^(live_executor\.py|core/strategy_factory\.py|core/ethbtc_accum_bot\.py)$
+        pass_filenames: false

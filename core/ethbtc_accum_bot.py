@@ -663,67 +663,18 @@ def load_funding_series(path: Optional[str], ref_index: pd.DatetimeIndex) -> Opt
     return funding
 
 def build_strategy_from_config(app_cfg, df: pd.DataFrame):
-    strat_cfg = app_cfg.strategy
-    exec_cfg = app_cfg.execution
-    interval_str = str(strat_cfg.strategy_type and exec_cfg.interval)
-    bar_minutes = _interval_to_minutes(interval_str)
+    """
+    Build strategy from config - wrapper for backwards compatibility.
     
-    # Local imports to avoid circular dependency
-    from core.trend_strategy import TrendStrategy, TrendParams
-    from core.meta_strategy import MetaStrategy
+    IMPORTANT: This function now uses the shared strategy_factory module
+    to ensure parity between backtest and live executor.
+    """
+    # Import from shared factory to ensure parity
+    from core.strategy_factory import build_strategy
     
-    # Common parameters shared across MR and Trend
-    common_kwargs = dict(
-        trend_kind=strat_cfg.trend_kind, trend_lookback=strat_cfg.trend_lookback,
-        flip_band_entry=strat_cfg.flip_band_entry, flip_band_exit=strat_cfg.flip_band_exit,
-        vol_window=strat_cfg.vol_window, vol_adapt_k=strat_cfg.vol_adapt_k,
-        bar_interval_minutes=bar_minutes, target_vol=strat_cfg.target_vol,
-        min_mult=strat_cfg.min_mult, max_mult=strat_cfg.max_mult,
-        cooldown_minutes=strat_cfg.cooldown_minutes, step_allocation=strat_cfg.step_allocation,
-        max_position=strat_cfg.max_position, long_only=strat_cfg.long_only,
-        rebalance_threshold_w=strat_cfg.rebalance_threshold_w,
-        min_trade_btc=exec_cfg.min_trade_btc or 0.0,
-        gate_window_days=strat_cfg.gate_window_days, gate_roc_threshold=strat_cfg.gate_roc_threshold,
-        profit_lock_dd=strat_cfg.profit_lock_dd, vol_scaled_step=strat_cfg.vol_scaled_step,
-        funding_limit_long=strat_cfg.funding_limit_long, funding_limit_short=strat_cfg.funding_limit_short,
-        fast_period=strat_cfg.fast_period, slow_period=strat_cfg.slow_period,
-        ma_type=strat_cfg.ma_type, adx_threshold=strat_cfg.adx_threshold,
-        strategy_type=strat_cfg.strategy_type,
-    )
-    
-    if strat_cfg.strategy_type == "trend":
-        tp = TrendParams(
-            fast_period=strat_cfg.fast_period, slow_period=strat_cfg.slow_period,
-            ma_type=strat_cfg.ma_type, cooldown_minutes=strat_cfg.cooldown_minutes,
-            step_allocation=strat_cfg.step_allocation, max_position=strat_cfg.max_position,
-            long_only=strat_cfg.long_only, funding_limit_long=strat_cfg.funding_limit_long,
-            funding_limit_short=strat_cfg.funding_limit_short,
-            rebalance_threshold_w=strat_cfg.rebalance_threshold_w
-        )
-        return TrendStrategy(tp)
+    strategy, _ = build_strategy(app_cfg, df)
+    return strategy
 
-    if strat_cfg.strategy_type == "meta":
-        # Extract override configs
-        mr_opts = strat_cfg.mean_reversion_overrides
-        tr_opts = strat_cfg.trend_overrides
-        
-        # Merge overrides into base params
-        # Pydantic models to dict
-        base_dict = strat_cfg.model_dump()
-        
-        mr_dict = {**base_dict, **mr_opts}
-        tr_dict = {**base_dict, **tr_opts}
-        
-        # Filter keys that are valid for StratParams/TrendParams
-        valid_mr = {k: v for k, v in mr_dict.items() if k in StratParams.__annotations__}
-        valid_tr = {k: v for k, v in tr_dict.items() if k in TrendParams.__annotations__}
-        
-        mr_p = StratParams(**valid_mr)
-        tr_p = TrendParams(**valid_tr)
-        
-        return MetaStrategy(mr_p, tr_p, adx_threshold=strat_cfg.adx_threshold)
-
-    return EthBtcStrategy(StratParams(**common_kwargs))
 
 def cmd_backtest(args):
     df = load_vision_csv(args.data)

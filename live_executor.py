@@ -37,6 +37,12 @@ from core.trend_strategy import TrendStrategy, TrendParams
 from core.meta_strategy import MetaStrategy
 from core.regime import get_regime_score
 
+# --- SHARED STRATEGY FACTORY (Parity with Backtest) ---
+from core.strategy_factory import (
+    merge_strategy_params, build_strategy, 
+    build_mr_params, build_tr_params, get_active_params
+)
+
 log = logging.getLogger("live_executor")
 
 
