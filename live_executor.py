@@ -217,13 +217,16 @@ def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, c
         else:
             threshold_loss = float(risk.max_daily_loss_btc)
     else:
-        threshold_loss = float(risk.max_daily_loss_btc)
-
     if threshold_loss > 0.0 and daily_pnl <= -threshold_loss:
         daily_limit_hit = True
 
-    # 5. Save State
-    state["risk_equity_high"] = equity_high
+    # --- Initialize Metrics to 0 to ensure they appear in Prometheus ---
+    FEES_PAID.labels(asset=args.quote_asset.lower()).inc(0)
+    LIQ_DIST.labels(symbol=args.symbol).set(0.0)
+    SLIPPAGE.observe(0.0)
+    LAST_TRADE_TS.set(0.0)
+    
+    # --- Start Status Server ---   state["risk_equity_high"] = equity_high
     state["risk_current_date"] = current_date.isoformat()
     state["risk_daily_start_wealth"] = daily_start
     state["risk_daily_limit_hit"] = daily_limit_hit

@@ -1185,14 +1185,20 @@
   
 
   
+# Other important panels to include
 
-  ------
 
-  
 
-  If you want, next step I can distill this into:
-
-  
-
-  - A **checklist for your developer** (“To implement this dashboard, you must provide metrics for X/Y/Z”), or
-  - A lighter “v1 scope” version (e.g. only top row + fleet overview + equity & risk, then add execution/health later).
+- Current Mode of the bot (MR or Trend)
+- shorting activated status
+- PnL of the bot (last 7, 30, total days)
+- Gate status
+- Riskstatus
+- Phoenix protocol status
+- Current leverage if futures
+- Regime Analysis
+- Exposure
+- Dist to Action (bps) as current value meters and time graph
+- weight tracking (Target vs Current)
+- Actions (skips or trades) by reason
+- Latency
