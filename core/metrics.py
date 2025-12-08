@@ -63,6 +63,11 @@ PHOENIX_ACTIVE = Gauge("phoenix_active", "Phoenix Protocol Status: 1=Waiting for
 POSITION_STEP = Gauge("position_step_size", "Dynamic position step size (0.0-1.0)")
 REALIZED_VOL = Gauge("realized_volatility", "Current realized volatility (annualized)")
 
+# --- LEVERAGE & EXPOSURE METRICS ---
+LEVERAGE = Gauge("leverage", "Current leverage multiplier")
+EXPOSURE_SIGNAL_WEIGHT = Gauge("exposure_signal_weight", "Signal weight (unleveraged target)")
+EXPOSURE_NOTIONAL = Gauge("exposure_notional", "Actual leveraged notional exposure as % of margin")
+
 # ---- Helper functions -----------------------------------------------------
 
 def start_metrics_server(port: int, story_file: str = None) -> None:

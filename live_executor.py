@@ -21,6 +21,7 @@ from core.metrics import (
     PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, SIGNAL_BAND,
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
     REGIME_STATE, PHOENIX_ACTIVE, POSITION_STEP, REALIZED_VOL,
+    LEVERAGE, EXPOSURE_SIGNAL_WEIGHT, EXPOSURE_NOTIONAL,
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
@@ -293,6 +294,8 @@ def main():
         # Set Leverage on startup
         lev = getattr(cfg.execution, "leverage", 1)
         adapter.set_leverage(args.symbol, lev)
+        LEVERAGE.set(lev)
+        log.info("[FUTURES] Leverage set to %dx for %s", lev, args.symbol)
         
     else:
         # Initialize Spot Client (Existing Logic)
@@ -454,10 +457,18 @@ def main():
                     
                     effective_base = current_position # Used for logging/logic later
                     
+                    # Calculate signal weight (unleveraged) for comparison with backtest
+                    signal_weight = cur_w / lev if lev > 0 else cur_w
+                    
+                    # Export exposure metrics
+                    EXPOSURE_NOTIONAL.set(cur_w * 100)  # Leveraged exposure as %
+                    EXPOSURE_SIGNAL_WEIGHT.set(signal_weight * 100)  # Signal weight as %
+                    
                     # Log balance occasionally
                     if state.get("last_balance_log_ts", 0) < now_s - 300:
-                        log.info("[FUTURES BALANCE] Margin=%.2f %s, Position=%.4f %s (%.2f%%)", 
-                                 quote_bal, quote_asset, current_position, args.symbol, cur_w*100)
+                        log.info("[FUTURES BALANCE] Margin=%.2f %s, Position=%.4f %s | Exposure: %.1f%% notional (signal_w=%.1f%% @ %dx lev)", 
+                                 quote_bal, quote_asset, current_position, args.symbol, 
+                                 cur_w*100, signal_weight*100, lev)
                         state["last_balance_log_ts"] = now_s
                                        
                 else:
@@ -537,11 +548,8 @@ def main():
             if not maxdd_hit:
                 state["alert_sent_maxdd"] = False
 
-
-            WEALTH_TOTAL.set(W) 
-            PRICE_MID.set(price)
-            BAL_FREE.labels(quote_asset.lower()).set(float(quote_bal))
-            BAL_FREE.labels(base_asset.lower()).set(float(base_bal))
+            # NOTE: WEALTH_TOTAL, PRICE_MID, BAL_FREE are set via snapshot_wealth_balances() 
+            # called later in the loop (line ~927) - no need to duplicate here
 
             q_usd, b_usd = 0.0, 0.0
             try:

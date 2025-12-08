@@ -707,49 +707,118 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Current active position size relative to max.\n100% = Max Long\n-100% = Max Short",
+      "description": "Current leverage multiplier for futures trading.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 3
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 2,
+        "x": 16,
+        "y": 6
+      },
+      "id": 35,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value"
+      },
+      "title": "⚡ Lev",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "leverage{instance=~\"$instance\"}",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Exposure comparison:\n- Signal Weight = Strategy's intended position (unleveraged)\n- Notional = Actual leveraged exposure",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
           "decimals": 1,
-          "max": 1.5,
-          "min": -1.5,
+          "max": 200,
+          "min": -200,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "red",
-                "value": -1.5
+                "value": -150
               },
               {
                 "color": "orange",
-                "value": -1
+                "value": -100
               },
               {
                 "color": "gray",
-                "value": -0.1
+                "value": -10
               },
               {
                 "color": "green",
-                "value": 0.1
+                "value": 10
+              },
+              {
+                "color": "orange",
+                "value": 100
+              },
+              {
+                "color": "red",
+                "value": 150
               }
             ]
           },
-          "unit": "percentunit"
+          "unit": "percent"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
+        "h": 4,
+        "w": 6,
+        "x": 18,
         "y": 6
       },
       "id": 29,
       "options": {
-        "orientation": "auto",
+        "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -761,13 +830,86 @@
         "showThresholdMarkers": true,
         "textMode": "value_and_name"
       },
-      "title": "\ud83d\udce6 Exposure Gauge",
+      "title": "📊 Exposure",
       "type": "gauge",
       "targets": [
         {
-          "expr": "last_over_time(exposure_base_weight{kind=\"current\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}}",
+          "expr": "exposure_signal_weight{instance=~\"$instance\"}",
+          "legendFormat": "Signal",
           "refId": "A"
+        },
+        {
+          "expr": "exposure_notional{instance=~\"$instance\"}",
+          "legendFormat": "Notional",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Dynamic position step size and realized volatility.\nStep is used to smooth position changes.\nVol affects step in volatility targeting mode.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2
+          },
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Vol"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "id": 36,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "title": "🎚️ Position Step & Vol",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "position_step_size{instance=~\"$instance\"}",
+          "legendFormat": "Step",
+          "refId": "A"
+        },
+        {
+          "expr": "realized_volatility{instance=~\"$instance\"}",
+          "legendFormat": "Vol",
+          "refId": "B"
         }
       ]
     },
