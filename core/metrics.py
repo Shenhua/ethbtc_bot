@@ -67,6 +67,7 @@ REALIZED_VOL = Gauge("realized_volatility", "Current realized volatility (annual
 LEVERAGE = Gauge("leverage", "Current leverage multiplier")
 EXPOSURE_SIGNAL_WEIGHT = Gauge("exposure_signal_weight", "Signal weight (unleveraged target)")
 EXPOSURE_NOTIONAL = Gauge("exposure_notional", "Actual leveraged notional exposure as % of margin")
+CONFIG_LONG_ONLY = Gauge("config_long_only", "1 if Long Only, 0 if Shorts Allowed")
 
 # ---- Helper functions -----------------------------------------------------
 

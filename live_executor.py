@@ -21,7 +21,7 @@ from core.metrics import (
     PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, SIGNAL_BAND,
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
     REGIME_STATE, PHOENIX_ACTIVE, POSITION_STEP, REALIZED_VOL,
-    LEVERAGE, EXPOSURE_SIGNAL_WEIGHT, EXPOSURE_NOTIONAL,
+    LEVERAGE, EXPOSURE_SIGNAL_WEIGHT, EXPOSURE_NOTIONAL, CONFIG_LONG_ONLY,
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
@@ -305,6 +305,11 @@ def main():
             base_url=base_url,
         )
         adapter = BinanceSpotAdapter(client)
+        LEVERAGE.set(1)
+
+    # Set Long Only Metric
+    is_long_only = getattr(cfg.strategy, "long_only", True)
+    CONFIG_LONG_ONLY.set(1 if is_long_only else 0)
 
     try:
         # Futures and Spot have different exchange_info() signatures

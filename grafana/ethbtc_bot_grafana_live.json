@@ -156,8 +156,9 @@
       },
       "targets": [
         {
-          "expr": "balance_free{instance=~\"$instance\"}",
+          "expr": "last_over_time(balance_free{instance=~\"$instance\"}[5m])",
           "format": "table",
+          "instant": true,
           "legendFormat": "{{asset}}",
           "refId": "A"
         }
@@ -165,14 +166,27 @@
       "title": "\ud83d\udce6 Portfolio",
       "transformations": [
         {
+          "id": "reduce",
+          "options": {
+            "reducers": [
+              "last"
+            ],
+            "mode": "seriesToRows"
+          }
+        },
+        {
           "id": "organize",
           "options": {
             "excludeByName": {
-              "Time": true
+              "Time": true,
+              "instance": true,
+              "job": true,
+              "__name__": true
             },
             "indexByName": {},
             "renameByName": {
-              "Value": "Balance",
+              "Field": "Asset",
+              "Last": "Balance",
               "asset": "Asset"
             }
           }
@@ -757,7 +771,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "leverage{instance=~\"$instance\"}",
+          "expr": "leverage{instance=~\"$instance\"} or vector(1)",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -834,12 +848,12 @@
       "type": "gauge",
       "targets": [
         {
-          "expr": "exposure_signal_weight{instance=~\"$instance\"}",
+          "expr": "exposure_signal_weight{instance=~\"$instance\"} or (exposure_base_weight{kind=\"current\", instance=~\"$instance\"} * 100)",
           "legendFormat": "Signal",
           "refId": "A"
         },
         {
-          "expr": "exposure_notional{instance=~\"$instance\"}",
+          "expr": "exposure_notional{instance=~\"$instance\"} or (exposure_base_weight{kind=\"current\", instance=~\"$instance\"} * 100)",
           "legendFormat": "Notional",
           "refId": "B"
         }
@@ -1319,9 +1333,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 15
+        "w": 18,
+        "x": 0,
+        "y": 24
       },
       "id": 12,
       "options": {
@@ -1347,12 +1361,84 @@
       ]
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Distance to nearest trade zone (BUY or SELL).\n0 = IN ZONE (action triggered)\nLower = closer to action",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "max": 500,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 50
+              },
+              {
+                "color": "orange",
+                "value": 150
+              },
+              {
+                "color": "red",
+                "value": 300
+              }
+            ]
+          },
+          "unit": "bps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 24
+      },
+      "id": 37,
+      "options": {
+        "orientation": "vertical",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "textMode": "value"
+      },
+      "title": "🎯 Next Action",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "min(dist_to_buy_bps{instance=~\"$instance\"}, dist_to_sell_bps{instance=~\"$instance\"}) or next_action_dist_bps{instance=~\"$instance\"}",
+          "legendFormat": "Distance",
+          "refId": "A"
+        }
+      ]
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 23
+        "y": 32
       },
       "id": 13,
       "panels": [],
@@ -1407,7 +1493,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 24
+        "y": 33
       },
       "id": 14,
       "title": "Weight Tracking (Target vs Current)",
@@ -1445,7 +1531,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 24
+        "y": 33
       },
       "id": 15,
       "title": "Skipped Trades by Reason",
@@ -1464,7 +1550,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 32
+        "y": 41
       },
       "id": 16,
       "panels": [],
@@ -1492,7 +1578,7 @@
         "h": 6,
         "w": 10,
         "x": 0,
-        "y": 33
+        "y": 42
       },
       "id": 17,
       "title": "Holdings History (Log Scale)",
@@ -1536,7 +1622,7 @@
         "h": 6,
         "w": 14,
         "x": 10,
-        "y": 33
+        "y": 42
       },
       "id": 18,
       "title": "Market Prices (USD)",
@@ -1574,7 +1660,7 @@
         "h": 6,
         "w": 12,
         "x": 0,
-        "y": 38
+        "y": 48
       },
       "id": 30,
       "options": {
@@ -1629,7 +1715,7 @@
         "h": 6,
         "w": 6,
         "x": 12,
-        "y": 38
+        "y": 48
       },
       "id": 31,
       "options": {
@@ -1706,7 +1792,7 @@
         "h": 6,
         "w": 3,
         "x": 18,
-        "y": 38
+        "y": 48
       },
       "id": 32,
       "options": {
@@ -1727,7 +1813,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "min_over_time(exposure_base_weight{kind=\"current\", instance=~\"$instance\"}[1h]) < 0",
+          "expr": "config_long_only{instance=~\"$instance\"} or vector(1)",
           "legendFormat": "{{instance}}",
           "refId": "A"
         }
@@ -1783,7 +1869,7 @@
         "h": 6,
         "w": 3,
         "x": 21,
-        "y": 38
+        "y": 48
       },
       "id": 33,
       "options": {
