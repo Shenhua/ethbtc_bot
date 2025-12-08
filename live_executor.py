@@ -1367,11 +1367,11 @@ def main():
                         try:
                             # Fetch fill details for precise slippage
                             if is_futures: 
-                                 os = adapter.client.query_order(symbol=args.symbol, orderId=oid)
+                                 ord_status = adapter.client.query_order(symbol=args.symbol, orderId=oid)
                             else:
-                                 os = adapter.client.get_order(symbol=args.symbol, orderId=oid)
+                                 ord_status = adapter.client.get_order(symbol=args.symbol, orderId=oid)
                             
-                            fill_px = float(os.get('avgPrice', price))
+                            fill_px = float(ord_status.get('avgPrice', price))
                             if fill_px == 0: fill_px = price # Fallback
                             
                             slip_bps = (abs(fill_px - price) / price) * 10000
