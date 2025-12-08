@@ -39,6 +39,39 @@ from core.regime import get_regime_score
 
 log = logging.getLogger("live_executor")
 
+
+# --- CONFIG PARITY HELPER ---
+# This function matches the merge logic in ethbtc_accum_bot.py:build_strategy_from_config()
+# to ensure live execution uses the same params as backtest
+def merge_strategy_params(cfg) -> dict:
+    """
+    Merge base strategy config with overrides for meta strategy.
+    Returns a dict with 'mr_params' and 'tr_params' dicts containing all merged values.
+    For non-meta strategies, returns the base strategy values.
+    """
+    base = cfg.strategy.model_dump() if hasattr(cfg.strategy, 'model_dump') else dict(cfg.strategy)
+    strategy_type = base.get("strategy_type", "mean_reversion")
+    
+    if strategy_type == "meta":
+        mr_opts = base.get("mean_reversion_overrides", {})
+        tr_opts = base.get("trend_overrides", {})
+        
+        # Merge: base + overrides (overrides win)
+        mr_merged = {**base, **mr_opts}
+        tr_merged = {**base, **tr_opts}
+    else:
+        # Non-meta: both use base params
+        mr_merged = base.copy()
+        tr_merged = base.copy()
+    
+    return {
+        "strategy_type": strategy_type,
+        "mr_params": mr_merged,
+        "tr_params": tr_merged,
+        "base_params": base,
+    }
+
+
 # --- MAKER LOGIC ---
 try:
     from core.twap_maker import maker_chase
@@ -260,6 +293,11 @@ def main():
     log.info("Instance name for metrics: %s", instance_name)
 
     cfg = load_config(args.params)
+    
+    # === PARITY FIX: Merge strategy params to match backtest behavior ===
+    merged_cfg = merge_strategy_params(cfg)
+    mr_params = merged_cfg["mr_params"]
+    tr_params = merged_cfg["tr_params"]
 
     state = load_state(args.state)
     if "session_start_W" not in state:
@@ -314,8 +352,8 @@ def main():
         adapter = BinanceSpotAdapter(client)
         LEVERAGE.labels(instance=instance_name).set(1)
 
-    # Set Long Only Metric
-    is_long_only = getattr(cfg.strategy, "long_only", True)
+    # Set Long Only Metric - Use merged MR params (parity with backtest)
+    is_long_only = bool(int(mr_params.get("long_only", 1)))
     CONFIG_LONG_ONLY.labels(instance=instance_name).set(1 if is_long_only else 0)
 
     try:
@@ -392,7 +430,8 @@ def main():
         # Mark bot as up/healthy at the start of each bar processing
         mark_bot_up(instance_name, is_up=True)
 
-        active_rebalance_threshold = float(cfg.strategy.rebalance_threshold_w)
+        # Initial threshold from merged MR params (will be overridden if meta/trend mode)
+        active_rebalance_threshold = float(mr_params.get("rebalance_threshold_w", 0.0))
 
         with BAR_LATENCY.labels(instance=instance_name).time():
             try:
@@ -615,34 +654,22 @@ def main():
             # Fix: Use correct params for bands if Meta Strategy is active
             strat_type = getattr(cfg.strategy, "strategy_type", "mean_reversion")
             
-            # Default to base config
-            p_entry = cfg.strategy.flip_band_entry
-            p_exit = cfg.strategy.flip_band_exit
-            p_k = cfg.strategy.vol_adapt_k
-            
-            if strat_type == "meta":
-                # If Meta, use MR overrides for the visual bands
-                mr_opts = cfg.strategy.mean_reversion_overrides
-                if mr_opts:
-                    p_entry = float(mr_opts.get("flip_band_entry", p_entry))
-                    p_exit = float(mr_opts.get("flip_band_exit", p_exit))
-                    p_k = float(mr_opts.get("vol_adapt_k", p_k))
-
-            L = int(cfg.strategy.trend_lookback)
-            if strat_type == "meta":
-                mr_opts = cfg.strategy.mean_reversion_overrides
-                if mr_opts:
-                    L = int(mr_opts.get("trend_lookback", L))
-
+            # Use merged params for signal display (parity with backtest)
+            p_entry = float(mr_params.get("flip_band_entry", 0.025))
+            p_exit = float(mr_params.get("flip_band_exit", 0.015))
+            p_k = float(mr_params.get("vol_adapt_k", 0.0))
+            L = int(mr_params.get("trend_lookback", 200))
+            trend_kind = mr_params.get("trend_kind", "roc")
+            vol_window = int(mr_params.get("vol_window", 60))
 
             ser_close = df["close"].astype(float)
-            if cfg.strategy.trend_kind == "sma":
+            if trend_kind == "sma":
                 sma = ser_close.rolling(L).mean()
                 cur_ratio = float(ser_close.iloc[-1] / max(sma.iloc[-1], 1e-12) - 1.0)
             else:
                 prev = ser_close.shift(L).iloc[-1]
                 cur_ratio = float(ser_close.iloc[-1] / max(prev, 1e-12) - 1.0)
-            rv = float(ser_close.pct_change().rolling(cfg.strategy.vol_window).std().iloc[-1])
+            rv = float(ser_close.pct_change().rolling(vol_window).std().iloc[-1])
             
             entry = p_entry + p_k * (rv if rv == rv else 0.0)
             exitb = p_exit + p_k * (rv if rv == rv else 0.0)
@@ -658,12 +685,18 @@ def main():
             gate_reason = "open"
             funding_rate = 0.0
             
+            # Extract gate and funding params from merged config (parity with backtest)
+            gate_window_days = int(mr_params.get("gate_window_days", 0))
+            gate_roc_threshold = float(mr_params.get("gate_roc_threshold", 0.0))
+            funding_limit_long = float(mr_params.get("funding_limit_long", 0.05))
+            funding_limit_short = float(mr_params.get("funding_limit_short", -0.05))
+            
             # 1. Trend Gate (Legacy)
-            if cfg.strategy.gate_window_days and cfg.strategy.gate_roc_threshold:
+            if gate_window_days and gate_roc_threshold:
                 day_close = ser_close.resample("1D").last().shift(1)
-                if len(day_close) > cfg.strategy.gate_window_days:
-                    droc = float(day_close.iloc[-1] / max(day_close.shift(cfg.strategy.gate_window_days).iloc[-1], 1e-12) - 1.0)
-                    if abs(droc) < cfg.strategy.gate_roc_threshold:
+                if len(day_close) > gate_window_days:
+                    droc = float(day_close.iloc[-1] / max(day_close.shift(gate_window_days).iloc[-1], 1e-12) - 1.0)
+                    if abs(droc) < gate_roc_threshold:
                         gate_ok = False
                         gate_reason = "trend_weak"
 
@@ -673,7 +706,7 @@ def main():
                 funding_rate = adapter.get_funding_rate(funding_ticker)  
                 mark_funding_rate(instance_name, funding_rate)
                 
-                if funding_rate > cfg.strategy.funding_limit_long:
+                if funding_rate > funding_limit_long:
                     # Don't block here, just mark the reason. Strategy logic will handle direction.
                     # But for safety, we flag it.
                     if cur_ratio <= -entry: # Only care if we might buy
@@ -681,7 +714,7 @@ def main():
                         gate_reason = f"funding_high ({funding_rate:.4f}%)"
                         log.warning("Gate CLOSE: Market Euphoria! Funding=%.4f%%", funding_rate)
 
-                if funding_rate < cfg.strategy.funding_limit_short:
+                if funding_rate < funding_limit_short:
                     if cur_ratio >= entry: # Only care if we might sell
                         gate_ok = False
                         gate_reason = f"funding_low ({funding_rate:.4f}%)"
@@ -700,17 +733,17 @@ def main():
 
             try:
                 if strat_type == "trend":
-                    # TREND Strategy
+                    # TREND Strategy - Use tr_params for parity with backtest
                     tp = TrendParams(
-                        fast_period=cfg.strategy.fast_period,
-                        slow_period=cfg.strategy.slow_period,
-                        ma_type=cfg.strategy.ma_type,
-                        cooldown_minutes=cfg.strategy.cooldown_minutes,
-                        step_allocation=cfg.strategy.step_allocation,
-                        max_position=cfg.strategy.max_position,
-                        long_only=cfg.strategy.long_only,
-                        funding_limit_long=cfg.strategy.funding_limit_long,
-                        funding_limit_short=cfg.strategy.funding_limit_short
+                        fast_period=int(tr_params.get("fast_period", 50)),
+                        slow_period=int(tr_params.get("slow_period", 200)),
+                        ma_type=tr_params.get("ma_type", "ema"),
+                        cooldown_minutes=int(tr_params.get("cooldown_minutes", 180)),
+                        step_allocation=float(tr_params.get("step_allocation", 1.0)),
+                        max_position=float(tr_params.get("max_position", 1.0)),
+                        long_only=bool(tr_params.get("long_only", True)),
+                        funding_limit_long=float(tr_params.get("funding_limit_long", 0.05)),
+                        funding_limit_short=float(tr_params.get("funding_limit_short", -0.05))
                     )
                     strat = TrendStrategy(tp)
                     plan = strat.generate_positions(df) # Requires OHLC
@@ -723,7 +756,7 @@ def main():
                     # --- ALERT: Regime Switch (Place this here!) ---
                     if "regime_score" in plan.columns:
                         current_score = float(plan["regime_score"].iloc[-1])
-                        adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
+                        adx_thresh = float(mr_params.get("adx_threshold", 25.0))
                         
                         # Determine current regime
                         current_regime = "TREND" if current_score > adx_thresh else "CHOP"
@@ -782,31 +815,31 @@ def main():
                         funding_limit_short=float(tr_merged.get("funding_limit_short", -0.05))
                     )
                     
-                    strat = MetaStrategy(mr_p, tr_p, adx_threshold=cfg.strategy.adx_threshold)
+                    strat = MetaStrategy(mr_p, tr_p, adx_threshold=float(mr_params.get("adx_threshold", 25.0)))
                     # Pass the dataframe (requires OHLC) logic handled by generate_positions
                     plan = strat.generate_positions(df) 
                     target_w = float(plan["target_w"].iloc[-1])
 
                 else:
-                    # DEFAULT: Mean Reversion
+                    # DEFAULT: Mean Reversion - Use mr_params for parity with backtest
                     sp = StratParams(
-                        trend_kind=cfg.strategy.trend_kind,
-                        trend_lookback=cfg.strategy.trend_lookback,
-                        flip_band_entry=cfg.strategy.flip_band_entry,
-                        flip_band_exit=cfg.strategy.flip_band_exit,
-                        vol_window=cfg.strategy.vol_window,
-                        vol_adapt_k=cfg.strategy.vol_adapt_k,
-                        target_vol=getattr(cfg.strategy, "target_vol", 0.5),
-                        cooldown_minutes=cfg.strategy.cooldown_minutes,
-                        step_allocation=cfg.strategy.step_allocation,
-                        max_position=cfg.strategy.max_position,
-                        rebalance_threshold_w=cfg.strategy.rebalance_threshold_w,
-                        min_trade_btc=getattr(cfg.strategy, "min_trade_btc", 0.0),
-                        gate_window_days=cfg.strategy.gate_window_days,
-                        gate_roc_threshold=cfg.strategy.gate_roc_threshold,
-                        long_only=getattr(cfg.strategy, "long_only", True),
-                        funding_limit_long=cfg.strategy.funding_limit_long,
-                        funding_limit_short=cfg.strategy.funding_limit_short
+                        trend_kind=mr_params.get("trend_kind", "roc"),
+                        trend_lookback=int(mr_params.get("trend_lookback", 200)),
+                        flip_band_entry=float(mr_params.get("flip_band_entry", 0.025)),
+                        flip_band_exit=float(mr_params.get("flip_band_exit", 0.015)),
+                        vol_window=int(mr_params.get("vol_window", 60)),
+                        vol_adapt_k=float(mr_params.get("vol_adapt_k", 0.0)),
+                        target_vol=float(mr_params.get("target_vol", 0.5)),
+                        cooldown_minutes=int(mr_params.get("cooldown_minutes", 60)),
+                        step_allocation=float(mr_params.get("step_allocation", 0.33)),
+                        max_position=float(mr_params.get("max_position", 1.0)),
+                        rebalance_threshold_w=float(mr_params.get("rebalance_threshold_w", 0.0)),
+                        min_trade_btc=float(mr_params.get("min_trade_btc", 0.0)),
+                        gate_window_days=int(mr_params.get("gate_window_days", 0)),
+                        gate_roc_threshold=float(mr_params.get("gate_roc_threshold", 0.0)),
+                        long_only=bool(int(mr_params.get("long_only", 1))),
+                        funding_limit_long=float(mr_params.get("funding_limit_long", 0.05)),
+                        funding_limit_short=float(mr_params.get("funding_limit_short", -0.05))
                     )
                     strat = EthBtcStrategy(sp)
                     # Note: EthBtcStrategy usually takes 'close' series. 
@@ -843,11 +876,11 @@ def main():
                             
                             current_regime = "TREND" if current_score > adx_thresh else "CHOP"
                             
-                            # Pick the correct threshold based on regime
+                            # Pick the correct threshold based on regime (parity with backtest)
                             if current_regime == "TREND":
-                                active_rebalance_threshold = float(tr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                                active_rebalance_threshold = float(tr_params.get("rebalance_threshold_w", 0.0))
                             else:
-                                active_rebalance_threshold = float(mr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                                active_rebalance_threshold = float(mr_params.get("rebalance_threshold_w", 0.0))
                             
                         # 3. Decision
                         if (time_passed.total_seconds() >= (reset_days * 86400)) and (current_score >= reset_score):
@@ -920,12 +953,12 @@ def main():
                     adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
                     
                     if current_score > adx_thresh:
-                        # TREND mode - use Trend threshold (usually tighter)
-                        active_rebalance_threshold = float(tr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                        # TREND mode - use Trend threshold (parity with backtest)
+                        active_rebalance_threshold = float(tr_params.get("rebalance_threshold_w", 0.0))
                         log.debug("[THRESHOLD] Using TREND threshold: %.4f", active_rebalance_threshold)
                     else:
-                        # MR mode - use MR threshold (usually looser)
-                        active_rebalance_threshold = float(mr_merged.get("rebalance_threshold_w", cfg.strategy.rebalance_threshold_w))
+                        # MR mode - use MR threshold (parity with backtest)
+                        active_rebalance_threshold = float(mr_params.get("rebalance_threshold_w", 0.0))
                         log.debug("[THRESHOLD] Using MR threshold: %.4f", active_rebalance_threshold)
             # For non-Meta strategies, use config value (already set at line 375)
             # ------------------------------------------------
@@ -982,16 +1015,23 @@ def main():
             # === DYNAMIC POSITION SIZING ===
             from core.position_sizer import PositionSizer, PositionSizerConfig
             
-            # Create position sizer config
+            # Use appropriate params based on current regime (parity with backtest)
+            # Default to MR params; trend mode uses tr_params if in trend regime
+            active_sizing_params = mr_params  # Default: Mean Reversion
+            is_in_trend_mode = (merged_cfg["strategy_type"] == "meta" and current_score > adx_thresh)
+            if is_in_trend_mode:
+                active_sizing_params = tr_params
+            
+            # Create position sizer config using merged params
             sizer_config = PositionSizerConfig(
-                mode=getattr(cfg.strategy, "position_sizing_mode", "static"),
-                base_step=cfg.strategy.step_allocation,
-                target_vol=getattr(cfg.strategy, "position_sizing_target_vol", 0.5),
-                min_step=getattr(cfg.strategy, "position_sizing_min_step", 0.1),
-                max_step=getattr(cfg.strategy, "position_sizing_max_step", 1.0),
-                kelly_win_rate=getattr(cfg.strategy, "kelly_win_rate", 0.55),
-                kelly_avg_win=getattr(cfg.strategy, "kelly_avg_win", 0.02),
-                kelly_avg_loss=getattr(cfg.strategy, "kelly_avg_loss", 0.01),
+                mode=active_sizing_params.get("position_sizing_mode", "static"),
+                base_step=float(active_sizing_params.get("step_allocation", 0.33)),
+                target_vol=float(active_sizing_params.get("position_sizing_target_vol", 0.5)),
+                min_step=float(active_sizing_params.get("position_sizing_min_step", 0.1)),
+                max_step=float(active_sizing_params.get("position_sizing_max_step", 1.0)),
+                kelly_win_rate=float(active_sizing_params.get("kelly_win_rate", 0.55)),
+                kelly_avg_win=float(active_sizing_params.get("kelly_avg_win", 0.02)),
+                kelly_avg_loss=float(active_sizing_params.get("kelly_avg_loss", 0.01)),
             )
             sizer = PositionSizer(sizer_config)
             
@@ -1129,7 +1169,7 @@ def main():
             zone_ok = (zone == "buy_band") or (zone == "sell_band")
             gate_open_ok = bool(gate_ok)
             abs_delta_for_ready = abs(delta_w)
-            delta_ok = abs_delta_for_ready >= float(cfg.strategy.rebalance_threshold_w)
+            delta_ok = abs_delta_for_ready >= float(mr_params.get("rebalance_threshold_w", 0.0))
             risk_ok = not (daily_limit_hit or maxdd_hit)
 
             mark_trade_readiness(
