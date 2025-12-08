@@ -25,6 +25,7 @@ from core.metrics import (
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
+    mark_futures_risk, mark_execution_stats,
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 from core.story_writer import StoryWriter
@@ -437,6 +438,31 @@ def main():
                     # 1. FUTURES MODE
                     # In USDS-M Futures, our "Wallet" is the Margin Balance (USDT)
                     quote_bal = adapter.get_account_balance(quote_asset)
+                    
+                    # --- NEW: Risk Metrics (Margin & Liquidation) ---
+                    try:
+                        # 1. Margin Utilization
+                        # adapter.client is UMFutures
+                        acc_info = adapter.client.account()
+                        total_maint = float(acc_info.get('totalMaintMargin', 0))
+                        total_bal = float(acc_info.get('totalMarginBalance', 1e-9))
+                        margin_util_pct = (total_maint / total_bal) * 100 if total_bal > 0 else 0.0
+
+                        # 2. Liquidation Distance
+                        pos_risks = adapter.client.get_position_risk(symbol=args.symbol)
+                        # API returns list. Filter for current symbol.
+                        risk_entry = next((r for r in pos_risks if r['symbol'] == args.symbol), None)
+                        liq_dist_pct = 0.0
+                        if risk_entry:
+                             liq_px = float(risk_entry.get('liquidationPrice', 0))
+                             mark_px = float(risk_entry.get('markPrice', 0))
+                             if liq_px > 0 and mark_px > 0:
+                                 liq_dist_pct = abs(mark_px - liq_px) / mark_px * 100
+                        
+                        mark_futures_risk(margin_util_pct, liq_dist_pct, args.symbol)
+                    except Exception as e:
+                        # Log debug to avoid spamming main log
+                        log.debug("Risk metric fetch failed: %s", e)
                     base_bal = 0.0 # We don't hold the base asset in futures, we hold contracts
                     
                     # Current Exposure comes from the open Position size
@@ -1336,6 +1362,22 @@ def main():
                         
                         # Log trade to story
                         story.log_trade(bar_dt, side, delta_eth, price, base_asset, quote_asset)
+
+                        # --- NEW: Execution Stats (Slippage) ---
+                        try:
+                            # Fetch fill details for precise slippage
+                            if is_futures: 
+                                 os = adapter.client.query_order(symbol=args.symbol, orderId=oid)
+                            else:
+                                 os = adapter.client.get_order(symbol=args.symbol, orderId=oid)
+                            
+                            fill_px = float(os.get('avgPrice', price))
+                            if fill_px == 0: fill_px = price # Fallback
+                            
+                            slip_bps = (abs(fill_px - price) / price) * 10000
+                            mark_execution_stats(slip_bps, 0.0, "")
+                        except Exception as e:
+                            log.warning("ExStats failed: %s", e)
                     except Exception as e:
                         msg = str(e)
                         reason = "insufficient_balance" if "-2010" in msg else "order_error"

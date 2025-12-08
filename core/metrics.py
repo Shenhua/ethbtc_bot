@@ -70,6 +70,13 @@ EXPOSURE_SIGNAL_WEIGHT = Gauge("exposure_signal_weight", "Signal weight (unlever
 EXPOSURE_NOTIONAL = Gauge("exposure_notional", "Actual leveraged notional exposure as % of margin")
 CONFIG_LONG_ONLY = Gauge("config_long_only", "1 if Long Only, 0 if Shorts Allowed")
 
+# --- NEW METRICS (RISK & EXECUTION) ---
+MARGIN_UTIL = Gauge("margin_utilization_pct", "Used Margin percentage (Futures Only)")
+LIQ_DIST = Gauge("liquidation_distance_pct", "Distance to Liquidation Price %", ["symbol"])
+SLIPPAGE = Summary("execution_slippage_bps", "Trade slippage in BPS (Fill vs Decision Price)")
+FEES_PAID = Counter("fees_paid_total", "Cumulative Fees Paid", ["asset"])
+LAST_TRADE_TS = Gauge("last_trade_timestamp_seconds", "Timestamp of last trade execution")
+
 # ---- Helper functions -----------------------------------------------------
 
 def start_metrics_server(port: int, story_file: str = None) -> None:
@@ -156,3 +163,13 @@ def mark_funding_rate(rate: float) -> None:
 
 def mark_asset_price_usd(asset: str, price: float) -> None:
     PRICE_ASSET_USD.labels(asset=asset.lower()).set(price)
+
+def mark_execution_stats(slippage_bps: float, fee_amt: float, fee_asset: str) -> None:
+    SLIPPAGE.observe(slippage_bps)
+    if fee_asset:
+        FEES_PAID.labels(asset=fee_asset.lower()).inc(fee_amt)
+    LAST_TRADE_TS.set_to_current_time()
+
+def mark_futures_risk(margin_util: float, liq_dist_pct: float, symbol: str) -> None:
+    MARGIN_UTIL.set(margin_util)
+    LIQ_DIST.labels(symbol=symbol).set(liq_dist_pct)

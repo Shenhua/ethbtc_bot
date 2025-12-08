@@ -1,4 +1,14 @@
 {
+  "__inputs": [
+    {
+      "name": "DS_PROMETHEUS",
+      "label": "Prometheus",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus",
+      "pluginName": "Prometheus"
+    }
+  ],
   "annotations": {
     "list": [
       {
@@ -32,7 +42,7 @@
       },
       "id": 1,
       "panels": [],
-      "title": "HUD: FLEET STATUS & RISK",
+      "title": "SUMMARY & KPI",
       "type": "row"
     },
     {
@@ -40,27 +50,21 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Total Account Value (Wallet + Unrealized PnL).",
+      "description": "Total Aggregated Wealth (Spot + Futures Margin)",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "fixed",
             "fixedColor": "green"
           },
-          "decimals": 2,
-          "sparkline": {
-            "fillColor": "rgba(30, 255, 0, 0.18)",
-            "full": false,
-            "lineColor": "rgb(30, 255, 0)",
-            "show": true
-          },
+          "decimals": 0,
           "unit": "currencyUSD"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
+        "w": 4,
         "x": 0,
         "y": 1
       },
@@ -80,12 +84,12 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "title": "\ud83d\udcb0 Total Wealth",
+      "title": "💰 Total Equity",
       "type": "stat",
       "targets": [
         {
-          "expr": "wealth_usd{instance=~\"$instance\"} or wealth_total{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}}",
+          "expr": "sum(wealth_usd)",
+          "legendFormat": "Total USD",
           "refId": "A"
         }
       ]
@@ -95,136 +99,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Current asset balances.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "decimals": 4,
-          "mappings": [],
-          "unit": "none"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 5,
-        "x": 3,
-        "y": 1
-      },
-      "id": 28,
-      "options": {
-        "colorMode": "none",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "vertical",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value_and_name"
-      },
-      "title": "\ud83d\udce6 Assets",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "last_over_time(balance_free{instance=~\"$instance\"}[5m]) > 0.0001",
-          "legendFormat": "{{asset}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Currently Active Strategy Logic.",
+      "description": "Change in equity over 24h",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "blue",
-                  "index": 0,
-                  "text": "Mean Reversion"
-                },
-                "1": {
-                  "color": "orange",
-                  "index": 1,
-                  "text": "Trend"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 1
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 3,
-        "x": 8,
-        "y": 1
-      },
-      "id": 25,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "last"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "title": "\ud83e\udde0 Mode",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "strategy_mode{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Absolute change in wealth over time periods.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -239,117 +119,21 @@
             ]
           },
           "unit": "currencyUSD"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 11,
-        "y": 1
-      },
-      "id": 3,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "title": "\ud83d\udcc5 Period PnL",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "delta(wealth_total{instance=~\"$instance\"}[7d])",
-          "legendFormat": "7d",
-          "refId": "A"
-        },
-        {
-          "expr": "delta(wealth_total{instance=~\"$instance\"}[30d])",
-          "legendFormat": "30d",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Regime Gate Status.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "index": 0,
-                  "text": "CLOSED"
-                },
-                "1": {
-                  "color": "green",
-                  "index": 1,
-                  "text": "OPEN"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          }
         }
       },
       "gridPos": {
         "h": 4,
         "w": 3,
-        "x": 15,
+        "x": 4,
         "y": 1
       },
-      "id": 5,
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "title": "\ud83d\udea7 Gate",
+      "id": 3,
+      "title": "📅 24h PnL",
       "type": "stat",
       "targets": [
         {
-          "expr": "last_over_time(gate_state{gate_state=\"open\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}}",
+          "expr": "sum(delta(wealth_usd[24h]))",
+          "legendFormat": "24h PnL",
           "refId": "A"
         }
       ]
@@ -359,400 +143,20 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "Gross Notional Exposure / Equity",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "SAFE"
-                },
-                "1": {
-                  "color": "red",
-                  "index": 1,
-                  "text": "MAX DD HIT"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 2,
-        "x": 18,
-        "y": 1
-      },
-      "id": 4,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "title": "\ud83d\udee1\ufe0f Risk",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "max_over_time(risk_flags{kind=\"maxdd_hit\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Funding Rate.\nPositive = Longs pay Shorts.\nNegative = Shorts pay Longs.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 4,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": -0.05
-              },
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 0.05
-              }
-            ]
-          },
-          "unit": "percent"
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 2,
-        "x": 20,
-        "y": 1
-      },
-      "id": 6,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "title": "\ud83d\udcb8 Fund",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "last_over_time(funding_rate_pct{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Phoenix Protocol Status. \nACTIVE = Normal Trading.\nWAITING = Crashed/Cooldown Mode.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "green",
-                  "index": 0,
-                  "text": "ACTIVE"
-                },
-                "1": {
-                  "color": "yellow",
-                  "index": 1,
-                  "text": "WAITING"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 1
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 2,
-        "x": 22,
-        "y": 1
-      },
-      "id": 26,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "title": "\ud83d\udd25",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "last_over_time(phoenix_active{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 5
-      },
-      "id": 23,
-      "panels": [],
-      "title": "STRATEGY BRAIN & REGIME \ud83e\udde0",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "ADX Consensus Score. \n> Threshold = Trend Mode.\n< Threshold = Mean Reversion.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 2
-          },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/.*Threshold.*/"
-            },
-            "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    5,
-                    5
-                  ],
-                  "fill": "dash"
-                }
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 16,
-        "x": 0,
-        "y": 6
-      },
-      "id": 24,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        }
-      },
-      "title": "\ud83e\udde0 Regime Analysis",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "regime_score{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}} Score",
-          "refId": "A"
-        },
-        {
-          "expr": "regime_threshold{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}} Threshold",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Current leverage multiplier for futures trading.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "yellow",
-                "value": 3
-              },
-              {
-                "color": "red",
-                "value": 5
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 2,
-        "x": 16,
-        "y": 6
-      },
-      "id": 35,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      },
-      "title": "⚡ Lev",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "leverage{instance=~\"$instance\"} or (exposure_base_weight{kind=\"current\", instance=~\"$instance\"} * 0 + 1)",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Exposure comparison:\n- Signal Weight = Strategy's intended position (unleveraged)\n- Notional = Actual leveraged exposure",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 1,
           "max": 200,
-          "min": -200,
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
-                "value": -150
-              },
-              {
-                "color": "orange",
-                "value": -100
-              },
-              {
-                "color": "gray",
-                "value": -10
-              },
-              {
                 "color": "green",
-                "value": 10
+                "value": null
               },
               {
                 "color": "orange",
@@ -765,41 +169,22 @@
             ]
           },
           "unit": "percent"
-        },
-        "overrides": []
+        }
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 6
+        "w": 3,
+        "x": 7,
+        "y": 1
       },
-      "id": 29,
-      "options": {
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "textMode": "value_and_name"
-      },
-      "title": "📊 Exposure",
+      "id": 4,
+      "title": "⚡ Leverage",
       "type": "gauge",
       "targets": [
         {
-          "expr": "exposure_signal_weight{instance=~\"$instance\"} or (exposure_base_weight{kind=\"current\", instance=~\"$instance\"} * 100)",
-          "legendFormat": "Signal",
+          "expr": "max(exposure_notional) or vector(0)",
+          "legendFormat": "Max Lev",
           "refId": "A"
-        },
-        {
-          "expr": "exposure_notional{instance=~\"$instance\"} or (exposure_base_weight{kind=\"current\", instance=~\"$instance\"} * 100)",
-          "legendFormat": "Notional",
-          "refId": "B"
         }
       ]
     },
@@ -808,900 +193,14 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Dynamic position step size and realized volatility.\nStep is used to smooth position changes.\nVol affects step in volatility targeting mode.",
+      "description": "Margin Utilization (Futures)",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2
-          },
-          "unit": "percentunit"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Vol"
-            },
-            "properties": [
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "orange",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 10
-      },
-      "id": 36,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        }
-      },
-      "title": "🎚️ Position Step & Vol",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "position_step_size{instance=~\"$instance\"}",
-          "legendFormat": "Step",
-          "refId": "A"
-        },
-        {
-          "expr": "realized_volatility{instance=~\"$instance\"}",
-          "legendFormat": "Vol",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 14
-      },
-      "id": 10,
-      "panels": [],
-      "title": "STRATEGY X-RAY (SIGNALS)",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Visual level bar showing position relative to buy/sell zones.\\n\\n\ud83d\udfe2 GREEN ZONE = BUY signal\\n\ud83d\udd34 RED ZONE = SELL signal\\n\u26aa NEUTRAL = Hold\\n\ud83d\udfe1 YELLOW DOT = Current signal",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 30,
-            "gradientMode": "none",
-            "hideFrom": {
-              "tooltip": false,
-              "viz": false,
-              "legend": false
-            },
-            "lineInterpolation": "stepAfter",
-            "lineWidth": 2,
-            "pointSize": 12,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "always",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "decimals": 2,
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Signal"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#FFFF00",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 2
-              },
-              {
-                "id": "custom.pointSize",
-                "value": 5
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              },
-              {
-                "id": "custom.lineInterpolation",
-                "value": "smooth"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "BUY Zone Top"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillBelowTo",
-                "value": "BUY Zone Bottom"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 40
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "custom.showPoints",
-                "value": "never"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "BUY Zone Bottom"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "green",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "custom.showPoints",
-                "value": "never"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SELL Zone Top"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillBelowTo",
-                "value": "SELL Zone Bottom"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 40
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "custom.showPoints",
-                "value": "never"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "SELL Zone Bottom"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "custom.showPoints",
-                "value": "never"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Neutral Top"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "gray",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.fillBelowTo",
-                "value": "Neutral Bottom"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 15
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "custom.showPoints",
-                "value": "never"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Neutral Bottom"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "gray",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 0
-              },
-              {
-                "id": "custom.showPoints",
-                "value": "never"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/.*Boundary.*/"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "white",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 1
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    5,
-                    5
-                  ],
-                  "fill": "dash"
-                }
-              },
-              {
-                "id": "custom.showPoints",
-                "value": "never"
-              },
-              {
-                "id": "custom.fillOpacity",
-                "value": 0
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 14
-      },
-      "id": 34,
-      "options": {
-        "legend": {
-          "calcs": [
-            "last"
-          ],
-          "displayMode": "table",
-          "placement": "right",
-          "showLegend": true,
-          "sortBy": "Name",
-          "sortDesc": false
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "title": "\ud83d\udcca Signal Level Bar (Buy/Sell Zones)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "signal_ratio{instance=~\"$instance\"}",
-          "legendFormat": "Signal",
-          "refId": "A"
-        },
-        {
-          "expr": "signal_band{kind=\"upper_entry\", instance=~\"$instance\"}",
-          "legendFormat": "Sell Threshold",
-          "refId": "B"
-        },
-        {
-          "expr": "-signal_band{kind=\"lower_entry\", instance=~\"$instance\"}",
-          "legendFormat": "Buy Threshold",
-          "refId": "C"
-        },
-        {
-          "expr": "vector(4)",
-          "hide": true,
-          "legendFormat": "Max",
-          "refId": "D"
-        },
-        {
-          "expr": "vector(-4)",
-          "hide": true,
-          "legendFormat": "Min",
-          "refId": "E"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "spanNulls": false
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRefId",
-              "options": "A"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "yellow",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineWidth",
-                "value": 4
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRefId",
-              "options": "D"
-            },
-            "properties": [
-              {
-                "id": "custom.fillBelowTo",
-                "value": "B"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "rgba(255, 0, 0, 0.1)",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRefId",
-              "options": "C"
-            },
-            "properties": [
-              {
-                "id": "custom.fillBelowTo",
-                "value": "E"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "rgba(0, 255, 0, 0.1)",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byRefId",
-              "options": "B"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "red",
-                  "mode": "fixed"
-                }
-              },
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    5,
-                    5
-                  ]
-                }
-              }
-            ]
-          }
-        ]
-      }
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Distance to next action (in basis points). \n0 = ACTION (In Zone).\nHigh = Waiting.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "max": 1000,
+          "max": 100,
           "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "green",
-                "value": 50
-              },
-              {
-                "color": "red",
-                "value": 500
-              }
-            ]
-          },
-          "unit": "bps"
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 18,
-        "x": 0,
-        "y": 24
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        }
-      },
-      "title": "\ud83d\udccf Dist to Action (bps)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "last_over_time(dist_to_buy_bps{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} to BUY",
-          "refId": "A"
-        },
-        {
-          "expr": "last_over_time(dist_to_sell_bps{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} to SELL",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Distance to nearest trade zone (BUY or SELL).\n0 = IN ZONE (action triggered)\nLower = closer to action",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "decimals": 2,
-          "max": 3,
-          "min": -3,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              },
-              {
-                "color": "gray",
-                "value": -0.5
-              },
-              {
-                "color": "red",
-                "value": 2
-              }
-            ]
-          },
-          "unit": "none"
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 24
-      },
-      "id": 37,
-      "options": {
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "textMode": "value"
-      },
-      "title": "🧭 Signal Strength",
-      "type": "gauge",
-      "targets": [
-        {
-          "expr": "signal_ratio{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 32
-      },
-      "id": 13,
-      "panels": [],
-      "title": "EXECUTION & DEBUGGING",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 2
-          },
-          "unit": "percentunit"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/.*Target/"
-            },
-            "properties": [
-              {
-                "id": "custom.lineStyle",
-                "value": {
-                  "dash": [
-                    5,
-                    5
-                  ],
-                  "fill": "dash"
-                }
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "blue",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 33
-      },
-      "id": 14,
-      "title": "Weight Tracking (Target vs Current)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "last_over_time(exposure_base_weight{kind=\"target\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Target",
-          "refId": "A"
-        },
-        {
-          "expr": "last_over_time(exposure_base_weight{kind=\"current\", instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} Current",
-          "refId": "B"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 80
-          }
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 33
-      },
-      "id": 15,
-      "title": "Skipped Trades by Reason",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "increase(skips_total{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{instance}} - {{reason}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 41
-      },
-      "id": 16,
-      "panels": [],
-      "title": "PORTFOLIO & PRICES",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "scaleDistribution": {
-              "type": "log"
-            }
-          }
-        }
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 10,
-        "x": 0,
-        "y": 42
-      },
-      "id": 17,
-      "title": "Holdings History (Log Scale)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "last_over_time(balance_free{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{asset}} ({{instance}})",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "unit": "currencyUSD"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byRegexp",
-              "options": "/.* ETH/USD/"
-            },
-            "properties": [
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 14,
-        "x": 10,
-        "y": 42
-      },
-      "id": 18,
-      "title": "Market Prices (USD)",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "last_over_time(price_asset_usd{instance=~\"$instance\"}[1h])",
-          "legendFormat": "{{asset}}/USD",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Bot actions and decisions over time.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 80,
-            "lineWidth": 0,
-            "stacking": {
-              "mode": "normal"
-            }
-          }
-        }
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 12,
-        "x": 0,
-        "y": 48
-      },
-      "id": 30,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        }
-      },
-      "title": "\ud83d\udcca Actions & Decisions",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "increase(skips_total{instance=~\"$instance\"}[5m])",
-          "legendFormat": "{{instance}} - {{reason}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Bar processing latency (time between bar close and strategy execution).",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1711,210 +210,386 @@
               },
               {
                 "color": "yellow",
-                "value": 2
+                "value": 50
               },
               {
                 "color": "red",
-                "value": 5
+                "value": 80
               }
             ]
           },
-          "unit": "s"
+          "unit": "percent"
         }
       },
       "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 10,
+        "y": 1
+      },
+      "id": 5,
+      "title": "⚖️ Margin Util",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "max(margin_utilization_pct) or vector(0)",
+          "legendFormat": "Max Util",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "none"
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 13,
+        "y": 1
+      },
+      "id": 6,
+      "title": "🤖 Bots Active",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "count(up)",
+          "legendFormat": "Bots",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 10,
+      "panels": [],
+      "title": "FLEET OVERVIEW",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto",
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Liquidation Dist %"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 5
+                    },
+                    {
+                      "color": "green",
+                      "value": 20
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Slippage BPS"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 5
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 6
+      },
+      "id": 11,
+      "options": {
+        "footer": {
+          "enablePagination": true,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": "never"
+        },
+        "showHeader": true
+      },
+      "pluginVersion": "10.0.0",
+      "targets": [
+        {
+          "expr": "wealth_usd",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Equity",
+          "refId": "A"
+        },
+        {
+          "expr": "pnl_quote",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "PnL Session",
+          "refId": "B"
+        },
+        {
+          "expr": "margin_utilization_pct",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Margin Util %",
+          "refId": "C"
+        },
+        {
+          "expr": "liquidation_distance_pct",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Liquidation Dist %",
+          "refId": "D"
+        },
+        {
+          "expr": "rate(execution_slippage_bps_sum[1h])/rate(execution_slippage_bps_count[1h])",
+          "format": "table",
+          "instant": true,
+          "legendFormat": "Slippage BPS",
+          "refId": "E"
+        }
+      ],
+      "title": "Bot Status Details",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": {
+            "mode": "outer",
+            "byField": "instance"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 20,
+      "panels": [],
+      "title": "RISK & EXECUTION",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
         "h": 6,
-        "w": 6,
+        "w": 12,
+        "x": 0,
+        "y": 15
+      },
+      "id": 21,
+      "title": "Margin Utilization History",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "margin_utilization_pct",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
         "x": 12,
-        "y": 48
+        "y": 15
       },
-      "id": 31,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "mean"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value_and_name"
-      },
-      "title": "\u23f1\ufe0f Latency",
-      "type": "stat",
+      "id": 22,
+      "title": "Liquidation Distance Trend",
+      "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(bar_latency_seconds_sum{instance=~\"$instance\"}[5m]) / rate(bar_latency_seconds_count{instance=~\"$instance\"}[5m])",
-          "legendFormat": "{{instance}} Avg",
+          "expr": "liquidation_distance_pct",
+          "legendFormat": "{{symbol}}",
           "refId": "A"
         }
       ]
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
       },
-      "description": "Indicates if bot can take short positions.\\nBLUE = Long Only\\nORANGE = Shorts Allowed",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
+      "id": 100,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
           },
-          "mappings": [
+          "title": "Signal & Zones",
+          "type": "timeseries",
+          "gridPos": {
+            "x": 0,
+            "y": 1,
+            "w": 24,
+            "h": 8
+          },
+          "id": 101,
+          "targets": [
             {
-              "options": {
-                "0": {
-                  "text": "LONG ONLY",
-                  "color": "blue"
-                }
-              },
-              "type": "value"
+              "expr": "signal_ratio{instance=\"$instance\"}",
+              "legendFormat": "Signal",
+              "refId": "A"
             },
             {
-              "options": {
-                "1": {
-                  "text": "SHORTS OK",
-                  "color": "orange"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 0.5
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 3,
-        "x": 18,
-        "y": 48
-      },
-      "id": 32,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "last"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "textMode": "value"
-      },
-      "title": "\ud83d\udd12 Mode",
-      "type": "stat",
-      "targets": [
-        {
-          "expr": "config_long_only{instance=~\"$instance\"} or (exposure_base_weight{kind=\"current\", instance=~\"$instance\"} * 0 + 1)",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Current regime state with hysteresis.\\n-1 = Mean Reversion\\n1 = Trend Following",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "-1": {
-                  "text": "MR",
-                  "color": "blue"
-                }
-              },
-              "type": "value"
+              "expr": "signal_band{kind=\"upper_entry\", instance=\"$instance\"}",
+              "legendFormat": "Sell Zone",
+              "refId": "B"
             },
             {
-              "options": {
-                "1": {
-                  "text": "TREND",
-                  "color": "orange"
-                }
-              },
-              "type": "value"
+              "expr": "-signal_band{kind=\"lower_entry\", instance=\"$instance\"}",
+              "legendFormat": "Buy Zone",
+              "refId": "C"
             }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "blue",
-                "value": null
-              },
-              {
-                "color": "orange",
-                "value": 0
-              }
-            ]
-          }
-        }
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 3,
-        "x": 21,
-        "y": 48
-      },
-      "id": 33,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": [
-            "last"
-          ],
-          "fields": "",
-          "values": false
+          ]
         },
-        "textMode": "value"
-      },
-      "title": "\ud83c\udfaf State",
-      "type": "stat",
-      "targets": [
         {
-          "expr": "regime_state{instance=~\"$instance\"}",
-          "legendFormat": "{{instance}}",
-          "refId": "A"
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "title": "Assets",
+          "type": "stat",
+          "gridPos": {
+            "x": 0,
+            "y": 9,
+            "w": 24,
+            "h": 4
+          },
+          "id": 102,
+          "targets": [
+            {
+              "expr": "balance_free{instance=\"$instance\"} > 0.0001",
+              "legendFormat": "{{asset}}",
+              "refId": "A"
+            }
+          ]
         }
-      ]
+      ],
+      "repeat": "instance",
+      "title": "BOT DEEP DIVE: $instance",
+      "type": "row"
     }
   ],
-  "refresh": "1m",
   "schemaVersion": 38,
   "style": "dark",
   "tags": [
-    "ethbtc",
-    "admiral",
-    "hybrid"
+    "hybrid",
+    "futures",
+    "spot",
+    "v5"
   ],
   "templating": {
     "list": [
@@ -1936,15 +611,10 @@
       },
       {
         "current": {
-          "selected": false,
           "text": "All",
           "value": "$__all"
         },
-        "datasource": {
-          "type": "prometheus",
-          "uid": "${DS_PROMETHEUS}"
-        },
-        "definition": "label_values(wealth_total, instance)",
+        "definition": "label_values(up, instance)",
         "hide": 0,
         "includeAll": true,
         "label": "Instance",
@@ -1952,10 +622,12 @@
         "name": "instance",
         "options": [],
         "query": {
-          "query": "label_values(wealth_total, instance)",
+          "query": "label_values(up, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
         "sort": 1,
         "type": "query"
       }
@@ -1965,10 +637,9 @@
     "from": "now-12h",
     "to": "now"
   },
-  "timepicker": {},
   "timezone": "",
-  "title": "ETHBTC Admiral V5 (Hybrid)",
-  "uid": "ethbtc-admiral-v5",
-  "version": 8,
+  "title": "Hybrid Spot & Futures Cockpit V5",
+  "uid": "hybrid_cockpit_v5",
+  "version": 1,
   "weekStart": ""
 }
