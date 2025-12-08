@@ -22,10 +22,11 @@ from core.metrics import (
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
     REGIME_STATE, PHOENIX_ACTIVE, POSITION_STEP, REALIZED_VOL,
     LEVERAGE, EXPOSURE_SIGNAL_WEIGHT, EXPOSURE_NOTIONAL, CONFIG_LONG_ONLY,
+    FEES_PAID, LIQ_DIST, SLIPPAGE, LAST_TRADE_TS,
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
-    mark_futures_risk, mark_execution_stats,
+    mark_futures_risk, mark_execution_stats, mark_bot_up,
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 from core.story_writer import StoryWriter
@@ -95,11 +96,11 @@ def start_status_server(port: int = 9110):
 
     return update_status
 
-def inc_rejection(reason: str = "error") -> None:
+def inc_rejection(instance: str, reason: str = "error") -> None:
     try:
-        REJECTIONS.labels(reason=reason).inc()
+        REJECTIONS.labels(instance=instance, reason=reason).inc()
     except Exception:
-        REJECTIONS.inc()
+        REJECTIONS.labels(instance=instance, reason="error").inc()
 
 logging.basicConfig(level=os.getenv("LOGLEVEL","INFO"))
 log = logging.getLogger("live_enhanced")
@@ -222,13 +223,8 @@ def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, c
     if threshold_loss > 0.0 and daily_pnl <= -threshold_loss:
         daily_limit_hit = True
 
-    # --- Initialize Metrics to 0 to ensure they appear in Prometheus ---
-    FEES_PAID.labels(asset=args.quote_asset.lower()).inc(0)
-    LIQ_DIST.labels(symbol=args.symbol).set(0.0)
-    SLIPPAGE.observe(0.0)
-    LAST_TRADE_TS.set(0.0)
-    
-    # --- Start Status Server ---   state["risk_equity_high"] = equity_high
+    # 5. Save State
+    state["risk_equity_high"] = equity_high
     state["risk_current_date"] = current_date.isoformat()
     state["risk_daily_start_wealth"] = daily_start
     state["risk_daily_limit_hit"] = daily_limit_hit
@@ -257,6 +253,10 @@ def main():
         
     log.name = args.symbol
     log.info("State file: %s", args.state)
+
+    # Determine instance name for Prometheus metrics labels
+    instance_name = os.getenv("INSTANCE_NAME") or f"{args.mode}_{args.symbol.lower()}"
+    log.info("Instance name for metrics: %s", instance_name)
 
     cfg = load_config(args.params)
 
@@ -300,7 +300,7 @@ def main():
         # Set Leverage on startup
         lev = getattr(cfg.execution, "leverage", 1)
         adapter.set_leverage(args.symbol, lev)
-        LEVERAGE.set(lev)
+        LEVERAGE.labels(instance=instance_name).set(lev)
         log.info("[FUTURES] Leverage set to %dx for %s", lev, args.symbol)
         
     else:
@@ -311,11 +311,11 @@ def main():
             base_url=base_url,
         )
         adapter = BinanceSpotAdapter(client)
-        LEVERAGE.set(1)
+        LEVERAGE.labels(instance=instance_name).set(1)
 
     # Set Long Only Metric
     is_long_only = getattr(cfg.strategy, "long_only", True)
-    CONFIG_LONG_ONLY.set(1 if is_long_only else 0)
+    CONFIG_LONG_ONLY.labels(instance=instance_name).set(1 if is_long_only else 0)
 
     try:
         # Futures and Spot have different exchange_info() signatures
@@ -388,9 +388,12 @@ def main():
             time.sleep(cfg.execution.poll_sec)
             continue
 
+        # Mark bot as up/healthy at the start of each bar processing
+        mark_bot_up(instance_name, is_up=True)
+
         active_rebalance_threshold = float(cfg.strategy.rebalance_threshold_w)
 
-        with BAR_LATENCY.time():
+        with BAR_LATENCY.labels(instance=instance_name).time():
             try:
                 ks = adapter.get_klines(args.symbol, cfg.execution.interval, limit=600)
                 df = pd.DataFrame(ks)
@@ -464,7 +467,7 @@ def main():
                              if liq_px > 0 and mark_px > 0:
                                  liq_dist_pct = abs(mark_px - liq_px) / mark_px * 100
                         
-                        mark_futures_risk(margin_util_pct, liq_dist_pct, args.symbol)
+                        mark_futures_risk(instance_name, margin_util_pct, liq_dist_pct, args.symbol)
                     except Exception as e:
                         # Log debug to avoid spamming main log
                         log.debug("Risk metric fetch failed: %s", e)
@@ -497,8 +500,8 @@ def main():
                     signal_weight = cur_w / lev if lev > 0 else cur_w
                     
                     # Export exposure metrics
-                    EXPOSURE_NOTIONAL.set(cur_w * 100)  # Leveraged exposure as %
-                    EXPOSURE_SIGNAL_WEIGHT.set(signal_weight * 100)  # Signal weight as %
+                    EXPOSURE_NOTIONAL.labels(instance=instance_name).set(cur_w * 100)  # Leveraged exposure as %
+                    EXPOSURE_SIGNAL_WEIGHT.labels(instance=instance_name).set(signal_weight * 100)  # Signal weight as %
                     
                     # Log balance occasionally
                     if state.get("last_balance_log_ts", 0) < now_s - 300:
@@ -562,12 +565,12 @@ def main():
             _update_risk_state(state, W, bar_dt, cfg)
 
             risk_mode_str = getattr(cfg.risk, "risk_mode", "fixed_basis")
-            mark_risk_mode(risk_mode_str)
+            mark_risk_mode(instance_name, risk_mode_str)
 
             daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
             maxdd_hit = bool(state.get("risk_maxdd_hit", False))
-            mark_risk_flags(daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
-            PHOENIX_ACTIVE.set(1.0 if maxdd_hit else 0.0)  # Update Phoenix status
+            mark_risk_flags(instance_name, daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
+            PHOENIX_ACTIVE.labels(instance=instance_name).set(1.0 if maxdd_hit else 0.0)  # Update Phoenix status
 
 
             # --- ALERT: Risk Trigger (Place this here!) ---
@@ -590,19 +593,19 @@ def main():
             q_usd, b_usd = 0.0, 0.0
             try:
                 if quote_asset == "USDT":
-                    mark_asset_price_usd("usdt", 1.0)
+                    mark_asset_price_usd(instance_name, "usdt", 1.0)
                     q_usd = 1.0
                 else:
                     q_usd = adapter.get_usd_price(f"{quote_asset}USDT")
-                    mark_asset_price_usd(quote_asset, q_usd)
+                    mark_asset_price_usd(instance_name, quote_asset, q_usd)
 
                 b_usd = adapter.get_usd_price(f"{base_asset}USDT")
-                mark_asset_price_usd(base_asset, b_usd)
+                mark_asset_price_usd(instance_name, base_asset, b_usd)
             except Exception:
                 pass
             
             if q_usd > 0:
-                WEALTH_USD.set(W * q_usd)
+                WEALTH_USD.labels(instance=instance_name).set(W * q_usd)
             
             log.debug("Wallet: %s=%.8f, %s=%.8f, W=%.8f, cur_w=%.4f", 
                       quote_asset, quote_bal, base_asset, base_bal, W, cur_w)
@@ -644,10 +647,10 @@ def main():
             exitb = p_exit + p_k * (rv if rv == rv else 0.0)
 
             # Export Dynamic Bands to Prometheus
-            SIGNAL_BAND.labels("upper_entry").set(entry)
-            SIGNAL_BAND.labels("lower_entry").set(-entry)
-            SIGNAL_BAND.labels("upper_exit").set(exitb)
-            SIGNAL_BAND.labels("lower_exit").set(-exitb)
+            SIGNAL_BAND.labels(instance=instance_name, kind="upper_entry").set(entry)
+            SIGNAL_BAND.labels(instance=instance_name, kind="lower_entry").set(-entry)
+            SIGNAL_BAND.labels(instance=instance_name, kind="upper_exit").set(exitb)
+            SIGNAL_BAND.labels(instance=instance_name, kind="lower_exit").set(-exitb)
 
             # --- GATE & FUNDING CHECKS ---
             gate_ok = True
@@ -667,7 +670,7 @@ def main():
             funding_ticker = f"{base_asset}USDT"
             try:
                 funding_rate = adapter.get_funding_rate(funding_ticker)  
-                mark_funding_rate(funding_rate)
+                mark_funding_rate(instance_name, funding_rate)
                 
                 if funding_rate > cfg.strategy.funding_limit_long:
                     # Don't block here, just mark the reason. Strategy logic will handle direction.
@@ -732,8 +735,8 @@ def main():
                             state["last_regime"] = current_regime
                         
                         # Update Metrics
-                        REGIME_SCORE.set(current_score)
-                        STRATEGY_MODE.set(1.0 if current_regime == "TREND" else 0.0)
+                        REGIME_SCORE.labels(instance=instance_name).set(current_score)
+                        STRATEGY_MODE.labels(instance=instance_name).set(1.0 if current_regime == "TREND" else 0.0)
                         
                         # Log regime switch to story
                         story.check_regime_switch(bar_dt, current_score, adx_thresh, strat_type="meta")
@@ -858,7 +861,7 @@ def main():
                             
                             # Notify User
                             # alerter.send(...) -> Moved to StoryWriter.log_phoenix_activation
-                            PHOENIX_ACTIVE.set(0.0)  # Phoenix reset complete
+                            PHOENIX_ACTIVE.labels(instance=instance_name).set(0.0)  # Phoenix reset complete
                             
                             # Log Phoenix activation to story
                             story.log_phoenix_activation(bar_dt, current_score, reset_days)
@@ -887,38 +890,25 @@ def main():
                 except Exception:
                     pass
 
-            REGIME_SCORE.set(current_score)
-
-            # --- METRICS: Strategy & Regime ---
-            # 1. Regime Score
-            current_score = 0.0
-            if 'plan' in locals() and "regime_score" in plan.columns:
-                current_score = float(plan["regime_score"].iloc[-1])
-            else:
-                try:
-                    rs_series = get_regime_score(df)
-                    current_score = float(rs_series.iloc[-1])
-                except Exception:
-                    pass
-            REGIME_SCORE.set(current_score)
+            REGIME_SCORE.labels(instance=instance_name).set(current_score)
 
             # 2. Regime Threshold (FIX: Always publish config value)
             # Default to 25.0 if not set, so graph line is never 0
             adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
-            REGIME_THRESHOLD.set(adx_thresh)
+            REGIME_THRESHOLD.labels(instance=instance_name).set(adx_thresh)
 
             # 3. Strategy Mode
             if strat_type == "trend":
-                STRATEGY_MODE.set(1.0) # Always Trend
+                STRATEGY_MODE.labels(instance=instance_name).set(1.0) # Always Trend
             elif strat_type == "meta":
-                STRATEGY_MODE.set(1.0 if current_score > adx_thresh else 0.0)
+                STRATEGY_MODE.labels(instance=instance_name).set(1.0 if current_score > adx_thresh else 0.0)
             else:
-                STRATEGY_MODE.set(0.0) # Always MR
+                STRATEGY_MODE.labels(instance=instance_name).set(0.0) # Always MR
 
             # 4. Regime State (FIX #7: Export actual state with hysteresis)
             if 'plan' in locals() and "regime_state" in plan.columns:
                 regime_state_val = float(plan["regime_state"].iloc[-1])
-                REGIME_STATE.set(regime_state_val)
+                REGIME_STATE.labels(instance=instance_name).set(regime_state_val)
 
             # --- FIX #4: REGIME-AWARE THRESHOLD SELECTION ---
             # Meta Strategy should use different thresholds based on current regime
@@ -969,15 +959,14 @@ def main():
 
             meter = ascii_level_bar(cur_ratio, entry, exitb, width=64)
             dist_to_buy_bps, dist_to_sell_bps = dist_to_buy_sell_bps(cur_ratio, entry, exitb)
-            mark_signal_metrics(cur_ratio, dist_to_buy_bps, dist_to_sell_bps)
-
-            snapshot_wealth_balances(W, price, quote_bal, base_bal, quote_asset, base_asset)
+            mark_signal_metrics(instance_name, cur_ratio, dist_to_buy_bps, dist_to_sell_bps)
+            snapshot_wealth_balances(instance_name, W, price, quote_bal, base_bal, quote_asset, base_asset)
             
             gate_display = "OPEN" if gate_ok else f"CLOSED ({gate_reason})"
             log.info("[SIG] ratio=%+0.4f  bands: -entry=%0.4f  -exit=%0.4f  +exit=%0.4f  +entry=%0.4f  gate=%s  %s",
                     cur_ratio, -entry, -exitb, exitb, entry, gate_display, meter)
 
-            mark_gate(gate_ok)
+            mark_gate(instance_name, gate_ok)
 
             if cur_ratio <= -entry:
                 zone = "buy_band"
@@ -985,7 +974,7 @@ def main():
                 zone = "sell_band"
             else:
                 zone = "neutral"
-            mark_zone(zone)
+            mark_zone(instance_name, zone)
 
             action_side = ('BUY' if (target_w > cur_w) else ('SELL' if (target_w < cur_w) else 'HOLD'))
             
@@ -1009,8 +998,8 @@ def main():
             step = sizer.calculate_step(realized_vol=rv)
             
             # Export metrics for Grafana
-            POSITION_STEP.set(step)
-            REALIZED_VOL.set(rv)
+            POSITION_STEP.labels(instance=instance_name).set(step)
+            REALIZED_VOL.labels(instance=instance_name).set(rv)
 
             # --- SNAP-TO-ZERO (Generic) ---
             # Bug Fix #7: Use position size for futures, base_bal for spot
@@ -1060,7 +1049,7 @@ def main():
             
             # Bug Fix #4: Removed duplicate side determination (will be set later at line 906)
 
-            set_delta_metrics(delta_w, delta_eth)
+            set_delta_metrics(instance_name, delta_w, delta_eth)
             side = "BUY" if delta_eth > 0 else "SELL"
 
             # Spread Probe
@@ -1068,7 +1057,7 @@ def main():
             try:
                 book = adapter.get_book(args.symbol)
                 sp_bps = 1e4 * (book.best_ask - book.best_bid) / max(price, 1e-12)
-                SPREAD_BPS.set(sp_bps)
+                SPREAD_BPS.labels(instance=instance_name).set(sp_bps)
             except Exception as e:
                 log.warning("Spread probe failed. Reason: %s", e)
 
@@ -1079,7 +1068,7 @@ def main():
             # Bug Fix #6: Guard spot-only balance check
             if not is_futures and side == "SELL" and base_bal <= 1e-12:
                 # Spot-only check: Can't sell what you don't have
-                SKIPS.labels("balance").inc()
+                SKIPS.labels(instance=instance_name, reason="balance").inc()
                 # ... (rest of skip balance logic) ...
                 continue
 
@@ -1143,27 +1132,28 @@ def main():
             risk_ok = not (daily_limit_hit or maxdd_hit)
 
             mark_trade_readiness(
+                instance_name,
                 zone_ok=zone_ok,
                 gate_ok=gate_open_ok,
                 delta_ok=delta_ok,
                 risk_ok=risk_ok,
                 balance_ok=True,
-                size_ok=True,
+                size_ok=True
             )
 
             tol = 1e-12
             abs_delta = abs(delta_w)
 
             if abs_delta < tol:
-                SKIPS.labels("delta_zero").inc()
-                mark_decision("skip_delta_zero")
+                SKIPS.labels(instance=instance_name, reason="delta_zero").inc()
+                mark_decision(instance_name, "skip_delta_zero")
                 log.info("Skip: cur_w==target_w==%.4f (no change).", cur_w)
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
-                EXPOSURE_W.labels("target").set(target_w)
-                EXPOSURE_W.labels("current").set(cur_w)
-                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
+                EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
+                EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
+                PNL_QUOTE.labels(instance=instance_name).set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (no-op).")
@@ -1172,8 +1162,8 @@ def main():
                 continue
 
             if abs_delta < active_rebalance_threshold:
-                SKIPS.labels('threshold').inc()
-                mark_decision("skip_threshold")   
+                SKIPS.labels(instance=instance_name, reason='threshold').inc()
+                mark_decision(instance_name, "skip_threshold")   
                 log.info(
                     "Skip: |Δw|=%.4f < threshold=%.4f (need ≥ %.4f).",
                     abs_delta, active_rebalance_threshold, active_rebalance_threshold
@@ -1181,9 +1171,9 @@ def main():
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
-                EXPOSURE_W.labels("target").set(target_w)
-                EXPOSURE_W.labels("current").set(cur_w)
-                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
+                EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
+                EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
+                PNL_QUOTE.labels(instance=instance_name).set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip threshold).")
@@ -1193,15 +1183,15 @@ def main():
 
             # Bug Fix #6: Guard spot-only balance check
             if not is_futures and side == "SELL" and base_bal <= 1e-12:
-                SKIPS.labels("balance").inc()
-                mark_decision("skip_balance")
+                SKIPS.labels(instance=instance_name, reason="balance").inc()
+                mark_decision(instance_name, "skip_balance")
                 log.info("Skip: SELL requested but %s balance is 0 (cur_w=%.4f, target_w=%.4f).", base_asset, cur_w, target_w)
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
-                EXPOSURE_W.labels("target").set(target_w)
-                EXPOSURE_W.labels("current").set(cur_w)
-                PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
+                EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
+                EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
+                PNL_QUOTE.labels(instance=instance_name).set(W - float(state.get("session_start_W", W)))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip balance).")
@@ -1236,8 +1226,8 @@ def main():
             need = max(min_trade_quote, global_filters.min_notional)
             
             if notional_quote < need:
-                SKIPS.labels("min_notional").inc()
-                mark_decision("skip_min_notional")
+                SKIPS.labels(instance=instance_name, reason="min_notional").inc()
+                mark_decision(instance_name, "skip_min_notional")
                 log.info("Skip: notional below minimum (%.8f %s < min %.8f)", notional_quote, quote_asset, need)
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
@@ -1267,8 +1257,8 @@ def main():
             qty_exec = min(qty_rounded, max_qty_by_balance)
 
             if qty_exec <= 0:
-                SKIPS.labels("balance").inc()
-                mark_decision("skip_balance")
+                SKIPS.labels(instance=instance_name, reason="balance").inc()
+                mark_decision(instance_name, "skip_balance")
                 log.info(
                     "Skip: insufficient free balance for %s (qty_rounded=%.8f, max_by_balance=%.8f, %s=%.8f, %s=%.8f)",
                     side, qty_rounded, max_qty_by_balance, quote_asset, quote_bal, base_asset, base_bal
@@ -1287,8 +1277,8 @@ def main():
             notional_quote = qty_exec * price
             
             if notional_quote < need:
-                SKIPS.labels("min_notional").inc()
-                mark_decision('skip_min_notional')
+                SKIPS.labels(instance=instance_name, reason="min_notional").inc()
+                mark_decision(instance_name, 'skip_min_notional')
                 log.info(
                     "Skip: notional below minimum after clamp (%.8f %s < min %.8f) [side=%s qty=%.8f]",
                     notional_quote, quote_asset, need, side, qty_exec
@@ -1311,8 +1301,8 @@ def main():
             executed_qty = 0.0
             
             if args.mode == "dry":
-                ORDERS_SUBMITTED.labels("MARKET", side).inc()
-                mark_decision("exec_buy" if side == "BUY" else "exec_sell")
+                ORDERS_SUBMITTED.labels(instance=instance_name, kind="MARKET", side=side).inc()
+                mark_decision(instance_name, "exec_buy" if side == "BUY" else "exec_sell")
                 log.info(
                     "[DRY] Would EXEC %s %0.8f @ ~%0.8f (Δw=%+.4f, Δ%s=%+.6f)",
                     side, qty_exec, price, delta_w, base_asset, delta_eth
@@ -1346,8 +1336,8 @@ def main():
                     
                     try:
                         oid = adapter.market_order(args.symbol, side, remaining)
-                        ORDERS_SUBMITTED.labels("MARKET", side).inc()
-                        mark_decision("exec_buy" if side == "BUY" else "exec_sell")
+                        ORDERS_SUBMITTED.labels(instance=instance_name, kind="MARKET", side=side).inc()
+                        mark_decision(instance_name, "exec_buy" if side == "BUY" else "exec_sell")
                         log.info("EXEC TAKER %s %0.8f %s @ ~%0.8f (oid=%s)", side, remaining, args.symbol, price, oid)
                         
                         # Wait briefly and check if market order filled (especially important on testnet)
@@ -1423,9 +1413,9 @@ def main():
                 except Exception as e:
                     log.error("Failed to fetch actual position: %s", e)
 
-            EXPOSURE_W.labels("target").set(target_w)
-            EXPOSURE_W.labels("current").set(actual_current_w)  # Use ACTUAL position
-            PNL_QUOTE.set(W - float(state.get("session_start_W", W)))
+            EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
+            EXPOSURE_W.labels(instance=instance_name, kind="current").set(actual_current_w)  # Use ACTUAL position
+            PNL_QUOTE.labels(instance=instance_name).set(W - float(state.get("session_start_W", W)))
             last_seen_bar = bar_ts
             
             if args.once:
