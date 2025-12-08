@@ -217,6 +217,8 @@ def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, c
         else:
             threshold_loss = float(risk.max_daily_loss_btc)
     else:
+        threshold_loss = float(risk.max_daily_loss_btc)
+    
     if threshold_loss > 0.0 and daily_pnl <= -threshold_loss:
         daily_limit_hit = True
 
