@@ -17,7 +17,7 @@ from core.alert_manager import AlertManager
 # --- METRICS ---
 from core.metrics import (
     ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_QUOTE, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
-    GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, 
+    GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, WEALTH_USD, 
     PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, SIGNAL_BAND,
     DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
     REGIME_STATE, PHOENIX_ACTIVE, POSITION_STEP, REALIZED_VOL,
@@ -569,6 +569,9 @@ def main():
                 mark_asset_price_usd(base_asset, b_usd)
             except Exception:
                 pass
+            
+            if q_usd > 0:
+                WEALTH_USD.set(W * q_usd)
             
             log.debug("Wallet: %s=%.8f, %s=%.8f, W=%.8f, cur_w=%.4f", 
                       quote_asset, quote_bal, base_asset, base_bal, W, cur_w)

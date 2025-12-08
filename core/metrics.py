@@ -32,6 +32,7 @@ DELTA_W = Gauge("delta_w", "Planned Δweight")
 DELTA_BASE = Gauge("delta_base_asset", "Planned ΔBase units")
 
 WEALTH_TOTAL = Gauge("wealth_total", "Total wealth in Quote Asset units")
+WEALTH_USD = Gauge("wealth_usd", "Total wealth in USD")
 PRICE_MID = Gauge("price_mid", "Mid price of the traded pair")
 BAL_FREE = Gauge("balance_free", "Free balance by asset", ["asset"])
 
