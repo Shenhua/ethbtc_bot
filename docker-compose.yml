@@ -68,7 +68,7 @@ services:
       - ./run_state/btc:/data
       - .:/app
     command: >
-      python /app/live_executor.py  --params configs/prod_btc_meta_live.json  --mode ${MODE}  --symbol BTCUSDT --state /data/state.json
+      python /app/live_executor.py  --params configs/prod_btc_meta_live_short.json  --mode ${MODE}  --symbol BTCUSDT --state /data/state.json
     ports:
       - "9102:9109"
     networks:
