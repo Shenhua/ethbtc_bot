@@ -330,10 +330,10 @@
           "refId": "B"
         },
         {
-          "expr": "max(pnl_quote{instance=~\"testnet.*\"}) by (instance)",
+          "expr": "(max(pnl_quote{instance=~\"testnet.*\"}) by (instance) / (max(wealth_usd{instance=~\"testnet.*\"}) by (instance) - max(pnl_quote{instance=~\"testnet.*\"}) by (instance))) * 100",
           "format": "table",
           "instant": true,
-          "legendFormat": "PnL Session",
+          "legendFormat": "PnL %",
           "refId": "C"
         },
         {
@@ -656,7 +656,8 @@
         },
         {
           "type": "stat",
-          "title": "PnL 7 Days",
+          "title": "PnL 7d %",
+          "description": "7-day portfolio return as percentage. Calculated as (change in wealth / starting wealth) * 100.",
           "id": 121,
           "gridPos": {
             "x": 0,
@@ -670,13 +671,14 @@
           },
           "targets": [
             {
-              "expr": "delta(wealth_usd{instance=\"$instance\"}[7d])",
+              "expr": "(delta(wealth_usd{instance=\"$instance\"}[7d]) / (wealth_usd{instance=\"$instance\"} - delta(wealth_usd{instance=\"$instance\"}[7d]))) * 100",
               "refId": "A"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "currencyUSD",
+              "unit": "percent",
+              "decimals": 2,
               "color": {
                 "mode": "thresholds"
               },
@@ -698,7 +700,8 @@
         },
         {
           "type": "stat",
-          "title": "PnL 30 Days",
+          "title": "PnL 30d %",
+          "description": "30-day portfolio return as percentage. Calculated as (change in wealth / starting wealth) * 100.",
           "id": 122,
           "gridPos": {
             "x": 4,
@@ -712,13 +715,14 @@
           },
           "targets": [
             {
-              "expr": "delta(wealth_usd{instance=\"$instance\"}[30d])",
+              "expr": "(delta(wealth_usd{instance=\"$instance\"}[30d]) / (wealth_usd{instance=\"$instance\"} - delta(wealth_usd{instance=\"$instance\"}[30d]))) * 100",
               "refId": "A"
             }
           ],
           "fieldConfig": {
             "defaults": {
-              "unit": "currencyUSD",
+              "unit": "percent",
+              "decimals": 2,
               "color": {
                 "mode": "thresholds"
               },

@@ -1372,7 +1372,7 @@ def main():
                             if fill_px == 0: fill_px = price # Fallback
                             
                             slip_bps = (abs(fill_px - price) / price) * 10000
-                            mark_execution_stats(slip_bps, 0.0, "")
+                            mark_execution_stats(instance_name, slip_bps, 0.0, "")
                         except Exception as e:
                             log.warning("ExStats failed: %s", e)
                     except Exception as e:
