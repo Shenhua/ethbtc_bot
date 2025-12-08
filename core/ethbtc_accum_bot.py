@@ -284,7 +284,8 @@ class Backtester:
                  drawdown_reset_days=0.0, 
                  drawdown_reset_score=0.0,
                  base_asset="ETH",
-                 quote_asset="BTC"):
+                 quote_asset="BTC",
+                 leverage: int = 1):
         """
         Simulate trading strategy on historical price data.
         
@@ -306,6 +307,7 @@ class Backtester:
             drawdown_reset_score: ADX score needed for phoenix
             base_asset: Name of base asset (e.g. ETH)
             quote_asset: Name of quote asset (e.g. BTC)
+            leverage: Leverage multiplier for futures (clamps target_w to [-leverage, +leverage])
         """
         px = close.astype(float).copy()
         
@@ -461,9 +463,16 @@ class Backtester:
                     if story_writer:
                         story_writer.log_phoenix_activation(timestamp, current_score, drawdown_reset_days)
             
-            # --- Rebalancing Logic ---
             # Target weight at this bar
             tw = float(target_w.iat[i]) if not np.isnan(float(target_w.iat[i])) else 0.0
+            
+            # Apply leverage clamping (matching live_executor.py lines 908-915)
+            # Futures: allow shorts with leverage; Spot-like: clamp to [0, 1]
+            if leverage > 1:
+                tw = max(-leverage, min(leverage, tw))
+            else:
+                # Default: clamp to [-1, 1] for consistency
+                tw = max(-1.0, min(1.0, tw))
             
             # === DYNAMIC STEP SIZING (per bar, matching live_executor.py) ===
             # Get realized volatility at this bar (if available)
@@ -561,7 +570,10 @@ class Backtester:
                 if abs(new_w - cur_w) < thresh:
                     new_w = cur_w
 
-            target_eth = new_w * wealth / price
+            # Apply leverage scaling: with leverage=2, target_w=0.5 => 100% notional
+            # This matches real futures behavior where margin × leverage = position notional
+            leveraged_w = new_w * leverage
+            target_eth = leveraged_w * wealth / price
             delta = target_eth - eth[i]
             
             # === MIN TRADE SIZE CHECK (matching live_executor.py) ===
@@ -603,7 +615,9 @@ class Backtester:
                 total_fees_btc += fee_val
                 total_turnover += notional
 
-            cur_w = (eth[i] * price) / max(wealth, 1e-12)
+            # cur_w tracks signal weight (unleveraged), not actual position
+            # With leverage=2, if position is 100% notional, cur_w should be 0.5
+            cur_w = (eth[i] * price) / max(wealth, 1e-12) / leverage
 
         final_btc = btc[-1] + eth[-1] * float(px.iat[-1])
         
@@ -770,10 +784,35 @@ def cmd_backtest(args):
         drawdown_reset_days=reset_days,
         drawdown_reset_score=reset_score,
         base_asset=base_asset,
-        quote_asset=quote_asset
+        quote_asset=quote_asset,
+        leverage=app_cfg.execution.leverage,
     )
     
     print(json.dumps(res["summary"], indent=2))
+    
+    # Enhanced Report Generation
+    if args.report:
+        from core.backtest_report import BacktestReport
+        from datetime import datetime
+        
+        strategy_name = type(strategy).__name__ if hasattr(strategy, '__class__') else "Strategy"
+        
+        report = BacktestReport.from_backtest_result(
+            result=res,
+            price_series=df["close"],
+            strategy_name=strategy_name,
+            symbol=symbol_str,
+        )
+        
+        # Print to terminal
+        report.print_report()
+        
+        # Save to Markdown file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_path = f"results/backtest_report_{symbol_str}_{timestamp}.md"
+        report.to_markdown(report_path)
+        print(f"\n📄 Report saved to: {report_path}")
+    
     if args.out:
         df_out = res["portfolio"]
         if "diagnostics" in res: df_out = df_out.join(res["diagnostics"], how="left")
@@ -797,6 +836,7 @@ if __name__ == "__main__":
     bt.add_argument("--story", help="Path to output story log file")
     bt.add_argument("--base", help="Base asset name (default: ETH)")
     bt.add_argument("--quote", help="Quote asset name (default: BTC)")
+    bt.add_argument("--report", action="store_true", help="Generate enhanced report with HODL comparison and risk metrics")
     
     bt.set_defaults(func=cmd_backtest)
     
