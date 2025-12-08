@@ -53,10 +53,11 @@ DECISION_KEYS = (
     "skip_cooldown", "skip_gate_closed", "skip_delta_zero","skip_order_error"
 )
 
-def reset_trade_decision():
+def reset_trade_decision(instance_name: str):
+    """Reset all trade decision metrics to 0 for a specific instance."""
     for k in DECISION_KEYS:
         try:
-            TRADE_DECISION.labels(k).set(0)
+            TRADE_DECISION.labels(instance=instance_name, trade_decision=k).set(0)
         except Exception:
             pass
 
@@ -951,7 +952,7 @@ def main():
                 # Spot is Long Only
                 target_w = max(0.0, min(1.0, target_w))
 
-            reset_trade_decision()
+            reset_trade_decision(instance_name)
 
             delta_eth = 0.0
             delta_w = 0.0
@@ -1321,7 +1322,7 @@ def main():
                         )
                         executed_qty += filled_maker
                         if filled_maker > 0:
-                            FILLS.inc(filled_maker)
+                            FILLS.labels(instance=instance_name).inc()
                             log.info("MAKER Filled: %.8f / %.8f", filled_maker, qty_exec)
                     except Exception as e:
                         log.error("Maker chase error: %s", e)
@@ -1346,14 +1347,15 @@ def main():
                         if is_filled:
                             log.info("TAKER order %s FILLED: %.8f", oid, filled_qty)
                             executed_qty += filled_qty
+                            FILLS.labels(instance=instance_name).inc()
                         else:
                             log.warning("TAKER order %s NOT FILLED yet (status check after 1s). Filled: %.8f", oid, filled_qty)
                             executed_qty += filled_qty  # Add partial fills
                         
                         if side == "BUY":
-                            TRADE_DECISION.labels("exec_buy").set(1)
+                            TRADE_DECISION.labels(instance=instance_name, trade_decision="exec_buy").set(1)
                         else:
-                            TRADE_DECISION.labels("exec_sell").set(1)
+                            TRADE_DECISION.labels(instance=instance_name, trade_decision="exec_sell").set(1)
                         
                         # Log trade to story
                         story.log_trade(bar_dt, side, delta_eth, price, base_asset, quote_asset)

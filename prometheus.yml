@@ -7,11 +7,6 @@ scrape_configs:
     static_configs:
       - targets: ['bot_eth:9109']
 
-  - job_name: 'bnbusdc_bot'
-    honor_labels: true  # Preserve bot's instance label
-    static_configs:
-      - targets: ['bot_bnb:9109']
-        
   - job_name: 'btcusdt_bot'
     honor_labels: true  # Preserve bot's instance label
     static_configs:

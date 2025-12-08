@@ -98,9 +98,11 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "24h PnL change (realized + unrealized).",
+      "description": "24h PnL change (will show % when enough data is available).",
       "fieldConfig": {
         "defaults": {
+          "unit": "currencyUSD",
+          "decimals": 2,
           "color": {
             "mode": "thresholds"
           },
@@ -108,16 +110,15 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
-                "value": null
+                "value": null,
+                "color": "red"
               },
               {
-                "color": "green",
-                "value": 0
+                "value": 0,
+                "color": "green"
               }
             ]
-          },
-          "unit": "currencyUSD"
+          }
         }
       },
       "gridPos": {
@@ -131,8 +132,8 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(delta(wealth_usd[24h]))",
-          "legendFormat": "24h PnL",
+          "expr": "sum(delta(wealth_usd[24h])) or vector(0)",
+          "legendFormat": "24h Change",
           "refId": "A"
         }
       ]
@@ -152,12 +153,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "red",
+                "color": "blue",
                 "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
               }
             ]
           },
@@ -170,13 +167,13 @@
         "x": 8,
         "y": 1
       },
-      "id": 6,
+      "id": 4,
       "title": "🤖 Active Bots",
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(up)",
-          "legendFormat": "Bots",
+          "expr": "count(count by (instance) (up{instance=~\"testnet.*\"} == 1))",
+          "legendFormat": "Active Bots",
           "refId": "A"
         }
       ]
@@ -319,42 +316,42 @@
       "type": "table",
       "targets": [
         {
-          "expr": "max(up) by (instance)",
+          "expr": "max(up{instance=~\"testnet.*\"}) by (instance)",
           "format": "table",
           "instant": true,
           "legendFormat": "Status",
           "refId": "A"
         },
         {
-          "expr": "max(wealth_usd) by (instance)",
+          "expr": "max(wealth_usd{instance=~\"testnet.*\"}) by (instance)",
           "format": "table",
           "instant": true,
           "legendFormat": "Equity USD",
           "refId": "B"
         },
         {
-          "expr": "max(pnl_quote) by (instance)",
+          "expr": "max(pnl_quote{instance=~\"testnet.*\"}) by (instance)",
           "format": "table",
           "instant": true,
           "legendFormat": "PnL Session",
           "refId": "C"
         },
         {
-          "expr": "max(margin_utilization_pct) by (instance)",
+          "expr": "max(margin_utilization_pct{instance=~\"testnet.*\"}) by (instance)",
           "format": "table",
           "instant": true,
           "legendFormat": "Margin %",
           "refId": "D"
         },
         {
-          "expr": "max(liquidation_distance_pct) by (instance)",
+          "expr": "max(liquidation_distance_pct{instance=~\"testnet.*\"}) by (instance)",
           "format": "table",
           "instant": true,
           "legendFormat": "Liq Dist %",
           "refId": "E"
         },
         {
-          "expr": "max(leverage) by (instance)",
+          "expr": "max(leverage{instance=~\"testnet.*\"}) by (instance)",
           "format": "table",
           "instant": true,
           "legendFormat": "Lev x",
@@ -825,6 +822,7 @@
         {
           "type": "timeseries",
           "title": "Signal & Zones",
+          "description": "Signal = current price deviation from mean (z-score normalized). Entry zones are symmetric bands around 0. Buy Zone = enter long when signal crosses below. Sell Zone = enter short/close when signal crosses above.",
           "id": 130,
           "gridPos": {
             "x": 0,
@@ -857,6 +855,7 @@
         {
           "type": "timeseries",
           "title": "Assets (Quote/Margin)",
+          "description": "Quote currency or margin balance. For spot bots: BTC balance (quote). For futures bots: USDT margin balance.",
           "id": 131,
           "gridPos": {
             "x": 18,
@@ -870,7 +869,7 @@
           },
           "targets": [
             {
-              "expr": "balance_free{instance=\"$instance\", asset=~\"usdt|usdc|usd\"}",
+              "expr": "balance_free{instance=\"$instance\", asset=~\"usdt|usdc|usd|btc\"}",
               "legendFormat": "{{asset}}",
               "refId": "A"
             }
@@ -879,6 +878,7 @@
         {
           "type": "timeseries",
           "title": "Assets (Base/Position)",
+          "description": "Base asset or position size. For spot bots: ETH/BTC holdings. For futures bots: shows 0 as positions are tracked separately.",
           "id": 132,
           "gridPos": {
             "x": 18,
@@ -910,6 +910,7 @@
         {
           "type": "timeseries",
           "title": "Regime Analysis",
+          "description": "ADX-based market regime detection. Score > Threshold = TREND mode (follow trend), Score < Threshold = MEAN REVERSION mode (fade extremes). Regime is designed to be stable and changes infrequently.",
           "id": 140,
           "gridPos": {
             "x": 0,
@@ -937,6 +938,7 @@
         {
           "type": "timeseries",
           "title": "Weight Tracking",
+          "description": "Target vs Current portfolio weight. Target W = desired exposure from strategy signal. Current W = actual exposure. Gap between them triggers rebalancing. Values near 0 = neutral, 1 = fully long, -1 = fully short.",
           "id": 141,
           "gridPos": {
             "x": 8,
@@ -962,8 +964,9 @@
           ]
         },
         {
-          "type": "barchart",
-          "title": "Actions & Decisions",
+          "type": "stat",
+          "title": "Activity (Last Hour)",
+          "description": "Trade executions and skipped opportunities in the last hour. Skips occur when the position delta is below the rebalance threshold.",
           "id": 142,
           "gridPos": {
             "x": 16,
@@ -975,14 +978,78 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
+          "options": {
+            "graphMode": "none",
+            "colorMode": "value",
+            "justifyMode": "center",
+            "textMode": "auto",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "value": null,
+                    "color": "text"
+                  },
+                  {
+                    "value": 1,
+                    "color": "blue"
+                  }
+                ]
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Trades"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "green"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "Skips"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "mode": "fixed",
+                      "fixedColor": "yellow"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
           "targets": [
             {
-              "expr": "increase(fills_total{instance=\"$instance\"}[1h])",
+              "expr": "floor(increase(fills_total{instance=\"$instance\"}[1h]))",
               "legendFormat": "Trades",
               "refId": "A"
             },
             {
-              "expr": "increase(skips_total{instance=\"$instance\"}[1h])",
+              "expr": "floor(increase(skips_total{instance=\"$instance\"}[1h]))",
               "legendFormat": "Skips",
               "refId": "B"
             }
@@ -1022,14 +1089,14 @@
           "text": "All",
           "value": "$__all"
         },
-        "definition": "label_values(up, instance)",
+        "definition": "label_values(up{instance=~\"testnet.*\"}, instance)",
         "hide": 0,
         "label": "Instance",
         "multi": true,
         "name": "instance",
         "options": [],
         "query": {
-          "query": "label_values(up, instance)",
+          "query": "label_values(up{instance=~\"testnet.*\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
