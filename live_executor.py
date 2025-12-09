@@ -1118,6 +1118,33 @@ def main():
                 SKIPS.labels(instance=instance_name, reason="balance").inc()
                 # ... (rest of skip balance logic) ...
                 continue
+            
+            # Bug Fix: BUY-side balance check (prevents "insufficient balance" from Binance)
+            # For BUY, we need BTC (quote asset) to buy ETH (base asset)
+            if not is_futures and side == "BUY":
+                # How much ETH can we afford with our BTC?
+                max_affordable_eth = q_free / max(price, 1e-12) * 0.995  # 0.5% buffer for fees/rounding
+                if abs(delta_eth) > max_affordable_eth:
+                    if max_affordable_eth < step_size:
+                        log.warning(
+                            "BUY skip: Insufficient BTC balance (%.8f %s) to buy any ETH (need ~%.8f %s for min order)",
+                            q_free, quote_asset, step_size * price, quote_asset
+                        )
+                        SKIPS.labels(instance=instance_name, reason="balance").inc()
+                        mark_decision(instance_name, "skip_balance")
+                        state["last_target_w"] = target_w
+                        state["last_bar_close"] = bar_ts
+                        save_state(args.state, state)
+                        last_seen_bar = bar_ts
+                        if args.once: break
+                        time.sleep(cfg.execution.poll_sec)
+                        continue
+                    else:
+                        log.info(
+                            "BUY capped: Insufficient BTC for full order. Requested=%.6f %s, Affordable=%.6f %s",
+                            abs(delta_eth), base_asset, max_affordable_eth, base_asset
+                        )
+                        delta_eth = max_affordable_eth  # Cap to what we can afford
 
             qty_abs = abs(delta_eth)
             
@@ -1432,7 +1459,7 @@ def main():
                             state["last_bar_close"] = bar_ts
                             save_state(args.state, state)
                             last_seen_bar = bar_ts
-                            mark_decision("skip_order_error")
+                            mark_decision(instance_name, "skip_order_error")
                             if args.once: break
                             time.sleep(cfg.execution.poll_sec)
                             continue
