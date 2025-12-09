@@ -1125,10 +1125,10 @@ def main():
                 # How much ETH can we afford with our BTC?
                 max_affordable_eth = quote_bal / max(price, 1e-12) * 0.995  # 0.5% buffer for fees/rounding
                 if abs(delta_eth) > max_affordable_eth:
-                    if max_affordable_eth < step_size:
+                    if max_affordable_eth < global_filters.step_size:
                         log.warning(
                             "BUY skip: Insufficient BTC balance (%.8f %s) to buy any ETH (need ~%.8f %s for min order)",
-                            quote_bal, quote_asset, step_size * price, quote_asset
+                            quote_bal, quote_asset, global_filters.step_size * price, quote_asset
                         )
                         SKIPS.labels(instance=instance_name, reason="balance").inc()
                         mark_decision(instance_name, "skip_balance")
@@ -1337,7 +1337,7 @@ def main():
                     "Skip: insufficient free balance for %s (qty_rounded=%.8f, max_by_balance=%.8f, %s=%.8f, %s=%.8f)",
                     side, qty_rounded, max_qty_by_balance, quote_asset, quote_bal, base_asset, base_bal
                 )
-                inc_rejection("insufficient_balance")
+                inc_rejection(instance_name, "insufficient_balance")
                 state["last_target_w"] = target_w
                 state["last_bar_close"] = bar_ts
                 save_state(args.state, state)
@@ -1451,7 +1451,7 @@ def main():
                     except Exception as e:
                         msg = str(e)
                         reason = "insufficient_balance" if "-2010" in msg else "order_error"
-                        inc_rejection(reason)
+                        inc_rejection(instance_name, reason)
                         log.exception("Taker order rejected: %s", e)
                         # If we filled nothing, we effectively skipped/failed
                         if executed_qty == 0:
