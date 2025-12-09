@@ -63,6 +63,10 @@ class Strategy(BaseModel):
     # --- Overrides for Meta Strategy ---
     mean_reversion_overrides: Dict[str, Any] = {}
     trend_overrides: Dict[str, Any] = {}
+    
+    # --- ML Regime Detection ---
+    use_ml_regime: bool = Field(False, description="Use ML classifier instead of ADX for regime detection")
+    ml_model_path: str = Field("models/regime_classifier_v1.pkl", description="Path to trained ML model")
 
 class Execution(BaseModel):
     interval: Interval = "15m"

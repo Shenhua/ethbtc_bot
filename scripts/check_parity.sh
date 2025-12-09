@@ -27,5 +27,23 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+echo ""
+echo "🧪 Running ML regime parity tests..."
+python3 -m pytest tests/test_ml_regime_parity.py -v
+
+if [ $? -ne 0 ]; then
+    echo "❌ ML regime parity tests failed!"
+    exit 1
+fi
+
+echo ""
+echo "🧪 Running feature engineering tests..."
+python3 -m pytest tests/test_regime_features.py -v
+
+if [ $? -ne 0 ]; then
+    echo "❌ Feature engineering tests failed!"
+    exit 1
+fi
+
 echo "✅ All parity checks passed!"
 exit 0

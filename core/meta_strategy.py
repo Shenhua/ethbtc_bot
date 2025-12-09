@@ -12,16 +12,22 @@ class MetaStrategy:
     def __init__(self, 
                  mr_params: StratParams, 
                  trend_params: TrendParams, 
-                 adx_threshold: float = 25.0):
+                 adx_threshold: float = 25.0,
+                 use_ml_regime: bool = False,
+                 ml_model_path: str = "models/regime_classifier_v1.pkl"):
         """
         Ensemble Strategy.
         :param adx_threshold: The 'Regime Switch' level. 
                               ADX < threshold = Mean Reversion.
                               ADX > threshold = Trend.
+        :param use_ml_regime: If True, use ML classifier instead of ADX.
+        :param ml_model_path: Path to trained ML model.
         """
         self.mr = EthBtcStrategy(mr_params)
         self.trend = TrendStrategy(trend_params)
         self.adx_threshold = adx_threshold
+        self.use_ml_regime = use_ml_regime
+        self.ml_model_path = ml_model_path
 
     def generate_positions(self, df: pd.DataFrame, funding=None) -> pd.DataFrame:
         if isinstance(df, pd.Series): raise ValueError("Need OHLC")
@@ -38,9 +44,15 @@ class MetaStrategy:
         sig_trend = df_trend["target_w"]
         log.debug(f"[META] Trend signal: {sig_trend.iloc[-1]:.4f}")
         
-        # 2. Calculate Regime Score
-        # get_regime_score now handles the resampling 'left'/'closed' internally
-        regime_score = get_regime_score(df)
+        # 2. Calculate Regime Score (ML or ADX based on config)
+        regime_score = get_regime_score(
+            df,
+            use_ml=self.use_ml_regime,
+            funding=funding,
+            model_path=self.ml_model_path,
+        )
+        if self.use_ml_regime:
+            log.debug(f"[META] Using ML regime detection (model: {self.ml_model_path})")
         
         # 3. FORCE ALIGNMENT
         common_idx = df.index.intersection(regime_score.index)

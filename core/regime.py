@@ -29,10 +29,79 @@ def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     log.debug(f"ADX calculation complete: mean={adx.mean():.2f}, last={adx.iloc[-1] if len(adx) > 0 else 0:.2f}")
     return adx
 
-def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
+def get_regime_score(
+    df_15m: pd.DataFrame, 
+    adx_period: int = 14,
+    use_ml: bool = False,
+    funding: pd.Series = None,
+    fear_greed: pd.Series = None,
+    model_path: str = "models/regime_classifier_v1.pkl",
+) -> pd.Series:
     """
-    Multi-Timeframe Regime Analysis.
+    Calculate regime score for strategy switching.
+    
+    Args:
+        df_15m: OHLCV DataFrame with 15m bars
+        adx_period: Period for ADX calculation (default 14)
+        use_ml: If True, use ML classifier instead of ADX
+        funding: Funding rate series (required for ML mode)
+        fear_greed: Fear & Greed index series (required for ML mode)
+        model_path: Path to trained ML model (default: models/regime_classifier_v1.pkl)
+    
+    Returns:
+        pd.Series: Regime score (0-100). Higher = more trending.
+    """
+    if use_ml:
+        try:
+            return _get_ml_regime_score(df_15m, funding, fear_greed, model_path)
+        except Exception as e:
+            log.warning(f"ML regime failed, falling back to ADX: {e}")
+    
+    # Default: ADX-based regime score
+    return _get_adx_regime_score(df_15m, adx_period)
+
+
+def _get_ml_regime_score(
+    df_15m: pd.DataFrame,
+    funding: pd.Series = None,
+    fear_greed: pd.Series = None,
+    model_path: str = "models/regime_classifier_v1.pkl",
+) -> pd.Series:
+    """
+    ML-based regime scoring using trained Random Forest classifier.
+    
+    Returns probability of TREND regime (0-100 scale).
+    """
+    import joblib
+    from core.regime_features import build_regime_features
+    
+    # Load model and scaler
+    model = joblib.load(model_path)
+    scaler_path = model_path.replace("classifier", "scaler")
+    scaler = joblib.load(scaler_path)
+    
+    # Build features
+    features = build_regime_features(df_15m, funding, fear_greed)
+    
+    # Scale features
+    X_scaled = scaler.transform(features)
+    
+    # Predict probabilities
+    probs = model.predict_proba(X_scaled)[:, 1]  # Probability of class 1 (Trend)
+    
+    # Scale to 0-100 for compatibility with ADX threshold
+    ml_score = pd.Series(probs * 100, index=df_15m.index, name="ml_regime_score")
+    
+    log.debug(f"ML regime score: mean={ml_score.mean():.2f}, last={ml_score.iloc[-1]:.2f}")
+    return ml_score
+
+
+def _get_adx_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
+    """
+    ADX-based Multi-Timeframe Regime Analysis.
     Combines 15m ADX and 1h ADX to form a consensus 'Trend Score'.
+    
+    This is the original implementation, now called as fallback.
     """
     df = df_15m.copy()
     
