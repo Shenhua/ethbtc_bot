@@ -1123,20 +1123,12 @@ def main():
             # For BUY, we need BTC (quote asset) to buy ETH (base asset)
             if not is_futures and side == "BUY":
                 # How much ETH can we afford with our BTC?
-<<<<<<< Updated upstream
-                max_affordable_eth = q_free / max(price, 1e-12) * 0.995  # 0.5% buffer for fees/rounding
-=======
                 max_affordable_eth = quote_bal / max(price, 1e-12) * 0.995  # 0.5% buffer for fees/rounding
->>>>>>> Stashed changes
                 if abs(delta_eth) > max_affordable_eth:
                     if max_affordable_eth < step_size:
                         log.warning(
                             "BUY skip: Insufficient BTC balance (%.8f %s) to buy any ETH (need ~%.8f %s for min order)",
-<<<<<<< Updated upstream
-                            q_free, quote_asset, step_size * price, quote_asset
-=======
                             quote_bal, quote_asset, step_size * price, quote_asset
->>>>>>> Stashed changes
                         )
                         SKIPS.labels(instance=instance_name, reason="balance").inc()
                         mark_decision(instance_name, "skip_balance")
