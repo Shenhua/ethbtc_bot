@@ -67,6 +67,7 @@ class Strategy(BaseModel):
     # --- ML Regime Detection ---
     use_ml_regime: bool = Field(False, description="Use ML classifier instead of ADX for regime detection")
     ml_model_path: str = Field("models/regime_classifier_v1.pkl", description="Path to trained ML model")
+    ml_threshold: float = Field(50.0, ge=0.0, le=100.0, description="Probability threshold for ML regime (0-100, higher = stricter Trend trigger)")
 
 class Execution(BaseModel):
     interval: Interval = "15m"

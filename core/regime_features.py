@@ -118,12 +118,40 @@ def build_regime_features(
         log.debug("No funding data provided, using defaults")
     
     # =========================================================================
-    # 8. Fear & Greed Index (daily, forward-filled)
+    # 8. Fear & Greed Index (daily, forward-filled to 15m bars)
     # =========================================================================
-    if fear_greed is not None:
-        # Fear & Greed is daily, forward-fill to 15m bars
-        fg_aligned = fear_greed.reindex(df.index, method="ffill")
-        features["fear_greed"] = fg_aligned.fillna(50.0)  # Neutral default
+    if fear_greed is not None and len(fear_greed) > 0:
+        # Fear & Greed is daily data - need proper forward-fill to 15m bars
+        # Simple reindex doesn't work because timestamps don't match exactly
+        try:
+            # Ensure fear_greed has DatetimeIndex
+            if not isinstance(fear_greed.index, pd.DatetimeIndex):
+                fear_greed = pd.Series(fear_greed.values, 
+                                       index=pd.to_datetime(fear_greed.index, utc=True))
+            
+            # Ensure timezone-aware (UTC)
+            if fear_greed.index.tz is None:
+                fear_greed = fear_greed.tz_localize('UTC')
+            
+            # Use merge_asof for proper forward-fill from daily to 15m
+            # This finds the most recent fear_greed value for each OHLCV bar
+            target_df = pd.DataFrame({'ts': df.index})
+            source_df = pd.DataFrame({'ts': fear_greed.index, 'fg': fear_greed.values})
+            
+            merged = pd.merge_asof(
+                target_df.sort_values('ts'),
+                source_df.sort_values('ts'),
+                on='ts',
+                direction='backward'  # Use most recent available value
+            )
+            
+            features["fear_greed"] = merged['fg'].values
+            features["fear_greed"] = features["fear_greed"].fillna(50.0)  # Neutral default for early dates
+            
+            log.debug(f"Fear & Greed aligned: mean={features['fear_greed'].mean():.1f}, non-null={features['fear_greed'].notna().sum()}")
+        except Exception as e:
+            log.warning(f"Fear & Greed alignment failed: {e}, using default")
+            features["fear_greed"] = 50.0
     else:
         features["fear_greed"] = 50.0  # Neutral default
         log.debug("No Fear & Greed data provided, using neutral default")

@@ -69,6 +69,10 @@ PHOENIX_ACTIVE = Gauge("phoenix_active", "Phoenix Protocol Status: 1=Waiting for
 POSITION_STEP = Gauge("position_step_size", "Dynamic position step size (0.0-1.0)", ["instance"])
 REALIZED_VOL = Gauge("realized_volatility", "Current realized volatility (annualized)", ["instance"])
 
+# --- ML Regime & Sentiment Metrics ---
+ML_REGIME_ACTIVE = Gauge("ml_regime_active", "ML Regime Detection: 1=Active, 0=ADX Fallback", ["instance"])
+FEAR_GREED_INDEX = Gauge("fear_greed_index", "Crypto Fear & Greed Index (0-100)", ["instance"])
+
 # --- LEVERAGE & EXPOSURE METRICS ---
 LEVERAGE = Gauge("leverage", "Current leverage multiplier", ["instance"])
 EXPOSURE_SIGNAL_WEIGHT = Gauge("exposure_signal_weight", "Signal weight (unleveraged target)", ["instance"])
@@ -183,3 +187,11 @@ def mark_execution_stats(instance: str, slippage_bps: float, fee_amt: float, fee
 def mark_futures_risk(instance: str, margin_util: float, liq_dist_pct: float, symbol: str) -> None:
     MARGIN_UTIL.labels(instance=instance).set(margin_util)
     LIQ_DIST.labels(instance=instance, symbol=symbol).set(liq_dist_pct)
+
+def mark_ml_regime(instance: str, active: bool) -> None:
+    """Mark whether ML regime detection is active (vs ADX fallback)."""
+    ML_REGIME_ACTIVE.labels(instance=instance).set(1.0 if active else 0.0)
+
+def mark_fear_greed(instance: str, value: float) -> None:
+    """Update the Fear & Greed Index metric (0-100 scale)."""
+    FEAR_GREED_INDEX.labels(instance=instance).set(value)

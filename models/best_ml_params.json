@@ -1,0 +1,8 @@
+{
+  "lookahead_bars": 4,
+  "adx_threshold": 13.017502405182114,
+  "n_estimators": 54,
+  "max_depth": 20,
+  "min_samples_split": 8,
+  "ml_threshold": 32.96133856054901
+}

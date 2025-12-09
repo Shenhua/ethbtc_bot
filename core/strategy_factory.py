@@ -146,11 +146,13 @@ def build_strategy(cfg: AppConfig, df: Optional[pd.DataFrame] = None) -> Tuple[A
         # ML Regime Detection params
         use_ml = merged["mr_params"].get("use_ml_regime", False)
         ml_path = merged["mr_params"].get("ml_model_path", "models/regime_classifier_v1.pkl")
+        ml_thresh = float(merged["mr_params"].get("ml_threshold", 50.0))
         return MetaStrategy(
             mr_p, tr_p, 
             adx_threshold=adx_thresh,
             use_ml_regime=use_ml,
             ml_model_path=ml_path,
+            ml_threshold=ml_thresh,
         ), merged
     
     # Default: Mean Reversion

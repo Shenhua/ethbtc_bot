@@ -1,0 +1,14 @@
+{
+  "baseline_sharpe": 1.7803409691108563,
+  "best_sharpe": 1.8770990245281258,
+  "best_params": {
+    "lookahead_bars": 4,
+    "adx_threshold": 13.017502405182114,
+    "n_estimators": 54,
+    "max_depth": 20,
+    "min_samples_split": 8,
+    "ml_threshold": 32.96133856054901
+  },
+  "n_trials": 30,
+  "timestamp": "2025-12-09T17:01:27.708220"
+}

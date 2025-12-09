@@ -1809,9 +1809,19 @@
           "expr": "regime_threshold{instance=\"$instance\"}",
           "legendFormat": "Threshold",
           "refId": "B"
+        },
+        {
+          "expr": "fear_greed_index{instance=\"$instance\"}",
+          "legendFormat": "Fear/Greed",
+          "refId": "C"
+        },
+        {
+          "expr": "ml_regime_active{instance=\"$instance\"} * 100",
+          "legendFormat": "ML Active (100=yes)",
+          "refId": "D"
         }
       ],
-      "title": "Regime Analysis",
+      "title": "Regime Analysis (Score, Threshold, Fear/Greed)",
       "type": "timeseries"
     },
     {

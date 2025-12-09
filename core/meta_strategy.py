@@ -14,22 +14,29 @@ class MetaStrategy:
                  trend_params: TrendParams, 
                  adx_threshold: float = 25.0,
                  use_ml_regime: bool = False,
-                 ml_model_path: str = "models/regime_classifier_v1.pkl"):
+                 ml_model_path: str = "models/regime_classifier_v1.pkl",
+                 ml_threshold: float = 50.0):
         """
         Ensemble Strategy.
-        :param adx_threshold: The 'Regime Switch' level. 
+        :param adx_threshold: The 'Regime Switch' level for ADX mode. 
                               ADX < threshold = Mean Reversion.
                               ADX > threshold = Trend.
         :param use_ml_regime: If True, use ML classifier instead of ADX.
         :param ml_model_path: Path to trained ML model.
+        :param ml_threshold: Probability threshold for ML mode (0-100).
+                            Higher = stricter requirement to trigger Trend mode.
         """
         self.mr = EthBtcStrategy(mr_params)
         self.trend = TrendStrategy(trend_params)
         self.adx_threshold = adx_threshold
         self.use_ml_regime = use_ml_regime
         self.ml_model_path = ml_model_path
+        self.ml_threshold = ml_threshold
+        
+        # Use the appropriate threshold based on mode
+        self._active_threshold = ml_threshold if use_ml_regime else adx_threshold
 
-    def generate_positions(self, df: pd.DataFrame, funding=None) -> pd.DataFrame:
+    def generate_positions(self, df: pd.DataFrame, funding=None, fear_greed=None) -> pd.DataFrame:
         if isinstance(df, pd.Series): raise ValueError("Need OHLC")
 
         # 1. Generate Sub-Signals
@@ -49,6 +56,7 @@ class MetaStrategy:
             df,
             use_ml=self.use_ml_regime,
             funding=funding,
+            fear_greed=fear_greed,  # Now passing fear_greed for ML mode
             model_path=self.ml_model_path,
         )
         if self.use_ml_regime:
@@ -66,8 +74,8 @@ class MetaStrategy:
         # We only switch UP if score > (thresh + buffer)
         # We only switch DOWN if score < (thresh - buffer)
         buffer = 2.0 
-        upper_bound = self.adx_threshold + buffer
-        lower_bound = max(0.0, self.adx_threshold - buffer)
+        upper_bound = self._active_threshold + buffer
+        lower_bound = max(0.0, self._active_threshold - buffer)
         
         # 1 = Trend, -1 = MR, 0 = Hold previous
         # We use numpy to create a signal series

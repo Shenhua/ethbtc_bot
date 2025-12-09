@@ -27,6 +27,7 @@ from core.metrics import (
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
     mark_futures_risk, mark_execution_stats, mark_bot_up,
+    mark_fear_greed, mark_ml_regime,
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 from core.story_writer import StoryWriter
@@ -147,6 +148,38 @@ log = logging.getLogger("live_enhanced")
 
 # Global Stop Event for graceful shutdown of maker threads
 STOP_EVENT = threading.Event()
+
+# --- FEAR & GREED INDEX FETCHER ---
+import requests as req_lib  # Alias to avoid conflict with any local names
+
+_FEAR_GREED_CACHE = {"value": 50.0, "last_fetch": 0}
+
+def fetch_fear_greed() -> float:
+    """
+    Fetch the current Fear & Greed Index from alternative.me API.
+    Cached for 1 hour since it only updates daily.
+    Returns: Value 0-100 (0=Extreme Fear, 100=Extreme Greed)
+    """
+    import time
+    now = time.time()
+    
+    # Cache for 1 hour (3600 seconds) - API updates daily anyway
+    if now - _FEAR_GREED_CACHE["last_fetch"] < 3600:
+        return _FEAR_GREED_CACHE["value"]
+    
+    try:
+        resp = req_lib.get("https://api.alternative.me/fng/?limit=1", timeout=5)
+        if resp.status_code == 200:
+            data = resp.json()
+            value = float(data["data"][0]["value"])
+            _FEAR_GREED_CACHE["value"] = value
+            _FEAR_GREED_CACHE["last_fetch"] = now
+            log.debug(f"Fear & Greed Index updated: {value}")
+            return value
+    except Exception as e:
+        log.debug(f"Fear & Greed fetch failed: {e}")
+    
+    return _FEAR_GREED_CACHE["value"]  # Return cached value on error
 
 def last_closed_bar_ts(now_s: int, interval: str) -> int:
     units = {"m":60, "h":3600, "d":86400}
@@ -711,6 +744,10 @@ def main():
             try:
                 funding_rate = adapter.get_funding_rate(funding_ticker)  
                 mark_funding_rate(instance_name, funding_rate)
+                
+                # Fetch and export Fear & Greed Index
+                fear_greed_value = fetch_fear_greed()
+                mark_fear_greed(instance_name, fear_greed_value)
                 
                 if funding_rate > funding_limit_long:
                     # Don't block here, just mark the reason. Strategy logic will handle direction.

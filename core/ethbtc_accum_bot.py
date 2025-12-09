@@ -271,6 +271,7 @@ class Backtester:
     def simulate(self, close: pd.Series, 
                  strategy, 
                  funding_series: Optional[pd.Series] = None,
+                 fear_greed_series: Optional[pd.Series] = None,
                  bnb_price_series: Optional[pd.Series] = None,
                  full_df: Optional[pd.DataFrame] = None,
                  story_writer=None,
@@ -316,10 +317,15 @@ class Backtester:
         if funding_series is not None:
             aligned_funding = funding_series.reindex(close.index).ffill().fillna(0.0)
 
+        # Align Fear & Greed
+        aligned_fear_greed = None
+        if fear_greed_series is not None:
+            aligned_fear_greed = fear_greed_series.reindex(close.index).ffill().fillna(50.0)
+
         # Generate Positions
         if hasattr(strategy, 'adx_threshold'): # MetaStrategy
             if full_df is None: raise ValueError("MetaStrategy requires full OHLC dataframe (full_df).")
-            plan = strategy.generate_positions(full_df, funding=aligned_funding)
+            plan = strategy.generate_positions(full_df, funding=aligned_funding, fear_greed=aligned_fear_greed)
         elif hasattr(strategy, 'generate_positions'):
             if isinstance(strategy, EthBtcStrategy):
                 plan = strategy.generate_positions(px, funding=aligned_funding)
@@ -703,6 +709,15 @@ def cmd_backtest(args):
     reset_score = getattr(risk_cfg, 'drawdown_reset_score', 30.0)
 
     funding_series = load_funding_series(args.funding_data, df.index)
+    
+    # Load Fear & Greed Index for ML regime
+    fear_greed_series = None
+    if args.fear_greed:
+        fg_df = pd.read_csv(args.fear_greed, index_col=0, parse_dates=True)
+        fg_col = "value" if "value" in fg_df.columns else fg_df.columns[0]
+        fear_greed_series = fg_df[fg_col].reindex(df.index).ffill().fillna(50.0)
+        print(f"Loaded Fear & Greed Index: {len(fear_greed_series)} values")
+    
     bnb_series = None
     if args.bnb_data:
         bnb_df = load_vision_csv(args.bnb_data)
@@ -724,7 +739,7 @@ def cmd_backtest(args):
 
     bt = Backtester(fee)
     res = bt.simulate(
-        df["close"], strategy, funding_series=funding_series, full_df=df,
+        df["close"], strategy, funding_series=funding_series, fear_greed_series=fear_greed_series, full_df=df,
         initial_btc=basis, bnb_price_series=bnb_series,
         story_writer=story_writer,
         max_daily_loss_btc=risk_cfg.max_daily_loss_btc,
@@ -778,6 +793,7 @@ if __name__ == "__main__":
     bt = sub.add_parser("backtest")
     bt.add_argument("--data", required=True)
     bt.add_argument("--funding-data")
+    bt.add_argument("--fear-greed", help="Path to Fear & Greed Index CSV (for ML regime)")
     bt.add_argument("--config", required=True)
     bt.add_argument("--out")
     bt.add_argument("--start")
