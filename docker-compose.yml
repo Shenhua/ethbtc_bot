@@ -22,35 +22,8 @@ services:
       python /app/live_executor.py  --params configs/prod_meta_live.json  --mode ${MODE}  --symbol ETHBTC --state /data/state.json
     ports:
       - "9109:9109"
-
-  # --- INSTANCE 2: BNB/USDC ---
-  # bot_bnb:
-  #   build: .
-  #   container_name: bnbusdc_bot
-  #   restart: unless-stopped
-  #   networks:
-  #     - default  
-  #     - trading-net
-  #   environment:
-  #     - BINANCE_KEY=${BINANCE_KEY}
-  #     - BINANCE_SECRET=${BINANCE_SECRET}
-  #     - BINANCE_BASE_URL=${BINANCE_BASE_URL}
-  #     - MODE=${MODE}
-  #     - SYMBOL=BNBUSDC
-  #     - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-  #     - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}
-  #     - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}
-  #   volumes:
-  #     - ./run_state/bnb:/data  # Isolated State Folder for BNB
-  #     - .:/app
-  #   command: >
-  #     python /app/live_executor.py 
-  #     --params configs/prod_bnb_meta_live.json 
-  #     --mode ${MODE} 
-  #     --symbol BNBUSDC
-  #     --state /data/state.json
-  #   ports:
-  #     - "9101:9109" # Maps Host 9101 -> Container 9109
+    labels:
+      - com.centurylinklabs.watchtower.enable=false
 
   bot_btc:
     build: .
@@ -74,6 +47,8 @@ services:
     networks:
       - default
       - trading-net
+    labels:
+      - com.centurylinklabs.watchtower.enable=false
 
   # --- UTILITIES ---
   sweeper:
@@ -89,6 +64,8 @@ services:
     volumes:
       - .:/app
     command: python /app/tools/dust_sweeper.py --mode auto --schedule weekly
+    labels:
+      - com.centurylinklabs.watchtower.enable=false
 
   # pnl_reconciler:
   #   build: .    
@@ -155,20 +132,6 @@ services:
       - "3000:3000"
     depends_on:
       - prometheus
-    networks:
-      - trading-net
-
-  watchtower:
-    image: containrrr/watchtower
-    container_name: global_watchtower
-    restart: unless-stopped
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    environment:
-      - WATCHTOWER_CLEANUP=true
-      - WATCHTOWER_POLL_INTERVAL=300
-      # Optional: Send notifications when updates happen
-      # - WATCHTOWER_NOTIFICATION_URL=${DISCORD_WEBHOOK_URL} 
     networks:
       - trading-net
 
