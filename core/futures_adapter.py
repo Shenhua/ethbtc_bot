@@ -174,7 +174,8 @@ class BinanceFuturesAdapter(ExchangeAdapter):
 
     def check_order(self, symbol: str, order_id: str) -> Tuple[bool, float]:
         try:
-            od = self.client.get_order(symbol=symbol, orderId=order_id)
+            # UMFutures uses query_order, not get_order
+            od = self.client.query_order(symbol=symbol, orderId=order_id)
             status = od.get("status", "")
             filled = float(od.get("executedQty", "0"))
             # On Futures, PARTIALLY_FILLED is common, we treat it as "Filled So Far"
