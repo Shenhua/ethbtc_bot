@@ -43,40 +43,16 @@ from core.strategy_factory import (
     build_mr_params, build_tr_params, get_active_params
 )
 
+# --- RESILIENCE (Phase 1 Stabilization) ---
+from core.resilience import CircuitBreaker, retry_api_call, CircuitBreakerOpen
+
 log = logging.getLogger("live_executor")
 
+# Global circuit breaker for API calls (shared across all calls)
+API_CIRCUIT_BREAKER = CircuitBreaker(max_failures=5, reset_timeout=60.0)
 
-# --- CONFIG PARITY HELPER ---
-# This function matches the merge logic in ethbtc_accum_bot.py:build_strategy_from_config()
-# to ensure live execution uses the same params as backtest
-def merge_strategy_params(cfg) -> dict:
-    """
-    Merge base strategy config with overrides for meta strategy.
-    Returns a dict with 'mr_params' and 'tr_params' dicts containing all merged values.
-    For non-meta strategies, returns the base strategy values.
-    """
-    base = cfg.strategy.model_dump() if hasattr(cfg.strategy, 'model_dump') else dict(cfg.strategy)
-    strategy_type = base.get("strategy_type", "mean_reversion")
-    
-    if strategy_type == "meta":
-        mr_opts = base.get("mean_reversion_overrides", {})
-        tr_opts = base.get("trend_overrides", {})
-        
-        # Merge: base + overrides (overrides win)
-        mr_merged = {**base, **mr_opts}
-        tr_merged = {**base, **tr_opts}
-    else:
-        # Non-meta: both use base params
-        mr_merged = base.copy()
-        tr_merged = base.copy()
-    
-    return {
-        "strategy_type": strategy_type,
-        "mr_params": mr_merged,
-        "tr_params": tr_merged,
-        "base_params": base,
-    }
-
+# NOTE: merge_strategy_params is imported from core.strategy_factory (line 42)
+# This is the SINGLE SOURCE OF TRUTH - do not redefine here.
 
 # --- MAKER LOGIC ---
 try:
@@ -441,7 +417,15 @@ def main():
 
         with BAR_LATENCY.labels(instance=instance_name).time():
             try:
-                ks = adapter.get_klines(args.symbol, cfg.execution.interval, limit=600)
+                # Phase 1: Use retry logic with circuit breaker for klines
+                ks = retry_api_call(
+                    adapter.get_klines, 
+                    args.symbol, cfg.execution.interval, limit=600,
+                    max_attempts=3,
+                    min_wait=2.0,
+                    max_wait=30.0,
+                    circuit_breaker=API_CIRCUIT_BREAKER
+                )
                 df = pd.DataFrame(ks)
                 
                 # Ensure numeric types
@@ -459,12 +443,7 @@ def main():
                 # --- FIX: Repainting / Look-Ahead ---
                 # Binance returns the currently OPEN candle as the last element.
                 # We must ensure we only use CLOSED candles.
-                # Check if the last candle's close time is in the future.
                 if not df.empty:
-                    last_close_time = df.index[-1] + pd.Timedelta(cfg.execution.interval)
-                    # Actually, df.index is close_time (from line 389)? 
-                    # Line 389: df.index = pd.to_datetime(df["close_time"], unit="ms", utc=True)
-                    # So index IS the close time.
                     if df.index[-1] > pd.Timestamp.now(tz="UTC"):
                         log.debug("Dropping incomplete candle at %s (now=%s)", df.index[-1], pd.Timestamp.now(tz="UTC"))
                         df = df.iloc[:-1]
@@ -476,9 +455,14 @@ def main():
                 # ------------------------------------
 
                 price = float(df["close"].iloc[-1])
+            except CircuitBreakerOpen as e:
+                log.critical("🚨 CIRCUIT BREAKER OPEN: %s. Entering safe mode.", e)
+                alerter.send(f"🚨 CIRCUIT BREAKER [{args.symbol}]\nAPI failures exceeded limit. Bot in safe mode.", level="CRITICAL")
+                time.sleep(60)  # Long wait when circuit is open
+                continue
             except Exception as e:
-                log.error("Failed to fetch klines: %s", e)
-                time.sleep(5)
+                log.error("Failed to fetch klines after retries: %s", e)
+                time.sleep(10)  # Longer wait after all retries exhausted
                 continue
 
             # --- BALANCE FETCHING (Updated for Spot/Futures) ---
@@ -520,14 +504,34 @@ def main():
                     base_bal = 0.0 # We don't hold the base asset in futures, we hold contracts
                     
                     # Current Exposure comes from the open Position size
-                    # FIX #5: Add fallback if position fetch fails
+                    # Phase 1: Retry logic + staleness check for position data
+                    position_stale = False
                     try:
-                        current_position = adapter.get_position(args.symbol)
-                        # Store successful fetch for future fallback
+                        current_position = retry_api_call(
+                            adapter.get_position, args.symbol,
+                            max_attempts=2,  # Fewer retries for position (time-sensitive)
+                            min_wait=1.0,
+                            max_wait=5.0,
+                            circuit_breaker=API_CIRCUIT_BREAKER
+                        )
+                        # Store successful fetch with timestamp
                         state["last_known_position"] = current_position
+                        state["last_position_fetch_ts"] = bar_dt.isoformat()
+                    except CircuitBreakerOpen as e:
+                        log.critical("🚨 Position fetch blocked by circuit breaker: %s", e)
+                        current_position = state.get("last_known_position", 0.0)
+                        position_stale = True
                     except Exception as e:
                         log.error("Position fetch failed, using last known: %s", e)
                         current_position = state.get("last_known_position", 0.0)
+                        # Check staleness
+                        last_fetch_ts = state.get("last_position_fetch_ts")
+                        if last_fetch_ts:
+                            last_fetch = pd.Timestamp(last_fetch_ts)
+                            position_age = bar_dt - last_fetch
+                            if position_age > pd.Timedelta("15min"):
+                                log.error("⚠️ Position data too stale (%s ago). Entering safe mode.", position_age)
+                                position_stale = True
                     
                     # Value of position = Size * Price
                     # (current_position can be negative if Short)
