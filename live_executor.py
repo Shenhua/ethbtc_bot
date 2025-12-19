@@ -285,6 +285,41 @@ def main():
     if "session_start_W" not in state:
         state["session_start_W"] = 0.0
 
+    # --- PHASE 1.5: CONFIG SANITY CHECK ---
+    # Block dangerous configurations before trading
+    sanity_errors = []
+    
+    # Check for dangerous max drawdown
+    max_dd_frac = float(getattr(cfg.risk, "max_dd_frac", 0.0) or 0.0)
+    if max_dd_frac > 0.5:
+        sanity_errors.append(f"max_dd_frac={max_dd_frac} is dangerously high (>50%)")
+    
+    # Check for extreme leverage
+    leverage = int(getattr(cfg.execution, "leverage", 1) or 1)
+    if leverage > 10:
+        sanity_errors.append(f"leverage={leverage}x is extremely high (>10x)")
+    
+    # Check for inconsistent risk settings
+    if cfg.risk.risk_mode == "dynamic":
+        if max_dd_frac <= 0 and float(getattr(cfg.risk, "max_dd_btc", 0.0)) <= 0:
+            sanity_errors.append("dynamic risk mode requires max_dd_frac or max_dd_btc > 0")
+    
+    # Check for missing API keys in live mode
+    if args.mode == "live":
+        if not os.getenv("BINANCE_KEY") and not os.getenv("BINANCE_FUTURES_KEY"):
+            sanity_errors.append("LIVE mode requires BINANCE_KEY or BINANCE_FUTURES_KEY")
+    
+    if sanity_errors:
+        for err in sanity_errors:
+            log.error("🚨 CONFIG SANITY FAILURE: %s", err)
+        if args.mode == "live":
+            raise ValueError(f"Config sanity check failed: {sanity_errors}")
+        else:
+            log.warning("⚠️ Continuing in %s mode despite sanity warnings", args.mode)
+    else:
+        log.info("✅ Config sanity check passed")
+    # --- END SANITY CHECK ---
+
     env_base = (os.getenv("BINANCE_BASE_URL") or "").strip()
     if env_base:
         base_url = env_base
@@ -735,6 +770,7 @@ def main():
 
             # --- STRATEGY EXECUTION ---
             target_w = None
+            plan = None  # Phase 1.4: Initialize plan to avoid Phoenix Protocol dependency
             strat_type = getattr(cfg.strategy, "strategy_type", "mean_reversion")
             
             # Bug Fix #5: Initialize these outside strategy blocks for Phoenix Protocol
@@ -865,7 +901,8 @@ def main():
 
             # --- SMART PHOENIX PROTOCOL (Auto-Recovery) ---
             # Checks if we should wake up from a MaxDD Crash
-            if maxdd_hit and 'plan' in locals():
+            # Phase 1.4 FIX: Compute regime score independently, don't depend on plan variable
+            if maxdd_hit:
                 reset_days = float(getattr(cfg.risk, "drawdown_reset_days", 0.0))
                 reset_score = float(getattr(cfg.risk, "drawdown_reset_score", 30.0))
                 hit_ts_str = state.get("risk_maxdd_hit_ts")
@@ -878,20 +915,31 @@ def main():
                             crash_time = crash_time.replace(tzinfo=bar_dt.tzinfo)
                         time_passed = bar_dt - crash_time
                         
-                        # 2. Check Trend (The "Smart" part)
+                        # 2. Check Trend - Compute regime score independently
                         current_score = 0.0
-                        if "regime_score" in plan.columns:
+                        if plan is not None and "regime_score" in plan.columns:
+                            # Use plan's regime score if available
                             current_score = float(plan["regime_score"].iloc[-1])
-                            adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
-                            
-                            current_regime = "TREND" if current_score > adx_thresh else "CHOP"
-                            
-                            # Pick the correct threshold based on regime (parity with backtest)
-                            if current_regime == "TREND":
-                                active_rebalance_threshold = float(tr_params.get("rebalance_threshold_w", 0.0))
-                            else:
-                                active_rebalance_threshold = float(mr_params.get("rebalance_threshold_w", 0.0))
-                            
+                        else:
+                            # Fallback: Compute regime score directly (Phoenix can work without strategy)
+                            try:
+                                regime_series = get_regime_score(df)
+                                if len(regime_series) > 0:
+                                    current_score = float(regime_series.iloc[-1])
+                                log.info("Phoenix: Computed regime score independently: %.2f", current_score)
+                            except Exception as re:
+                                log.warning("Phoenix: Failed to compute regime score: %s", re)
+                        
+                        adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
+                        
+                        current_regime = "TREND" if current_score > adx_thresh else "CHOP"
+                        
+                        # Pick the correct threshold based on regime (parity with backtest)
+                        if current_regime == "TREND":
+                            active_rebalance_threshold = float(tr_params.get("rebalance_threshold_w", 0.0))
+                        else:
+                            active_rebalance_threshold = float(mr_params.get("rebalance_threshold_w", 0.0))
+                        
                         # 3. Decision
                         if (time_passed.total_seconds() >= (reset_days * 86400)) and (current_score >= reset_score):
                             log.warning(f"🐦 PHOENIX REBIRTH: Cooldown ({reset_days}d) passed AND Trend confirmed (Score {current_score:.1f} >= {reset_score}). Resuming!")
