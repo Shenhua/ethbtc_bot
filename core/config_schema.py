@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional, Literal, Any, Dict
-from pydantic import BaseModel, Field, root_validator
+from pydantic import BaseModel, Field, model_validator
 import json
 
 Interval = Literal["1m","3m","5m","15m","30m","1h","2h","4h","6h","8h","12h","1d"]
@@ -94,25 +94,26 @@ class AppConfig(BaseModel):
     execution: Execution
     risk: Risk
     
-    # FIX ITEM 7: Robust Pre-Validation for Legacy Configs
-    @root_validator(pre=True)
-    def flatten_compatibility(cls, values):
+    # Pydantic V2 model_validator: Flatten legacy configs for backward compatibility
+    @model_validator(mode='before')
+    @classmethod
+    def flatten_compatibility(cls, values: Dict[str, Any]) -> Dict[str, Any]:
         # If structure is already nested (has 'fees', 'strategy', etc), return as is
         if "fees" in values and "strategy" in values:
             return values
             
         # Otherwise, assume flat legacy config and map fields
-        fees_data = {k: v for k, v in values.items() if k in Fees.__fields__}
+        fees_data = {k: v for k, v in values.items() if k in Fees.model_fields}
         
         # Strategy fields might have overrides (e.g. trend_kind)
-        strat_data = {k: v for k, v in values.items() if k in Strategy.__fields__}
+        strat_data = {k: v for k, v in values.items() if k in Strategy.model_fields}
         
         # Specific legacy defaults
         if "strategy_type" not in strat_data: 
             strat_data["strategy_type"] = "mean_reversion"
             
-        exec_data = {k: v for k, v in values.items() if k in Execution.__fields__}
-        risk_data = {k: v for k, v in values.items() if k in Risk.__fields__}
+        exec_data = {k: v for k, v in values.items() if k in Execution.model_fields}
+        risk_data = {k: v for k, v in values.items() if k in Risk.model_fields}
         
         # Handle Basis legacy
         if "basis_btc" in values and "basis_btc" not in risk_data:

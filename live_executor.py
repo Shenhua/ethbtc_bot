@@ -51,6 +51,9 @@ from core.resilience import CircuitBreaker, retry_api_call, CircuitBreakerOpen
 # and _update_risk_state functions preserved below for backward compatibility.
 from core.risk_manager import RiskManager, RiskConfig
 
+# --- ORDER MANAGER (Phase 3 Stabilization) ---
+from core.order_manager import wait_for_fill
+
 log = logging.getLogger("live_executor")
 
 # Global circuit breaker for API calls (shared across all calls)
@@ -1479,16 +1482,26 @@ def main():
                         mark_decision(instance_name, "exec_buy" if side == "BUY" else "exec_sell")
                         log.info("EXEC TAKER %s %0.8f %s @ ~%0.8f (oid=%s)", side, remaining, args.symbol, price, oid)
                         
-                        # Wait briefly and check if market order filled (especially important on testnet)
-                        time.sleep(1.0)
-                        is_filled, filled_qty = adapter.check_order(args.symbol, oid)
+                        # Wait for fill with proper polling (Phase 3 Stabilization)
+                        # Uses 10s timeout with 0.5s intervals instead of single 1s check
+                        is_filled, filled_qty = wait_for_fill(
+                            check_fn=adapter.check_order,
+                            symbol=args.symbol,
+                            order_id=oid,
+                            max_wait_seconds=10.0,
+                            poll_interval=0.5
+                        )
+                        
                         if is_filled:
                             log.info("TAKER order %s FILLED: %.8f", oid, filled_qty)
                             executed_qty += filled_qty
                             FILLS.labels(instance=instance_name).inc()
-                        else:
-                            log.warning("TAKER order %s NOT FILLED yet (status check after 1s). Filled: %.8f", oid, filled_qty)
+                        elif filled_qty > 0:
+                            log.warning("TAKER order %s PARTIALLY FILLED (%.8f/%.8f) after 10s timeout", oid, filled_qty, remaining)
                             executed_qty += filled_qty  # Add partial fills
+                            FILLS.labels(instance=instance_name).inc()  # Count partial as fill
+                        else:
+                            log.error("TAKER order %s NOT FILLED after 10s timeout. Order may be stuck.", oid)
                         
                         if side == "BUY":
                             TRADE_DECISION.labels(instance=instance_name, trade_decision="exec_buy").set(1)
