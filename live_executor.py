@@ -46,6 +46,11 @@ from core.strategy_factory import (
 # --- RESILIENCE (Phase 1 Stabilization) ---
 from core.resilience import CircuitBreaker, retry_api_call, CircuitBreakerOpen
 
+# --- RISK MANAGER (Phase 2 Refactoring) ---
+# NOTE: RiskManager class extracted for testability. Original _ensure_risk_state 
+# and _update_risk_state functions preserved below for backward compatibility.
+from core.risk_manager import RiskManager, RiskConfig
+
 log = logging.getLogger("live_executor")
 
 # Global circuit breaker for API calls (shared across all calls)
