@@ -45,6 +45,17 @@ class MetaStrategy:
         # 3. FORCE ALIGNMENT
         common_idx = df.index.intersection(regime_score.index)
         
+        # Guard against empty alignment (edge case with mismatched indices)
+        if len(common_idx) == 0:
+            log.warning("[META] Empty index intersection - returning neutral signal")
+            return pd.DataFrame({
+                "target_w": [0.0],
+                "regime_score": [0.0],
+                "regime_state": [-1.0],
+                "sig_mr": [0.0],
+                "sig_trend": [0.0]
+            }, index=df.index[-1:] if len(df) > 0 else pd.DatetimeIndex([]))
+        
         v_mr = sig_mr.reindex(common_idx).fillna(0.0).values
         v_tr = sig_trend.reindex(common_idx).fillna(0.0).values
         v_sc = regime_score.reindex(common_idx).fillna(0.0).values

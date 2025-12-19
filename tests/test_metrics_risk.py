@@ -15,50 +15,52 @@ def _reset_gauges():
 
 def test_mark_risk_mode_sets_dynamic_and_fixed_basis_correctly():
     _reset_gauges()
+    test_instance = "test_instance"
 
     # First: dynamic
-    metrics.mark_risk_mode("dynamic")
-    dynamic_val = metrics.RISK_MODE.labels(mode="dynamic")._value.get()
-    fixed_val = metrics.RISK_MODE.labels(mode="fixed_basis")._value.get()
+    metrics.mark_risk_mode(test_instance, "dynamic")
+    dynamic_val = metrics.RISK_MODE.labels(instance=test_instance, mode="dynamic")._value.get()
+    fixed_val = metrics.RISK_MODE.labels(instance=test_instance, mode="fixed_basis")._value.get()
     assert dynamic_val == 1.0
     assert fixed_val == 0.0
 
     # Then: fixed_basis
-    metrics.mark_risk_mode("fixed_basis")
-    dynamic_val = metrics.RISK_MODE.labels(mode="dynamic")._value.get()
-    fixed_val = metrics.RISK_MODE.labels(mode="fixed_basis")._value.get()
+    metrics.mark_risk_mode(test_instance, "fixed_basis")
+    dynamic_val = metrics.RISK_MODE.labels(instance=test_instance, mode="dynamic")._value.get()
+    fixed_val = metrics.RISK_MODE.labels(instance=test_instance, mode="fixed_basis")._value.get()
     assert dynamic_val == 0.0
     assert fixed_val == 1.0
 
 
 def test_mark_risk_flags_sets_flags_as_expected():
     _reset_gauges()
+    test_instance = "test_instance"
 
     # Initially: no flags
-    metrics.mark_risk_flags(daily_limit_hit=False, maxdd_hit=False)
-    daily = metrics.RISK_FLAGS.labels(kind="daily_limit_hit")._value.get()
-    maxdd = metrics.RISK_FLAGS.labels(kind="maxdd_hit")._value.get()
+    metrics.mark_risk_flags(test_instance, daily_limit_hit=False, maxdd_hit=False)
+    daily = metrics.RISK_FLAGS.labels(instance=test_instance, kind="daily_limit_hit")._value.get()
+    maxdd = metrics.RISK_FLAGS.labels(instance=test_instance, kind="maxdd_hit")._value.get()
     assert daily == 0.0
     assert maxdd == 0.0
 
     # Daily limit hit only
-    metrics.mark_risk_flags(daily_limit_hit=True, maxdd_hit=False)
-    daily = metrics.RISK_FLAGS.labels(kind="daily_limit_hit")._value.get()
-    maxdd = metrics.RISK_FLAGS.labels(kind="maxdd_hit")._value.get()
+    metrics.mark_risk_flags(test_instance, daily_limit_hit=True, maxdd_hit=False)
+    daily = metrics.RISK_FLAGS.labels(instance=test_instance, kind="daily_limit_hit")._value.get()
+    maxdd = metrics.RISK_FLAGS.labels(instance=test_instance, kind="maxdd_hit")._value.get()
     assert daily == 1.0
     assert maxdd == 0.0
 
     # Max DD hit only
-    metrics.mark_risk_flags(daily_limit_hit=False, maxdd_hit=True)
-    daily = metrics.RISK_FLAGS.labels(kind="daily_limit_hit")._value.get()
-    maxdd = metrics.RISK_FLAGS.labels(kind="maxdd_hit")._value.get()
+    metrics.mark_risk_flags(test_instance, daily_limit_hit=False, maxdd_hit=True)
+    daily = metrics.RISK_FLAGS.labels(instance=test_instance, kind="daily_limit_hit")._value.get()
+    maxdd = metrics.RISK_FLAGS.labels(instance=test_instance, kind="maxdd_hit")._value.get()
     assert daily == 0.0
     assert maxdd == 1.0
 
     # Both hit (e.g., during a very bad move)
-    metrics.mark_risk_flags(daily_limit_hit=True, maxdd_hit=True)
-    daily = metrics.RISK_FLAGS.labels(kind="daily_limit_hit")._value.get()
-    maxdd = metrics.RISK_FLAGS.labels(kind="maxdd_hit")._value.get()
+    metrics.mark_risk_flags(test_instance, daily_limit_hit=True, maxdd_hit=True)
+    daily = metrics.RISK_FLAGS.labels(instance=test_instance, kind="daily_limit_hit")._value.get()
+    maxdd = metrics.RISK_FLAGS.labels(instance=test_instance, kind="maxdd_hit")._value.get()
     assert daily == 1.0
     assert maxdd == 1.0
 
