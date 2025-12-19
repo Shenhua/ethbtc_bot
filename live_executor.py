@@ -1173,7 +1173,15 @@ def main():
             if not is_futures and side == "SELL" and base_bal <= 1e-12:
                 # Spot-only check: Can't sell what you don't have
                 SKIPS.labels(instance=instance_name, reason="balance").inc()
-                # ... (rest of skip balance logic) ...
+                mark_decision(instance_name, "skip_sell_no_balance")
+                log.info("Skip: SELL requested but no %s to sell (base_bal=0).", base_asset)
+                state["last_target_w"] = target_w
+                state["last_bar_close"] = bar_ts
+                save_state(args.state, state)
+                last_seen_bar = bar_ts
+                if args.once:
+                    break
+                time.sleep(cfg.execution.poll_sec)
                 continue
             
             # Bug Fix: BUY-side balance check (prevents "insufficient balance" from Binance)
