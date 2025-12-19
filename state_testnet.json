@@ -1,0 +1,15 @@
+{
+  "alert_sent_maxdd": false,
+  "last_balance_log_ts": 1766159007,
+  "last_bar_close": 1766159099,
+  "last_known_base": 0.0,
+  "last_known_quote": 1.03918709,
+  "last_target_w": 0.0,
+  "loop_started_at": "2025-12-19T15:43:25.748039+00:00",
+  "risk_current_date": "2025-12-19",
+  "risk_daily_limit_hit": false,
+  "risk_daily_start_wealth": 1.03918709,
+  "risk_equity_high": 1.03918709,
+  "risk_maxdd_hit": false,
+  "session_start_W": 1.03918709
+}

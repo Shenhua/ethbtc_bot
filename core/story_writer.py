@@ -159,6 +159,16 @@ class StoryWriter:
         
         # Track trade count for summaries
         self._increment_trade_count()
+        
+        # Send to Discord if enabled
+        if self.alerter:
+            self.alerter.send(
+                f"{icon} {side} [{self.symbol}]\n"
+                f"Qty: {abs(quantity):.6f} {base_asset}\n"
+                f"Price: {price:.8f}\n"
+                f"Value: {notional:.6f} {quote_asset}",
+                level="INFO"
+            )
     
     def log_safety_breaker(self, timestamp: datetime, drawdown_pct: float):
         """Log safety breaker trip."""
