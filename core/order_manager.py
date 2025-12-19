@@ -157,12 +157,12 @@ class OrderTracker:
     Useful for debugging and metrics collection.
     """
     
-    def __init__(self):
-        self.orders_submitted = 0
-        self.orders_filled = 0
-        self.orders_rejected = 0
-        self.total_volume = 0.0
-        self.total_slippage_bps = 0.0
+    def __init__(self) -> None:
+        self.orders_submitted: int = 0
+        self.orders_filled: int = 0
+        self.orders_rejected: int = 0
+        self.total_volume: float = 0.0
+        self.total_slippage_bps: float = 0.0
     
     def record_submission(self) -> None:
         """Record an order submission."""
@@ -192,7 +192,7 @@ class OrderTracker:
             return 0.0
         return self.total_slippage_bps / self.orders_filled
     
-    def summary(self) -> dict:
+    def summary(self) -> dict[str, float | int]:
         """Get summary statistics."""
         return {
             "orders_submitted": self.orders_submitted,

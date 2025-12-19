@@ -88,7 +88,7 @@ class CircuitBreaker:
             )
             self._state = "OPEN"
     
-    def call(self, func: Callable[..., T], *args, **kwargs) -> T:
+    def call(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         """
         Execute function with circuit breaker protection.
         
@@ -150,13 +150,13 @@ def with_retry(
                 reraise=True
             )
             @wraps(func)
-            def wrapper(*args, **kwargs) -> T:
+            def wrapper(*args: Any, **kwargs: Any) -> T:
                 return func(*args, **kwargs)
             return wrapper
         else:
             # Fallback: simple retry with exponential backoff
             @wraps(func)
-            def wrapper(*args, **kwargs) -> T:
+            def wrapper(*args: Any, **kwargs: Any) -> T:
                 last_exception: Optional[Exception] = None
                 
                 for attempt in range(1, max_attempts + 1):
@@ -187,12 +187,12 @@ def with_retry(
 
 def retry_api_call(
     func: Callable[..., T],
-    *args,
+    *args: Any,
     max_attempts: int = 3,
     min_wait: float = 1.0,
     max_wait: float = 30.0,
     circuit_breaker: Optional[CircuitBreaker] = None,
-    **kwargs
+    **kwargs: Any
 ) -> T:
     """
     Execute an API call with retry logic and optional circuit breaker.

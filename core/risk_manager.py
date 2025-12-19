@@ -32,7 +32,7 @@ class RiskConfig:
     drawdown_reset_score: float = 25.0
     
     @classmethod
-    def from_config(cls, cfg_risk) -> "RiskConfig":
+    def from_config(cls, cfg_risk: Any) -> "RiskConfig":
         """Create RiskConfig from AppConfig.risk object."""
         return cls(
             risk_mode=getattr(cfg_risk, "risk_mode", "fixed_basis"),
