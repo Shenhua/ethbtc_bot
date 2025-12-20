@@ -1,385 +1,126 @@
-# 🔍 ETH/BTC Bot v5 — Comprehensive QA Audit Report
-
-> **Audit Date:** December 18, 2024
-> **Scope:** Full codebase logic audit with Zero Trust methodology
-
-------
-
-## 1. Logic vs. Goal Discrepancies
-
-### 1.1 🔴 OBJECTIVE FLAW: No Retry Logic for API Failures
-
-**Goal:** Documentation claims the bot handles network issues gracefully with resilience to market non-stationarity.
-
-**Reality:** The 
-
-live_executor.py main loop has no exponential backoff or retry logic for Binance API failures. When `adapter.get_klines()` fails (line 444), it sleeps 5 seconds and continues—no retry counter, no escalating delay.
-
-
-
-```
-except Exception as e:
-
-    log.error("Failed to fetch klines: %s", e)
-
-    time.sleep(5)  # Fixed delay, no backoff
-
-    continue
-```
-
-**Severity:** **Critical**
-
-**Fix Required:** Implement exponential backoff with max 3-5 retries before entering a degraded state. After max retries, alert via Discord and pause until next bar.
-
-------
-
-### 1.2 🔴 OBJECTIVE FLAW: Position Fetch Fallback Uses Stale Data
-
-**Goal:** Accurate real-time position tracking for futures trading.
-
-**Reality:** In 
-
-live_executor.py (lines 524-530), when `adapter.get_position()` fails, the bot falls back to `state.get("last_known_position", 0.0)`. This stale data could be hours old, causing the bot to trade against the actual exchange state.
-
-
-
-```
-except Exception as e:
-
-    log.error("Position fetch failed, using last known: %s", e)
-
-    current_position = state.get("last_known_position", 0.0)  # ⚠️ STALE!
-```
-
-**Severity:** **Critical**
-
-**Fix Required:** If position fetch fails, the bot should enter a "safe mode" (block new entries, allow exits only) and alert the user, rather than trading on stale data.
-
-------
-
-### 1.3 🔴 OBJECTIVE FLAW: Market Order Assumes Immediate Fill
-
-**Goal:** Robust order execution with proper fill verification.
-
-**Reality:** After executing a market order (line 1418), the bot only waits 1 second before checking fill status. On testnet or during high latency, this may be insufficient. Partial fills are not properly reconciled.
-
-```
-time.sleep(1.0)
-
-is_filled, filled_qty = adapter.check_order(args.symbol, oid)
-
-if not is_filled:
-
-    log.warning("TAKER order %s NOT FILLED yet...")
-
-    executed_qty += filled_qty  # Adds partial, but doesn't retry
-```
-
-**Severity:** **Major**
-
-**Fix Required:** Implement polling loop with timeout (e.g., 10s max) to wait for full fill confirmation before proceeding.
-
-------
-
-### 1.4 🟡 SUBJECTIVE IMPROVEMENT: Duplicate merge_strategy_params Function
-
-**Goal:** Clean, maintainable code without duplication.
-
-**Reality:** 
-
-merge_strategy_params() is defined in both 
-
-live_executor.py
-
- (line 52) AND imported from `core.strategy_factory` (line 41). The local definition shadows the import.
-
-
-
-**Severity:** Minor
-
-**Fix Required:** Remove duplicate function definition in 
-
-live_executor.py.
-
-
-
-------
-
-### 1.5 🔴 OBJECTIVE FLAW: Phoenix Protocol Requires Plan Variable
-
-**Goal:** Phoenix Protocol auto-recovery after max drawdown is hit.
-
-**Reality:** The Phoenix recovery logic (line 864) has a condition `if maxdd_hit and 'plan' in locals()`. If strategy calculation fails (line 860: `target_w = cur_w`), the `plan` variable won't exist, and Phoenix recovery can never trigger!
-
-```
-if maxdd_hit and 'plan' in locals():  # BUG: plan might not exist on error
-
-    reset_days = float(getattr(cfg.risk, "drawdown_reset_days", 0.0))
-```
-
-**Severity:** **Critical**
-
-**Fix Required:** Move regime score calculation for Phoenix outside the strategy block, or handle the case where plan doesn't exist.
-
-------
-
-### 1.6 🟡 SUBJECTIVE IMPROVEMENT: Missing Type Hints Across Codebase
-
-**Goal:** Production-grade, type-safe code.
-
-**Reality:** Most functions lack proper type annotations (e.g., 
-
-_update_risk_state returns `None` but isn't annotated). This makes static analysis and IDE support less effective.
-
-
-
-**Severity:** Minor
-
-**Fix Required:** Add comprehensive type hints, especially for public APIs.
-
-------
-
-## 2. "Mental Sandbox" Findings
-
-### 2.1 Workflow: **Order Execution Flow**
-
-#### Happy Path
-
-1. Strategy calculates `target_w = 0.7`
-2. Bot computes `delta_w = 0.7 - 0.0 = 0.7`
-3. Order submitted → Market fills → Metrics updated → State saved ✅
-
-#### Destructive Scenario: API Returns 500 During Order
-
-**Current Behavior:**
-
-```
-except Exception as e:
-
-    msg = str(e)
-
-    reason = "insufficient_balance" if "-2010" in msg else "order_error"
-
-    inc_rejection(instance_name, reason)
-
-    log.exception("Taker order rejected: %s", e)
-
-    # Continues to next bar with no retries
-```
-
-**Expected Behavior:** Retry 2-3 times with exponential backoff. If all fail, enter degraded state and alert user. Current behavior loses the trade opportunity silently.
-
-------
-
-### 2.2 Workflow: **Balance Fetching (Futures Mode)**
-
-#### Happy Path
-
-1. `adapter.get_account_balance("USDT")` returns margin balance
-2. `adapter.get_position("BTCUSDT")` returns current position
-3. `cur_w` calculated correctly ✅
-
-#### Destructive Scenario: Network Timeout Mid-Execution
-
-**Current Behavior:** Falls back to `state.get("last_known_quote")` and continues trading.
-
-**Problem:** If balances are stale by several bars and price moved significantly, wealth calculation (`W = quote_bal`) will be wrong, potentially causing:
-
-- Incorrect `delta_eth` calculation
-- Trading more than available margin
-- Max drawdown not triggering when it should
-
-**Expected Behavior:** If balance fetch fails AND position fetch fails, halt trading until next successful fetch. Current state mixing fresh position with stale balance is dangerous.
-
-------
-
-### 2.3 Workflow: **Risk State Update (_update_risk_state)**
-
-#### Happy Path
-
-1. New HWM recorded when `wealth > equity_high`
-2. Drawdown calculated: `dd_now = equity_high - wealth`
-3. If `dd_now >= threshold_dd`, `maxdd_hit = True` ✅
-
-#### State Analysis Bug: HWM Update Race
-
-When `maxdd_hit = True`, HWM stops updating (line 224). **This is correct.** However, after Phoenix reset (line 899), `state["risk_equity_high"] = W` sets HWM to current wealth. If current wealth is at a local low, the next minor dip could immediately re-trigger max DD.
-
-**Recommendation:** After Phoenix reset, wait N bars before enabling max DD check, or use a smoothed HWM.
-
-------
-
-## 3. The "Matrix of Pain" (Test Plan)
-
-| Component          | Scenario                          | Input Data                                          | Expected Outcome                        | Type (Unit/E2E) |
-| :----------------- | :-------------------------------- | :-------------------------------------------------- | :-------------------------------------- | :-------------- |
-| **FuturesAdapter** | get_position() returns empty list | `{"positions": []}`                                 | Return `0.0`, no exception              | Unit            |
-| **FuturesAdapter** | get_position() times out          | Network timeout after 5s                            | Raise exception, caught by caller       | Integration     |
-| **FuturesAdapter** | Hedge mode (long + short)         | `[{"positionAmt": "1.5"}, {"positionAmt": "-0.5"}]` | Net position = `1.0`                    | Unit ✅ (exists) |
-| **RiskState**      | Max DD hit exactly at threshold   | `wealth=8.0, HWM=10.0, max_dd_frac=0.2`             | `maxdd_hit = True`                      | Unit            |
-| **RiskState**      | Daily loss limit at midnight UTC  | Cross midnight with loss                            | Reset daily counters                    | Unit            |
-| **RiskState**      | Phoenix triggers after cooldown   | `reset_days=7`, `regime_score=35`                   | `maxdd_hit = False`, HWM reset          | Unit            |
-| **RiskState**      | Phoenix blocked by low score      | `reset_days=7`, `regime_score=15`                   | `maxdd_hit = True` (unchanged)          | Unit            |
-| **MetaStrategy**   | Regime switch hysteresis          | ADX oscillates 24-26                                | No rapid switching (buffer=2)           | Unit            |
-| **MetaStrategy**   | MR signal in Trend regime         | `regime_score=30` (>25)                             | Use Trend signal, ignore MR             | Unit            |
-| **PositionSizer**  | Volatility mode, high vol         | `realized_vol=1.0, target_vol=0.5`                  | `step = 0.25` (reduced)                 | Unit            |
-| **PositionSizer**  | Kelly with invalid avg_win        | `kelly_avg_win=0`                                   | Fallback to `base_step`                 | Unit            |
-| **PositionSizer**  | NaN volatility input              | `realized_vol=NaN`                                  | Fallback to `base_step`                 | Unit            |
-| **LiveExecutor**   | Kline fetch fails 3 times         | API returns 500                                     | Retry with backoff, then safe mode      | Integration     |
-| **LiveExecutor**   | Order partially filled            | `filled_qty < qty_exec`                             | Update exposure to actual, log mismatch | Integration     |
-| **LiveExecutor**   | Zero balance detected             | `W = 0.0`                                           | Log warning, skip trading, alert        | E2E             |
-| **LiveExecutor**   | Gate closed (high funding)        | `funding_rate = 0.1%`                               | Block long entry, allow exits           | Integration     |
-| **Backtester**     | Parity with live executor step    | Same config, same data                              | `target_w` sequences match              | Integration     |
-| **Backtester**     | Funding cost at 8-hour mark       | Position held across funding                        | Deduct funding cost from balance        | Unit            |
-
-------
-
-## 4. Recommendations for Refactoring
-
-### 4.1 Untestable Code
-
-| Function                | File                | Issue                                  | Recommendation                                               |
-| :---------------------- | :------------------ | :------------------------------------- | :----------------------------------------------------------- |
-| main()                  | live_executor.py    | **1230 lines**, does everything        | Split into: `run_strategy_loop()`, `execute_trade()`, `update_metrics()`, `handle_risk()` |
-| `Backtester.simulate()` | ethbtc_accum_bot.py | **374 lines**, mixes concerns          | Extract: `apply_funding_fees()`, `calculate_trade_costs()`, update_risk_state() |
-| generate_positions()    | meta_strategy.py    | Depends on two sub-strategies + regime | Already acceptable, but add mocks in tests                   |
-
-------
-
-### 4.2 🔴 Hardening Steps (Must Fix Now)
-
-1. **Add circuit breaker for consecutive API failures**
-
-   ```
-   fail_count = 0
-   
-   MAX_FAILS = 5
-   
-   if exception:
-   
-       fail_count += 1
-   
-       if fail_count >= MAX_FAILS:
-   
-           log.critical("Circuit breaker tripped!")
-   
-           alerter.send("CRITICAL: API failures, halting", level="CRITICAL")
-   
-           sys.exit(1)
-   
-   else:
-   
-       fail_count = 0
-   ```
-
-2. **Guard against trading on stale position data**
-
-   ```
-   position_age = bar_dt - state.get("last_position_fetch_ts")
-   
-   if position_age > pd.Timedelta("15min"):
-   
-       log.error("Position data too stale, entering safe mode")
-   
-       target_w = 0.0  # Force exit only
-   ```
-
-3. **Add timeout wrapper for all adapter calls**
-
-   ```
-   from functools import wraps
-   
-   import signal
-   
-   
-   
-   def timeout(seconds=30):
-   
-       def decorator(func):
-   
-           @wraps(func)
-   
-           def wrapper(*args, **kwargs):
-   
-               # Implementation with signal.alarm or threading
-   ```
-
-4. **Validate config before trading**
-
-   - Add sanity_check_config.py call on startup
-   - Block if `max_dd_frac > 0.5` (dangerous)
-   - Block if `leverage > 10` (extreme risk)
-
-------
-
-### 4.3 🟡 Improvement Steps (Nice to Have)
-
-1. Add comprehensive type hints across all modules
-2. Implement structured logging (JSON format) for log aggregation
-3. Add health check endpoint (`/health`) separate from metrics
-4. Create integration test suite using Binance testnet
-5. Add pre-commit hooks for type checking (mypy)
-
-------
-
-## 5. Test Coverage Gap Analysis
-
-### Current Test Files (7 files, ~320 lines total)
-
-| File                         | Lines | Coverage Focus                |
-| :--------------------------- | :---- | :---------------------------- |
-| test_fixes.py                | 72    | Hedge mode, metrics existence |
-| test_metrics_risk.py         | 76    | Risk mode flags               |
-| test_meta_logic.py           | ~80   | Meta strategy basic           |
-| test_position_sizer.py       | ~150  | Position sizing modes         |
-| test_risk_modes.py           | ~100  | Risk calculations             |
-| test_volatility.py           | ~100  | Volatility calculations       |
-| test_backtest_live_parity.py | ~60   | Basic parity check            |
-
-### Critical Missing Tests
-
-1. **No tests for live_executor.py main loop** - The most critical file has zero direct tests
-2. **No tests for Phoenix Protocol edge cases**
-3. **No tests for API failure scenarios**
-4. **No tests for order execution with partial fills**
-5. **No tests for funding gate blocking logic**
-6. **No E2E tests against testnet**
-
-### Recommended Test Additions
-
-1. Create `test_live_executor_unit.py` - Mock adapter, test decision logic
-2. Create `test_phoenix_protocol.py` - All recovery scenarios
-3. Create `test_order_execution.py` - Partial fills, rejections, retries
-4. Create `integration/test_binance_testnet.py` - Real API calls with testnet
-
-------
-
-## 6. Calibration & Reality Check
-
-### Findings Classified
-
-| Category                    | Count | Examples                                                     |
-| :-------------------------- | :---- | :----------------------------------------------------------- |
-| 🔴 OBJECTIVE FLAW (Must Fix) | 4     | No retry logic, stale position fallback, Phoenix depends on plan, market order no confirmation loop |
-| 🟡 SUBJECTIVE (Nice to Have) | 3     | Duplicate function, type hints, structured logging           |
-
-### NOT Flagged (Working as Intended)
-
-- **Hysteresis in MetaStrategy** - Properly implements buffer to prevent switching churn
-- **Risk state tracking** - Correctly separates daily loss from max DD
-- **Dynamic position sizing** - Proper volatility targeting implementation
-- **State persistence** - Atomic write with tmp file and replace
-- **Metrics export** - Comprehensive Prometheus instrumentation
-
-------
-
-## Summary
-
-The codebase is generally well-structured with good observability. However, **the lack of resilience to API failures is a critical gap** for a live trading system. The Phoenix Protocol has a subtle bug that could prevent recovery. Test coverage is minimal for the most critical paths.
-
-**Priority fixes:**
-
-1. Add retry/backoff for all Binance API calls
-2. Fix Phoenix Protocol dependency on `plan` variable
-3. Implement proper order fill confirmation loop
-4. Add unit tests for live_executor.py decision logic
+1. Logic vs. Goal Discrepancies
+	•	Goal: Backtest/live config parity (“single source of truth” for strategy params; parity checks exist).  ￼
+Reality: live_executor.py imports merge_strategy_params from core.strategy_factory then redefines a local function with the same name, shadowing the imported one. That makes parity fragile (and likely false) because live execution can silently diverge from factory/backtest behavior.  ￼  ￼
+Severity: Critical
+Fix Required: 🔴 OBJECTIVE FLAW — Eliminate the duplicate merge_strategy_params definition in live_executor.py; enforce one canonical path (factory) and fail fast if parity drift is detected at runtime (not just via scripts).
+	•	Goal: Robust alerting to Discord/Telegram (rate-limit handling, retries).
+Reality: core/alert_manager.py calls time.sleep(...) in both Discord and Telegram retry/error paths but never imports time. Any path that hits rate limiting (429) or exception handling will throw NameError and kill alerting exactly when you need it.  ￼
+Severity: Critical
+Fix Required: 🔴 OBJECTIVE FLAW — Add the missing import and add tests to prove alerting doesn’t crash on 429/network exceptions.
+	•	Goal: Maker execution that is “safe” (post-only), with controlled repricing and reliable cancellation.
+Reality: In core/twap_maker.py, if check_order() / cancel() fails, the code logs and breaks out of the loop. That can leave a live order orphaned on the exchange (especially if failure happens after placement but before cancel confirmation).  ￼
+Severity: Critical
+Fix Required: 🔴 OBJECTIVE FLAW — Ensure best-effort cleanup: on any exception after an order ID exists, attempt cancel with bounded retries and confirm final order state before returning.
+	•	Goal: Funding-rate monitoring is part of safety (docs explicitly list it).  ￼
+Reality: Funding safety is soft-fail open: funding fetch is wrapped in a broad try/except and defaults to allow = True if anything fails. If the adapter doesn’t support funding (or Binance errors), the bot will proceed as if conditions are safe.  ￼  ￼
+Severity: Major (can become Critical depending on risk appetite)
+Fix Required: 🔴 OBJECTIVE FLAW — Make funding safety “fail closed” (configurable): if funding safety is enabled and funding can’t be fetched/parsed, block entries (or all trading) and alert.
+	•	Goal: Risk controls: daily loss limit + max drawdown + “Phoenix” recovery.  ￼
+Reality: Phoenix recovery is tightly coupled to plan contents (score signals), and the code only triggers Phoenix reset if maxdd_hit is set and conditions are met using current_score derived from the current plan. If strategy calculation fails or the plan lacks the expected score field, Phoenix recovery can stall indefinitely (locked-out state).  ￼  ￼
+Severity: Major
+Fix Required: 🔴 OBJECTIVE FLAW — Decouple Phoenix gating from fragile plan fields; use a stable, validated metric source (or explicit “phoenix_score_provider”) and handle “no-plan” ticks deterministically.
+	•	Goal: Clean execution adapter contract (unified interface).
+Reality: ExchangeAdapter defines get_funding_rate() as required.  ￼ But the system also supports Spot vs Futures adapters, and funding is inherently Futures-specific; this mismatch drives the “fail-open” behavior above.
+Severity: Minor → Major (depends how often spot mode is used with funding checks enabled)
+Fix Required: 🟡 SUBJECTIVE IMPROVEMENT — Split interfaces (SpotAdapter, FuturesAdapter) or make funding optional with explicit capability flags so the caller can decide to fail closed/open safely.
+
+⸻
+
+2. “Mental Sandbox” Findings
+
+Workflow 1 — Live trading loop (plan → risk gate → execute → persist)
+	•	Scenario: Happy path
+Current Behavior: Loads config, merges params, builds strategy, computes plan, checks risk gates (spread/funding), executes maker/taker orders, updates state and metrics.  ￼  ￼
+Expected Behavior: Same, but must be deterministic and parity-consistent with backtest.
+	•	Scenario: “Backtest/live parity drift”
+Current Behavior: live_executor can run with a locally-defined merge_strategy_params that differs from core.strategy_factory.merge_strategy_params, making the live plan potentially inconsistent with what backtests/optimizers validate.  ￼  ￼
+Expected Behavior: Exactly one canonical merge path; if parity scripts exist, runtime should also detect/abort on drift.
+	•	Scenario: Funding endpoint fails / adapter lacks funding support
+Current Behavior: Funding fetch exception → logs warning → allow = True → trades proceed.  ￼
+Expected Behavior: If funding safety is enabled, block entries and alert (or block all trading if configured).
+	•	Scenario: State persistence fails (disk full / permissions)
+Current Behavior: Not proven safe here: if save throws, depending on exception handling, you risk “trading with stale state” next loop (double-orders, wrong position).
+Expected Behavior: Fail closed: stop trading, alert, and require operator intervention if state can’t be committed.
+
+⸻
+
+Workflow 2 — Maker chase execution (place → wait → check → cancel/reprice)
+	•	Scenario: Happy path
+Current Behavior: Place post-only limit, wait, check fills, cancel & reprice until filled or retries exhausted.  ￼
+Expected Behavior: Same, plus strict guarantees: you never return while an order is unknowingly still open.
+	•	Scenario: Network drop during check_order() or cancel()
+Current Behavior: Logs “Order check/cancel failed”, then breaks. If the order is still live, the function exits without confirming it’s closed.  ￼
+Expected Behavior: Bounded retries + reconcile final status; if cannot confirm closure, quarantine trading and alert.
+	•	Scenario: Partial fills + cancel failure
+Current Behavior: High risk of inconsistent filled quantity accounting vs real exchange state (local thinks “done”; exchange still has remainder working).  ￼
+Expected Behavior: Robust reconciliation loop: query final status until terminal or timeout triggers fail-safe shutdown.
+
+⸻
+
+Workflow 3 — Alerting (Discord/Telegram)
+	•	Scenario: Discord 429 rate limit
+Current Behavior: Code intends to sleep/retry, but throws NameError due to missing time import → alerting path crashes.  ￼
+Expected Behavior: Retry with backoff, never crash caller; return a structured failure result and increment metrics.
+	•	Scenario: Telegram network exception
+Current Behavior: Same: exception path calls time.sleep without import → crash.  ￼
+Expected Behavior: Non-fatal, logged, with bounded retry.
+
+⸻
+
+3. The “Matrix of Pain” (Test Plan)
+
+Component	Scenario	Input Data	Expected Outcome	Type (Unit/E2E)
+Config/Parity	Shadowed merge fn causes drift	live_executor.py contains local merge_strategy_params	CI fails + runtime self-check fails; bot refuses to start	Unit/CI
+Config/Parity	Factory merge vs live merge mismatch	Same config fed through both merge paths	Identical merged config or hard failure	Unit
+AlertManager	Discord 429	Mock response status_code=429	No crash; retries; returns failure after N attempts	Unit
+AlertManager	Telegram exception	requests.post raises Timeout	No crash; retries; emits warning	Unit
+AlertManager	Malformed webhook URL	DISCORD_WEBHOOK_URL="not a url"	No crash; fails gracefully; increments error metric	Unit
+Funding Gate	Funding fetch fails	adapter raises NotImplementedError	Fail closed (no entries) + alert	Integration
+Funding Gate	Funding extreme	funding = +10.0 vs limits	Entries blocked, state unchanged	Unit
+Risk Engine	Daily loss trigger boundary	equity drop exactly equals threshold	Deterministic behavior at boundary (define inclusive/exclusive)	Unit
+Phoenix	No plan / missing score	plan=None or no regime_score	Phoenix logic deterministic; no infinite lockout	Unit
+Phoenix	Reset after wait + score	now - maxdd_hit_ts > wait + score >= threshold	Resets lockout exactly once; persists state	Integration
+Execution (Maker)	cancel/check throws mid-loop	check_order raises	Bot confirms order terminal OR stops trading + alerts	Integration
+Execution (Maker)	partial fill + cancel fails	check_order returns partial, then cancel raises	No orphan order; reconciled final filled qty	Integration
+Execution (Maker)	max reprices hit	max_reprices=0	Returns cleanly; no open orders; emits metric	Unit
+Execution (Taker)	spread too wide	spread_bps > max_spread_bps_for_taker	Taker blocked; no order placed	Unit
+Execution (Taker)	market order rejected	adapter.market_order raises	Retry policy respected; bot doesn’t loop forever	Integration
+Adapter Contract	Missing get_funding_rate in spot	spot adapter instance	Capability detection prevents calling unsupported method	Unit
+State	Disk write failure	open() raises OSError	Trading halts; alert emitted; process exits non-zero	E2E
+State	Corrupted state file on load	invalid JSON	Bot refuses start or resets safely with explicit operator flag	E2E
+Metrics/Status	Status server thread safety	rapid updates + concurrent reads	No exceptions; JSON always valid	Unit
+Metrics	Metric labels explode	random symbol names / modes	Bounded label cardinality	Unit
+Data	Klines empty	adapter returns []	No trades; retries data fetch; alerts after threshold	Integration
+Data	NaN in prices	close=nan	Guard clause triggers; no orders sent	Unit
+Strategy	Output plan negative qty	target_qty=-1	Reject / normalize; never place negative sizes	Unit
+Precision	Rounding step/tick edge	step=0 or tick=0	Doesn’t floor-divide by zero; uses passthrough safely	Unit
+Docker/Runtime	Two bots share same state path	same mounted /data/state.json	No state corruption; lock or per-instance separation	E2E
+Security	Env secrets leakage	log capture while starting	No keys printed in logs	Security Unit
+Regression	Order orphan detection	simulated exchange keeps open order	Bot detects mismatch next loop, cancels, quarantines	E2E
+
+
+⸻
+
+4. Recommendations for Refactoring
+	•	Untestable Code (High Risk / SRP Violations)
+	•	🔴 live_executor.py is doing configuration, strategy construction, risk gating, execution, state persistence, metrics, and HTTP status in one place. That’s not “hard to mock”; it’s hard to reason about, and it hides safety invariants (like “never exit with an unknown open order”).
+	•	🔴 Maker execution flow spans multiple concerns (timing, order lifecycle, reconciliation). The failure mode in maker_chase proves the lifecycle invariants aren’t centralized.  ￼
+	•	Hardening Steps (guards that must be added now)
+	•	🔴 Runtime parity assertion: assert that live_executor is using core.strategy_factory.merge_strategy_params (or remove the local function entirely).  ￼
+	•	🔴 Alerting must never crash the caller: catch all exceptions inside alert senders and return status objects; add missing import.  ￼
+	•	🔴 Execution invariant: after any order placement, you must have a “terminal state confirmation” (FILLED/CANCELED/EXPIRED/REJECTED) before returning from execution functions; current code can break out early.  ￼
+	•	🔴 Funding gate should be configurable fail-open/fail-closed; defaulting to allow=True on exception is unsafe for a “safety feature”.  ￼
+
+⸻
+
+5. Calibration & Reality Check (CRITICAL)
+
+🔴 OBJECTIVE FLAWS (Must Fix)
+	1.	AlertManager missing time import → runtime crash on retry/error paths.  ￼
+	2.	maker_chase breaks on check/cancel exception → potential orphan live orders.  ￼
+	3.	live_executor shadowing imported merge_strategy_params → live/backtest parity can be false without visibility.  ￼  ￼
+	4.	Funding safety fails open on exception → “safety feature” can silently disable.  ￼
+
+🟡 SUBJECTIVE IMPROVEMENTS (Nice to have, not “broken”)
+	1.	Split adapter interfaces or add explicit capability flags so callers don’t rely on exceptions to detect feature support.  ￼
+	2.	Decouple Phoenix reset logic from fragile plan fields (still a real reliability risk, but the exact correct business rule isn’t fully specified in-code).  ￼

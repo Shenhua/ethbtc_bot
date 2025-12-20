@@ -61,7 +61,7 @@ def maker_chase(adapter: ExchangeAdapter, symbol: str, side: str, qty: float, ti
             time.sleep(chunk)
             waited += chunk
 
-        # 4. Check & Cancel
+        # 4. Check & Cancel (with retry for orphan prevention)
         try:
             is_filled, this_fill = adapter.check_order(symbol, oid)
             filled_total += this_fill
@@ -76,6 +76,20 @@ def maker_chase(adapter: ExchangeAdapter, symbol: str, side: str, qty: float, ti
                 remaining_qty = max(0.0, remaining_qty - diff)
         except Exception as e:
             log.error(f"Chase {i}: Error checking/canceling order {oid}: {e}")
+            # P1 FIX: Best-effort cleanup - retry cancel to prevent orphan orders
+            for cleanup_attempt in range(3):
+                try:
+                    log.warning(f"Chase {i}: Cleanup attempt {cleanup_attempt+1}/3 for order {oid}")
+                    adapter.cancel(symbol, oid)
+                    # Confirm final state
+                    final_filled, final_qty = adapter.check_order(symbol, oid)
+                    if final_filled:
+                        filled_total += max(0.0, final_qty - filled_total)
+                        log.info(f"Chase {i}: Order {oid} confirmed closed. Final fill: {final_qty}")
+                    break
+                except Exception as cleanup_e:
+                    log.warning(f"Chase {i}: Cleanup attempt {cleanup_attempt+1} failed: {cleanup_e}")
+                    time.sleep(0.5)
             break
             
         if remaining_qty <= 1e-8:
