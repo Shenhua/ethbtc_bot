@@ -12,13 +12,13 @@ IMPORTANT: This preserves ALL existing behavior from live_executor.py.
 No features have been removed or modified - only extracted.
 """
 from __future__ import annotations
-import logging
 from typing import Optional, Any
 from dataclasses import dataclass
 from core.models.state import RiskState
+from core.logging import get_logger
 import pandas as pd
 
-log = logging.getLogger("risk_manager")
+log = get_logger("risk_manager")
 
 
 @dataclass

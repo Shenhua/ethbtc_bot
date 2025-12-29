@@ -1,5 +1,4 @@
 from __future__ import annotations
-import logging
 import pandas as pd
 import time
 from typing import Optional, Dict, Any, Tuple
@@ -10,8 +9,9 @@ from core.metrics import (
     EXPOSURE_NOTIONAL, EXPOSURE_SIGNAL_WEIGHT,
     POSITION_STALE
 )
+from core.logging import get_logger
 
-log = logging.getLogger("order_service")
+log = get_logger("order_service")
 
 class OrderService:
     """

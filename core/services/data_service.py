@@ -1,12 +1,12 @@
 from __future__ import annotations
-import logging
 import pandas as pd
 import time
 from typing import Optional, Dict, Any
 from core.resilience import CircuitBreaker, CircuitBreakerOpen, retry_api_call
 from core.exchange_adapter import ExchangeAdapter
+from core.logging import get_logger
 
-log = logging.getLogger("data_service")
+log = get_logger("data_service")
 
 class DataService:
     """

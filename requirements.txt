@@ -11,3 +11,6 @@ optuna>=3.0
 xlsxwriter>=3.0
 pyarrow>=14.0.0
 tenacity>=8.2.0
+# Phase 3: Structured Logging & Type Safety
+structlog>=24.0.0
+types-requests>=2.31.0

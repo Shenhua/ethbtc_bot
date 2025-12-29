@@ -1350,7 +1350,7 @@ def main():
 
             EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
             EXPOSURE_W.labels(instance=instance_name, kind="current").set(actual_current_w)  # Use ACTUAL position
-            PNL_QUOTE.labels(instance=instance_name).set(W - float(state.get("session_start_W", W)))
+            PNL_QUOTE.labels(instance=instance_name).set(W - bot_state.session_start_wealth)
             last_seen_bar = bar_ts
             
             if args.once:
