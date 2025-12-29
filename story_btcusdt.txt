@@ -1,0 +1,4 @@
+2025-12-29 14:29:59 | 🚀 BOT STARTED                              | Mode: DRY | Wealth: 0.000000 USDT
+2025-12-29 14:29:59 | ================================================================================                                          | 
+2025-12-29 14:29:59 | ⚠️ ZERO BALANCE                             | Wallet is empty: 0.0 USDT
+2025-12-29 14:29:59 | 🚨 SAFETY BREAKER TRIPPED                   | Drawdown: -100.0% | Trading HALTED

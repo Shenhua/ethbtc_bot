@@ -27,6 +27,21 @@ class BinanceSpotAdapter(ExchangeAdapter):
                 "close_time": int(k[6]),
             })
         return out
+
+    def get_account_balance(self, asset: str) -> float:
+        """Fetch the free balance for a given asset from the spot account."""
+        log.debug(f"[SPOT] Fetching balance for {asset}")
+        try:
+            account_info = self.client.account()
+            balances = account_info.get("balances", [])
+            for b in balances:
+                if b.get("asset") == asset:
+                    return float(b.get("free", 0.0))
+            return 0.0
+        except Exception as e:
+            log.error(f"[SPOT] Failed to fetch balance for {asset}: {e}")
+            return 0.0
+    
     
     def get_usd_price(self, symbol: str) -> float:
         try:

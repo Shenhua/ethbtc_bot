@@ -26,7 +26,7 @@ from core.metrics import (
     start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
     snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
-    mark_futures_risk, mark_execution_stats, mark_bot_up,
+    mark_futures_risk, mark_execution_stats, mark_bot_up, reset_trade_decision,
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 from core.story_writer import StoryWriter
@@ -54,6 +54,9 @@ from core.risk_manager import RiskManager, RiskConfig
 # --- SERVICES (Phase 1 Modularization) ---
 from core.services.data_service import DataService
 from core.services.order_service import OrderService
+
+# --- STATE MODELS (Phase 2 Refactoring) ---
+from core.models.state import BotState
 
 log = logging.getLogger("live_executor")
 
@@ -195,30 +198,9 @@ def main():
     
     alerter = AlertManager(prefix=args.symbol)
     
-    # Initialize Data Service
-    data_svc = DataService(
-        adapter=adapter,
-        symbol=args.symbol,
-        interval=cfg.execution.interval,
-        circuit_breaker=API_CIRCUIT_BREAKER,
-        alerter=alerter
-    )
-    
-    # Initialize Order Service
-    order_svc = OrderService(
-        adapter=adapter,
-        symbol=args.symbol,
-        quote_asset=quote_asset,
-        is_futures=is_futures,
-        leverage=lev,
-        circuit_breaker=API_CIRCUIT_BREAKER,
-        alerter=alerter,
-        instance_name=instance_name
-    )
-
     raw_state = load_state(args.state)
     bot_state = BotState.from_dict(raw_state)
-    risk_mgr.ensure_state(bot_state.risk, cur_w=0.0, ts=pd.Timestamp.now(tz="UTC")) # Dummy wealth for first ensure
+    risk_mgr.ensure_state(bot_state.risk, wealth=0.0, ts=pd.Timestamp.now(tz="UTC"))
 
     # --- PHASE 1.5: CONFIG SANITY CHECK ---
     # Block dangerous configurations before trading
@@ -333,8 +315,27 @@ def main():
 
     # --- STORY WRITER INITIALIZATION ---
     story_file = os.path.join(os.path.dirname(args.state), f"story_{args.symbol.lower()}.txt")
-    alerter = AlertManager(prefix=args.symbol)
     story = StoryWriter(story_file, symbol=args.symbol, alerter=alerter)    
+    
+    # --- SERVICE INITIALIZATION (After adapter/assets confirmed) ---
+    data_svc = DataService(
+        adapter=adapter,
+        symbol=args.symbol,
+        interval=cfg.execution.interval,
+        circuit_breaker=API_CIRCUIT_BREAKER,
+        alerter=alerter
+    )
+    
+    order_svc = OrderService(
+        adapter=adapter,
+        symbol=args.symbol,
+        quote_asset=quote_asset,
+        is_futures=is_futures,
+        leverage=lev if is_futures else 1,
+        circuit_breaker=API_CIRCUIT_BREAKER,
+        alerter=alerter,
+        instance_name=instance_name
+    )
     # --- INITIALIZATION ---
         
     # Bug Fix #2: Removed duplicate adapter assignment (adapter already set above)
@@ -412,6 +413,8 @@ def main():
             cur_w = acc_state["cur_w"]
             current_position = acc_state["current_position"]
             effective_base = current_position # Unified for Spot/Futures
+            quote_bal = acc_state["quote_bal"]
+            base_bal = current_position  # For spot, base_bal is the position
             
             # Log balance occasionally
             if bot_state.last_balance_log_ts < now_s - 300:

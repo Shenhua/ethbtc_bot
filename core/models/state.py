@@ -1,5 +1,5 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -30,6 +30,14 @@ class BotState(BaseModel):
     
     # Nested Risk State
     risk: RiskState = Field(default_factory=RiskState)
+
+    @field_validator('last_bar_close', mode='before')
+    @classmethod
+    def coerce_last_bar_close(cls, v):
+        """Coerce int to str for backward compatibility with legacy state files."""
+        if v is None:
+            return None
+        return str(v)
 
     class Config:
         populate_by_name = True
