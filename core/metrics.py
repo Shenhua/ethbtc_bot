@@ -3,6 +3,7 @@ from prometheus_client import Counter, Gauge, Summary, start_http_server, REGIST
 import threading
 from http.server import HTTPServer
 import os
+from typing import Optional
 
 # --- Reload-safe registry setup for tests ------------------------------------
 try:
@@ -85,7 +86,7 @@ LAST_TRADE_TS = Gauge("last_trade_timestamp_seconds", "Timestamp of last trade e
 
 # ---- Helper functions -----------------------------------------------------
 
-def start_metrics_server(port: int, story_file: str = None) -> None:
+def start_metrics_server(port: int, story_file: Optional[str] = None) -> None:
     """
     Start Prometheus metrics HTTP server with optional /story endpoint.
     """

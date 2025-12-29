@@ -88,7 +88,7 @@ def configure_logging(
     logging.getLogger("binance").setLevel(logging.WARNING)
 
 
-def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
+def get_logger(name: str | None = None) -> Any:
     """
     Get a structured logger instance.
     

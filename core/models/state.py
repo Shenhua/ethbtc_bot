@@ -33,7 +33,7 @@ class BotState(BaseModel):
 
     @field_validator('last_bar_close', mode='before')
     @classmethod
-    def coerce_last_bar_close(cls, v):
+    def coerce_last_bar_close(cls, v: Any) -> Optional[str]:
         """Coerce int to str for backward compatibility with legacy state files."""
         if v is None:
             return None

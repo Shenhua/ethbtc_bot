@@ -26,7 +26,7 @@ class OrderService:
     
     def __init__(
         self,
-        adapter: ExchangeAdapter,
+        adapter: Any,  # BinanceSpotAdapter or BinanceFuturesAdapter (duck typed)
         symbol: str,
         quote_asset: str,
         is_futures: bool,
