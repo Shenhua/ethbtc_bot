@@ -26,108 +26,111 @@ class TestRiskStateManagement:
     
     def test_ensure_risk_state_initializes_missing_keys(self):
         """Verify all required risk keys are initialized."""
-        from live_executor import _ensure_risk_state
+        from core.risk_manager import RiskManager, RiskConfig
         
-        state = {}
+        config = RiskConfig()
+        risk_mgr = RiskManager(config)
+        from core.models.state import RiskState
+        state = RiskState()
         ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
         
-        _ensure_risk_state(state, wealth=1.0, ts=ts)
+        risk_mgr.ensure_state(state, wealth=1.0, ts=ts)
         
-        assert "risk_equity_high" in state
-        assert "risk_current_date" in state
-        assert "risk_daily_start_wealth" in state
-        assert "risk_daily_limit_hit" in state
-        assert "risk_maxdd_hit" in state
-        
-        assert state["risk_equity_high"] == 1.0
-        assert state["risk_daily_limit_hit"] == False
-        assert state["risk_maxdd_hit"] == False
+        assert state.equity_high == 1.0
+        assert state.daily_limit_hit == False
+        assert state.maxdd_hit == False
     
     def test_ensure_risk_state_preserves_existing_values(self):
         """Verify existing state values are not overwritten."""
-        from live_executor import _ensure_risk_state
+        from core.risk_manager import RiskManager, RiskConfig
         
-        state = {"risk_equity_high": 2.0}
+        config = RiskConfig()
+        risk_mgr = RiskManager(config)
+        from core.models.state import RiskState
+        state = RiskState(equity_high=2.0)
         ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
         
-        _ensure_risk_state(state, wealth=1.0, ts=ts)
+        risk_mgr.ensure_state(state, wealth=1.0, ts=ts)
         
         # Should NOT overwrite existing HWM
-        assert state["risk_equity_high"] == 2.0
+        assert state.equity_high == 2.0
     
     def test_update_risk_state_updates_hwm(self):
         """Verify HWM updates when wealth increases."""
-        from live_executor import _ensure_risk_state, _update_risk_state
-        from core.config_schema import Risk
+        from core.risk_manager import RiskManager, RiskConfig
         
-        state = {}
+        from core.models.state import RiskState
+        state = RiskState()
         ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
         
         # Mock config
-        mock_cfg = MagicMock()
-        mock_cfg.risk = Risk()
-        mock_cfg.risk.risk_mode = "dynamic"
-        mock_cfg.risk.max_dd_frac = 0.2
-        mock_cfg.risk.max_dd_btc = 0.0
-        mock_cfg.risk.max_daily_loss_frac = 0.0
-        mock_cfg.risk.max_daily_loss_btc = 0.0
+        risk_config = RiskConfig(
+            risk_mode="dynamic",
+            max_dd_frac=0.2,
+            max_dd_btc=0.0,
+            max_daily_loss_frac=0.0,
+            max_daily_loss_btc=0.0
+        )
+        risk_mgr = RiskManager(risk_config)
         
-        _ensure_risk_state(state, wealth=1.0, ts=ts)
-        _update_risk_state(state, wealth=1.5, ts=ts, cfg=mock_cfg)
+        risk_mgr.ensure_state(state, wealth=1.0, ts=ts)
+        risk_mgr.update(state, wealth=1.5, ts=ts)
         
-        assert state["risk_equity_high"] == 1.5  # HWM should update
+        assert state.equity_high == 1.5  # HWM should update
     
     def test_update_risk_state_detects_max_drawdown(self):
         """Verify max drawdown detection triggers correctly."""
-        from live_executor import _ensure_risk_state, _update_risk_state
-        from core.config_schema import Risk
+        from core.risk_manager import RiskManager, RiskConfig
         
-        state = {}
+        from core.models.state import RiskState
+        state = RiskState()
         ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
         
         # Mock config with 20% max DD
-        mock_cfg = MagicMock()
-        mock_cfg.risk = Risk()
-        mock_cfg.risk.risk_mode = "dynamic"
-        mock_cfg.risk.max_dd_frac = 0.20
-        mock_cfg.risk.max_dd_btc = 0.0
-        mock_cfg.risk.max_daily_loss_frac = 0.0
-        mock_cfg.risk.max_daily_loss_btc = 0.0
+        risk_config = RiskConfig(
+            risk_mode="dynamic",
+            max_dd_frac=0.20,
+            max_dd_btc=0.0,
+            max_daily_loss_frac=0.0,
+            max_daily_loss_btc=0.0
+        )
+        risk_mgr = RiskManager(risk_config)
         
-        _ensure_risk_state(state, wealth=1.0, ts=ts)
+        risk_mgr.ensure_state(state, wealth=1.0, ts=ts)
         
         # 25% drawdown should trigger max DD
-        _update_risk_state(state, wealth=0.75, ts=ts, cfg=mock_cfg)
+        risk_mgr.update(state, wealth=0.75, ts=ts)
         
-        assert state["risk_maxdd_hit"] == True
-        assert "risk_maxdd_hit_ts" in state
+        assert state.maxdd_hit == True
+        assert state.maxdd_hit_ts is not None
     
     def test_update_risk_state_daily_reset(self):
         """Verify daily loss counters reset on new day."""
-        from live_executor import _ensure_risk_state, _update_risk_state
-        from core.config_schema import Risk
+        from core.risk_manager import RiskManager, RiskConfig
         
         day1 = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
         day2 = pd.Timestamp("2024-01-02 12:00:00", tz="UTC")
         
-        mock_cfg = MagicMock()
-        mock_cfg.risk = Risk()
-        mock_cfg.risk.risk_mode = "fixed_basis"
-        mock_cfg.risk.max_dd_frac = 0.0
-        mock_cfg.risk.max_dd_btc = 0.0
-        mock_cfg.risk.max_daily_loss_frac = 0.0
-        mock_cfg.risk.max_daily_loss_btc = 0.1
+        risk_config = RiskConfig(
+            risk_mode="fixed_basis",
+            max_dd_frac=0.0,
+            max_dd_btc=0.0,
+            max_daily_loss_frac=0.0,
+            max_daily_loss_btc=0.1
+        )
+        risk_mgr = RiskManager(risk_config)
         
-        state = {}
-        _ensure_risk_state(state, wealth=1.0, ts=day1)
+        from core.models.state import RiskState
+        state = RiskState()
+        risk_mgr.ensure_state(state, wealth=1.0, ts=day1)
         
         # Trigger daily limit
-        state["risk_daily_limit_hit"] = True
+        state.daily_limit_hit = True
         
         # New day should reset
-        _update_risk_state(state, wealth=0.95, ts=day2, cfg=mock_cfg)
+        risk_mgr.update(state, wealth=0.95, ts=day2)
         
-        assert state["risk_daily_limit_hit"] == False
+        assert state.daily_limit_hit == False
 
 
 class TestStatePersistence:
@@ -164,7 +167,7 @@ class TestDecisionKeys:
     
     def test_decision_keys_are_defined(self):
         """Verify all expected decision keys exist."""
-        from live_executor import DECISION_KEYS
+        from core.metrics import DECISION_KEYS
         
         expected_keys = [
             "exec_buy", "exec_sell", 
@@ -230,29 +233,23 @@ class TestPhoenixProtocolIntegration:
     """Tests for Phoenix Protocol state management in live_executor."""
     
     def test_phoenix_state_keys_exist_after_maxdd(self):
-        """Verify Phoenix-related state keys are set when max DD hit."""
-        from live_executor import _ensure_risk_state, _update_risk_state
-        from core.config_schema import Risk
+        """Verify Phoenix keys exist after a crash event."""
+        from core.risk_manager import RiskManager, RiskConfig
+        from core.models.state import RiskState
         
-        state = {}
-        ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
+        day1 = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
+        config = RiskConfig(risk_mode="dynamic", max_dd_frac=0.1)
+        risk_mgr = RiskManager(config)
         
-        mock_cfg = MagicMock()
-        mock_cfg.risk = Risk()
-        mock_cfg.risk.risk_mode = "dynamic"
-        mock_cfg.risk.max_dd_frac = 0.10  # 10% max DD
-        mock_cfg.risk.max_dd_btc = 0.0
-        mock_cfg.risk.max_daily_loss_frac = 0.0
-        mock_cfg.risk.max_daily_loss_btc = 0.0
+        state = RiskState()
+        risk_mgr.ensure_state(state, wealth=1.0, ts=day1)
         
-        _ensure_risk_state(state, wealth=1.0, ts=ts)
+        # Trigger crash
+        risk_mgr.update(state, wealth=0.85, ts=day1)
         
-        # Trigger 15% drawdown (exceeds 10% limit)
-        _update_risk_state(state, wealth=0.85, ts=ts, cfg=mock_cfg)
-        
-        assert state["risk_maxdd_hit"] == True
-        assert "risk_maxdd_hit_ts" in state
-        
+        assert state.maxdd_hit == True
+        assert state.maxdd_hit_ts is not None
+        assert state.equity_high == 1.0
         # Verify timestamp is parseable
-        hit_ts = pd.to_datetime(state["risk_maxdd_hit_ts"])
-        assert hit_ts == ts
+        hit_ts = pd.to_datetime(state.maxdd_hit_ts)
+        assert hit_ts == day1

@@ -11,6 +11,7 @@ These tests verify the RiskManager's Phoenix-related methods.
 import pytest
 import pandas as pd
 from core.risk_manager import RiskManager, RiskConfig
+from core.models.state import RiskState
 
 
 class TestPhoenixConditions:
@@ -28,10 +29,10 @@ class TestPhoenixConditions:
         # Only 12 hours later (less than 24 hour cooldown)
         check_time = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": crash_time.isoformat()
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts=crash_time.isoformat()
+        )
         
         # High score but not enough time
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=50.0)
@@ -49,10 +50,10 @@ class TestPhoenixConditions:
         # 48 hours later (enough time)
         check_time = pd.Timestamp("2024-01-03 00:00:00", tz="UTC")
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": crash_time.isoformat()
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts=crash_time.isoformat()
+        )
         
         # Low score (market is choppy)
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=15.0)
@@ -70,10 +71,10 @@ class TestPhoenixConditions:
         # 36 hours later (> 24 hour cooldown)
         check_time = pd.Timestamp("2024-01-02 12:00:00", tz="UTC")
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": crash_time.isoformat()
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts=crash_time.isoformat()
+        )
         
         # High score and enough time
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=35.0)
@@ -89,9 +90,9 @@ class TestPhoenixConditions:
         
         check_time = pd.Timestamp("2024-01-02 00:00:00", tz="UTC")
         
-        state = {
-            "risk_maxdd_hit": False,  # Not in crash state
-        }
+        state = RiskState(
+            maxdd_hit=False,  # Not in crash state
+        )
         
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=50.0)
         assert can_reset == False
@@ -105,36 +106,34 @@ class TestPhoenixReset:
         config = RiskConfig()
         rm = RiskManager(config)
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": "2024-01-01T00:00:00",
-            "risk_equity_high": 0.8,  # Old HWM from before crash
-            "alert_sent_maxdd": True
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts="2024-01-01T00:00:00",
+            equity_high=0.8
+        )
         
         rm.reset_phoenix(state, wealth=0.9)
         
-        assert state["risk_maxdd_hit"] == False
-        assert state["risk_maxdd_hit_ts"] is None
-        assert state["risk_equity_high"] == 0.9  # Reset to current wealth
-        assert state["alert_sent_maxdd"] == False
+        assert state.maxdd_hit == False
+        assert state.maxdd_hit_ts is None
+        assert state.equity_high == 0.9  # Reset to current wealth
     
     def test_reset_sets_new_hwm(self):
         """Verify reset establishes new HWM at current wealth."""
         config = RiskConfig()
         rm = RiskManager(config)
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": "2024-01-01T00:00:00",
-            "risk_equity_high": 1.0,  # Old peak before crash
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts="2024-01-01T00:00:00",
+            equity_high=1.0,  # Old peak before crash
+        )
         
         # After crash, wealth is now 0.7
         rm.reset_phoenix(state, wealth=0.7)
         
         # HWM should be reset to current wealth (0.7), not old peak (1.0)
-        assert state["risk_equity_high"] == 0.7
+        assert state.equity_high == 0.7
 
 
 class TestPhoenixDisabled:
@@ -151,10 +150,10 @@ class TestPhoenixDisabled:
         crash_time = pd.Timestamp("2024-01-01 00:00:00", tz="UTC")
         check_time = pd.Timestamp("2024-01-10 00:00:00", tz="UTC")  # 9 days later
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": crash_time.isoformat()
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts=crash_time.isoformat()
+        )
         
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=50.0)
         assert can_reset == False
@@ -169,10 +168,10 @@ class TestPhoenixDisabled:
         
         check_time = pd.Timestamp("2024-01-02 00:00:00", tz="UTC")
         
-        state = {
-            "risk_maxdd_hit": True,
-            # Missing risk_maxdd_hit_ts
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            # Missing maxdd_hit_ts
+        )
         
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=50.0)
         assert can_reset == False
@@ -193,10 +192,10 @@ class TestPhoenixEdgeCases:
         # Exactly 24 hours later
         check_time = pd.Timestamp("2024-01-02 00:00:00", tz="UTC")
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": crash_time.isoformat()
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts=crash_time.isoformat()
+        )
         
         # Should trigger at exactly the boundary
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=35.0)
@@ -213,10 +212,10 @@ class TestPhoenixEdgeCases:
         crash_time = pd.Timestamp("2024-01-01 00:00:00", tz="UTC")
         check_time = pd.Timestamp("2024-01-02 12:00:00", tz="UTC")
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": crash_time.isoformat()
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts=crash_time.isoformat()
+        )
         
         # Score exactly at threshold
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=30.0)
@@ -233,10 +232,10 @@ class TestPhoenixEdgeCases:
         crash_time = pd.Timestamp("2024-01-01 00:00:00", tz="UTC")
         check_time = pd.Timestamp("2024-01-02 12:00:00", tz="UTC")
         
-        state = {
-            "risk_maxdd_hit": True,
-            "risk_maxdd_hit_ts": crash_time.isoformat()
-        }
+        state = RiskState(
+            maxdd_hit=True,
+            maxdd_hit_ts=crash_time.isoformat()
+        )
         
         # Score just below threshold
         can_reset = rm.can_phoenix_reset(state, check_time, current_regime_score=29.9)

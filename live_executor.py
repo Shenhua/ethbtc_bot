@@ -51,8 +51,9 @@ from core.resilience import CircuitBreaker, retry_api_call, CircuitBreakerOpen
 # and _update_risk_state functions preserved below for backward compatibility.
 from core.risk_manager import RiskManager, RiskConfig
 
-# --- ORDER MANAGER (Phase 3 Stabilization) ---
-from core.order_manager import wait_for_fill
+# --- SERVICES (Phase 1 Modularization) ---
+from core.services.data_service import DataService
+from core.services.order_service import OrderService
 
 log = logging.getLogger("live_executor")
 
@@ -71,18 +72,6 @@ except ImportError:
 
 # --- Simple JSON /status on :9110 ------------------------------------------------
 
-DECISION_KEYS = (
-    "exec_buy", "exec_sell", "skip_threshold", "skip_balance", "skip_min_notional", 
-    "skip_cooldown", "skip_gate_closed", "skip_delta_zero","skip_order_error"
-)
-
-def reset_trade_decision(instance_name: str):
-    """Reset all trade decision metrics to 0 for a specific instance."""
-    for k in DECISION_KEYS:
-        try:
-            TRADE_DECISION.labels(instance=instance_name, trade_decision=k).set(0)
-        except Exception:
-            pass
 
 def start_status_server(port: int = 9110):
     log = logging.getLogger("live_enhanced")
@@ -164,95 +153,6 @@ def save_state(path: str, st: Dict[str, Any]) -> None:
         else:
             raise
 
-def _ensure_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp) -> None:
-    if "risk_equity_high" not in state:
-        state["risk_equity_high"] = wealth
-    if "risk_current_date" not in state:
-        state["risk_current_date"] = ts.normalize().date().isoformat()
-    if "risk_daily_start_wealth" not in state:
-        state["risk_daily_start_wealth"] = wealth
-    if "risk_daily_limit_hit" not in state:
-        state["risk_daily_limit_hit"] = False
-    if "risk_maxdd_hit" not in state:
-        state["risk_maxdd_hit"] = False
-
-def _update_risk_state(state: Dict[str, Any], wealth: float, ts: pd.Timestamp, cfg) -> None:
-    """
-    Updates the risk state (High Water Mark, Daily Loss, Max Drawdown).
-    Detects crashes but DOES NOT handle resets (Phoenix Protocol).
-    Resets are handled in the main execution loop.
-    """
-    risk = cfg.risk
-    risk_mode = getattr(risk, "risk_mode", "fixed_basis")
-    max_dd_frac = float(getattr(risk, "max_dd_frac", 0.0) or 0.0)
-    max_daily_loss_frac = float(getattr(risk, "max_daily_loss_frac", 0.0) or 0.0)
-
-    # 1. Load Current State
-    equity_high = float(state.get("risk_equity_high", wealth))
-    
-    current_date_str = state.get("risk_current_date")
-    if current_date_str:
-        try:
-            current_date = pd.to_datetime(current_date_str).date()
-        except Exception:
-            current_date = ts.normalize().date()
-    else:
-        current_date = ts.normalize().date()
-
-    daily_start = float(state.get("risk_daily_start_wealth", wealth))
-    daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
-    maxdd_hit = bool(state.get("risk_maxdd_hit", False))
-
-    # 2. Update High Water Mark (Only if we aren't already crashed)
-    # If we are in MaxDD state, we do NOT update HWM (we are in the penalty box)
-    if not maxdd_hit:
-        if wealth > equity_high:
-            equity_high = wealth
-    
-    dd_now = equity_high - wealth
-
-    # 3. Check for Max Drawdown Violation
-    if not maxdd_hit:
-        if risk_mode == "dynamic":
-            if max_dd_frac > 0.0:
-                threshold_dd = equity_high * max_dd_frac
-            else:
-                threshold_dd = float(risk.max_dd_btc)
-        else:
-            threshold_dd = float(risk.max_dd_btc)
-
-        if threshold_dd > 0.0 and dd_now >= threshold_dd:
-            maxdd_hit = True
-            # Record Time of Death for Phoenix Protocol
-            state["risk_maxdd_hit_ts"] = ts.isoformat() 
-
-    # 4. Check for Daily Loss Violation
-    cur_date = ts.normalize().date()
-    if cur_date != current_date:
-        # New Day: Reset Daily Counters
-        current_date = cur_date
-        daily_start = wealth
-        daily_limit_hit = False
-
-    daily_pnl = wealth - daily_start
-
-    if risk_mode == "dynamic":
-        if max_daily_loss_frac > 0.0:
-            threshold_loss = daily_start * max_daily_loss_frac
-        else:
-            threshold_loss = float(risk.max_daily_loss_btc)
-    else:
-        threshold_loss = float(risk.max_daily_loss_btc)
-    
-    if threshold_loss > 0.0 and daily_pnl <= -threshold_loss:
-        daily_limit_hit = True
-
-    # 5. Save State
-    state["risk_equity_high"] = equity_high
-    state["risk_current_date"] = current_date.isoformat()
-    state["risk_daily_start_wealth"] = daily_start
-    state["risk_daily_limit_hit"] = daily_limit_hit
-    state["risk_maxdd_hit"] = maxdd_hit
 
 def main():
     ap = argparse.ArgumentParser()
@@ -288,10 +188,37 @@ def main():
     merged_cfg = merge_strategy_params(cfg)
     mr_params = merged_cfg["mr_params"]
     tr_params = merged_cfg["tr_params"]
+    
+    # Initialize Risk Manager
+    risk_config = RiskConfig.from_config(cfg.risk)
+    risk_mgr = RiskManager(risk_config)
+    
+    alerter = AlertManager(prefix=args.symbol)
+    
+    # Initialize Data Service
+    data_svc = DataService(
+        adapter=adapter,
+        symbol=args.symbol,
+        interval=cfg.execution.interval,
+        circuit_breaker=API_CIRCUIT_BREAKER,
+        alerter=alerter
+    )
+    
+    # Initialize Order Service
+    order_svc = OrderService(
+        adapter=adapter,
+        symbol=args.symbol,
+        quote_asset=quote_asset,
+        is_futures=is_futures,
+        leverage=lev,
+        circuit_breaker=API_CIRCUIT_BREAKER,
+        alerter=alerter,
+        instance_name=instance_name
+    )
 
-    state = load_state(args.state)
-    if "session_start_W" not in state:
-        state["session_start_W"] = 0.0
+    raw_state = load_state(args.state)
+    bot_state = BotState.from_dict(raw_state)
+    risk_mgr.ensure_state(bot_state.risk, cur_w=0.0, ts=pd.Timestamp.now(tz="UTC")) # Dummy wealth for first ensure
 
     # --- PHASE 1.5: CONFIG SANITY CHECK ---
     # Block dangerous configurations before trading
@@ -338,8 +265,8 @@ def main():
 
 
     log.info("🎯 Beginning main loop (interval=%ds, mode=%s)...", cfg.execution.poll_sec, args.mode)
-    state["loop_started_at"] = pd.Timestamp.now(tz="UTC").isoformat()
-    save_state(args.state, state) # save_state expects path, then state
+    bot_state.loop_started_at = pd.Timestamp.now(tz="UTC").isoformat()
+    save_state(args.state, bot_state.to_flat_dict()) # save_state expects path, then state
 
     log.info("Using Binance base_url=%s (mode=%s)", base_url, args.mode)
 
@@ -433,9 +360,8 @@ def main():
         from core.exchange_adapter import Filters
         global_filters = Filters(0.0001, 0.01, 5.0)
     
-    state = load_state(args.state)
-    if "session_start_W" not in state:
-        state["session_start_W"] = 0.0
+    if bot_state.session_start_wealth == 0:
+        bot_state.session_start_wealth = 0.0 # Just ensuring it's initialized
     last_seen_bar = 0
     startup_logged_this_run = False
 
@@ -460,43 +386,14 @@ def main():
 
         with BAR_LATENCY.labels(instance=instance_name).time():
             try:
-                # Phase 1: Use retry logic with circuit breaker for klines
-                ks = retry_api_call(
-                    adapter.get_klines, 
-                    args.symbol, cfg.execution.interval, limit=600,
-                    max_attempts=3,
-                    min_wait=2.0,
-                    max_wait=30.0,
-                    circuit_breaker=API_CIRCUIT_BREAKER
-                )
-                df = pd.DataFrame(ks)
+                # Phase 1: Use DataService for kline fetching & cleaning
+                df = data_svc.get_closed_klines(limit=600)
                 
-                # Ensure numeric types
-                cols = ["open", "high", "low", "close", "volume"]
-                df[cols] = df[cols].apply(pd.to_numeric, errors='coerce')
-
-                if "close_time" in df.columns:
-                    df.index = pd.to_datetime(df["close_time"], unit="ms", utc=True)
-                
-                # --- FIX START: Strict Deduplication ---
-                df = df[~df.index.duplicated(keep='last')]
-                df = df.sort_index()
-                # --- FIX END ---
-
-                # --- FIX: Repainting / Look-Ahead ---
-                # Binance returns the currently OPEN candle as the last element.
-                # We must ensure we only use CLOSED candles.
-                if not df.empty:
-                    if df.index[-1] > pd.Timestamp.now(tz="UTC"):
-                        log.debug("Dropping incomplete candle at %s (now=%s)", df.index[-1], pd.Timestamp.now(tz="UTC"))
-                        df = df.iloc[:-1]
-                
-                if df.empty:
-                    log.warning("No closed candles available after filtering.")
-                    time.sleep(5)
+                if df is None:
+                    # Errors/Circuit Breakers handled inside DataService (logs & alerts)
+                    time.sleep(10)
                     continue
-                # ------------------------------------
-
+                
                 price = float(df["close"].iloc[-1])
             except CircuitBreakerOpen as e:
                 log.critical("🚨 CIRCUIT BREAKER OPEN: %s. Entering safe mode.", e)
@@ -508,180 +405,63 @@ def main():
                 time.sleep(10)  # Longer wait after all retries exhausted
                 continue
 
-            # --- BALANCE FETCHING (Updated for Spot/Futures) ---
-            # Initialize current_position for use in snap-to-zero logic later
-            current_position = 0.0
-            W = 0.0 # Initialize W to prevent UnboundLocalError if fetch fails
-            cur_w = 0.0 # Initialize cur_w as well
+            # --- ACCOUNT STATE (Phase 1 Modularization) ---
+            acc_state = order_svc.get_account_state(bot_state.to_flat_dict(), bar_dt, price)
             
-            try:
+            W = acc_state["W"]
+            cur_w = acc_state["cur_w"]
+            current_position = acc_state["current_position"]
+            effective_base = current_position # Unified for Spot/Futures
+            
+            # Log balance occasionally
+            if bot_state.last_balance_log_ts < now_s - 300:
                 if is_futures:
-                    # 1. FUTURES MODE
-                    # In USDS-M Futures, our "Wallet" is the Margin Balance (USDT)
-                    quote_bal = adapter.get_account_balance(quote_asset)
-                    
-                    # --- NEW: Risk Metrics (Margin & Liquidation) ---
-                    try:
-                        # 1. Margin Utilization
-                        # adapter.client is UMFutures
-                        acc_info = adapter.client.account()
-                        total_maint = float(acc_info.get('totalMaintMargin', 0))
-                        total_bal = float(acc_info.get('totalMarginBalance', 1e-9))
-                        margin_util_pct = (total_maint / total_bal) * 100 if total_bal > 0 else 0.0
-
-                        # 2. Liquidation Distance
-                        pos_risks = adapter.client.get_position_risk(symbol=args.symbol)
-                        # API returns list. Filter for current symbol.
-                        risk_entry = next((r for r in pos_risks if r['symbol'] == args.symbol), None)
-                        liq_dist_pct = 0.0
-                        if risk_entry:
-                             liq_px = float(risk_entry.get('liquidationPrice', 0))
-                             mark_px = float(risk_entry.get('markPrice', 0))
-                             if liq_px > 0 and mark_px > 0:
-                                 liq_dist_pct = abs(mark_px - liq_px) / mark_px * 100
-                        
-                        mark_futures_risk(instance_name, margin_util_pct, liq_dist_pct, args.symbol)
-                    except Exception as e:
-                        # Log debug to avoid spamming main log
-                        log.debug("Risk metric fetch failed: %s", e)
-                    base_bal = 0.0 # We don't hold the base asset in futures, we hold contracts
-                    
-                    # Current Exposure comes from the open Position size
-                    # Phase 1: Retry logic + staleness check for position data
-                    position_stale = False
-                    try:
-                        current_position = retry_api_call(
-                            adapter.get_position, args.symbol,
-                            max_attempts=2,  # Fewer retries for position (time-sensitive)
-                            min_wait=1.0,
-                            max_wait=5.0,
-                            circuit_breaker=API_CIRCUIT_BREAKER
-                        )
-                        # Store successful fetch with timestamp
-                        state["last_known_position"] = current_position
-                        state["last_position_fetch_ts"] = bar_dt.isoformat()
-                    except CircuitBreakerOpen as e:
-                        log.critical("🚨 Position fetch blocked by circuit breaker: %s", e)
-                        current_position = state.get("last_known_position", 0.0)
-                        position_stale = True
-                    except Exception as e:
-                        log.error("Position fetch failed, using last known: %s", e)
-                        current_position = state.get("last_known_position", 0.0)
-                        # Check staleness
-                        last_fetch_ts = state.get("last_position_fetch_ts")
-                        if last_fetch_ts:
-                            last_fetch = pd.Timestamp(last_fetch_ts)
-                            position_age = bar_dt - last_fetch
-                            if position_age > pd.Timedelta("15min"):
-                                log.error("⚠️ Position data too stale (%s ago). Entering safe mode.", position_age)
-                                position_stale = True
-                    
-                    # Value of position = Size * Price
-                    # (current_position can be negative if Short)
-                    position_val = current_position * price
-                    
-                    # Total Wealth = Margin Balance (includes unrealized PnL)
-                    W = quote_bal 
-                    
-                    # Current Weight = Notional Exposure / Total Wealth
-                    # If W is very small, guard against div/0
-                    cur_w = position_val / W if W > 1e-6 else 0.0
-                    
-                    effective_base = current_position # Used for logging/logic later
-                    
-                    # Calculate signal weight (unleveraged) for comparison with backtest
                     signal_weight = cur_w / lev if lev > 0 else cur_w
-                    
-                    # Export exposure metrics
-                    EXPOSURE_NOTIONAL.labels(instance=instance_name).set(cur_w * 100)  # Leveraged exposure as %
-                    EXPOSURE_SIGNAL_WEIGHT.labels(instance=instance_name).set(signal_weight * 100)  # Signal weight as %
-                    
-                    # Log balance occasionally
-                    if state.get("last_balance_log_ts", 0) < now_s - 300:
-                        log.info("[FUTURES BALANCE] Margin=%.2f %s, Position=%.4f %s | Exposure: %.1f%% notional (signal_w=%.1f%% @ %dx lev)", 
-                                 quote_bal, quote_asset, current_position, args.symbol, 
-                                 cur_w*100, signal_weight*100, lev)
-                        state["last_balance_log_ts"] = now_s
-                                       
+                    log.info("[FUTURES BALANCE] Margin=%.2f %s, Position=%.4f %s | Exposure: %.1f%% notional (signal_w=%.1f%% @ %dx lev)", 
+                             acc_state["quote_bal"], quote_asset, current_position, args.symbol, 
+                             cur_w*100, signal_weight*100, lev)
                 else:
-                    # 2. SPOT MODE (Legacy Logic)
-                    acct = client.account()
-                    bal_map = {
-                        x["asset"]: float(x["free"]) + float(x["locked"])
-                        for x in acct["balances"]
-                    }
-                    quote_bal = bal_map.get(quote_asset, 0.0) 
-                    base_bal  = bal_map.get(base_asset,  0.0) 
-                    
-                    if state.get("last_balance_log_ts", 0) < now_s - 300:
-                        log.info("[BALANCE] %s=%.6f, %s=%.6f", quote_asset, quote_bal, base_asset, base_bal)
-                        state["last_balance_log_ts"] = now_s
-                    
-                    # Spot Calculation
-                    min_base_val = global_filters.min_notional / max(price, 1e-12)        
+                    log.info("[SPOT BALANCE] %s=%.6f, %s=%.6f, W=%.6f", quote_asset, acc_state["quote_bal"], base_asset, current_position, W)
+                bot_state.last_balance_log_ts = now_s
 
-                    effective_base = base_bal
-                    if base_bal > 0 and base_bal < min_base_val:
-                        effective_base = 0.0
-                        # ... dust logging ...
+            bot_state.extra["last_known_quote"] = acc_state["quote_bal"]
+            bot_state.extra["last_known_base"] = acc_state["current_position"]
 
-                    W = quote_bal + base_bal * price
-                    cur_w = 0.0 if W <= 0 else (effective_base * price) / W
-                    log.debug(f"[SPOT] Wealth calculation: quote={quote_bal:.8f}, base={base_bal:.8f}, W={W:.8f}, cur_w={cur_w:.4f}")   
-
-            except Exception as e:
-                log.error("CRITICAL: Failed to fetch %s account balance. Reason: %s", args.mode.upper(), e)
-                # Fallback logic...
-                quote_bal, base_bal = cfg.risk.basis_btc, 0.0
-                if "last_known_quote" in state:
-                    quote_bal = state["last_known_quote"]
-                    # ...
-            state["last_known_quote"] = quote_bal
-            state["last_known_base"]  = base_bal
-
-            # Bug Fix #3: Removed duplicate balance calculation (already done above in lines 336-390)            
-
-            # Log startup once per process execution (not just once per state file)
+            # Log startup once per process execution
             if not startup_logged_this_run and W >= 0:
                 story.log_startup(bar_dt, W, args.mode, quote_asset)
                 startup_logged_this_run = True
             
-            if W <= 0 and state.get("last_balance_log_ts", 0) < now_s - 300:
+            if W <= 0 and bot_state.last_balance_log_ts <= now_s: # Force log if empty
                 log.warning(f"⚠️ Zero Balance detected ({W} {quote_asset}). Bot will not trade.")
                 story.log_custom(bar_dt, "⚠️", "ZERO BALANCE", f"Wallet is empty: {W} {quote_asset}")
                 alerter.send(f"⚠️ ZERO BALANCE [{args.symbol}]\nWallet is empty: {W} {quote_asset}. Bot will not trade.", level="WARNING")
 
-            if state.get("session_start_W", 0.0) == 0.0 and W > 0:
-                state["session_start_W"] = W
+            if bot_state.session_start_wealth == 0.0 and W > 0:
+                bot_state.session_start_wealth = W
 
-            _ensure_risk_state(state, W, bar_dt)
-            _update_risk_state(state, W, bar_dt, cfg)
+            # Risk Management (now using RiskManager class)
+            risk_mgr.ensure_state(bot_state.risk, W, bar_dt)
+            risk_mgr.update(bot_state.risk, W, bar_dt)
 
             risk_mode_str = getattr(cfg.risk, "risk_mode", "fixed_basis")
             mark_risk_mode(instance_name, risk_mode_str)
 
-            daily_limit_hit = bool(state.get("risk_daily_limit_hit", False))
-            maxdd_hit = bool(state.get("risk_maxdd_hit", False))
+            daily_limit_hit = bot_state.risk.daily_limit_hit
+            maxdd_hit = bot_state.risk.maxdd_hit
             mark_risk_flags(instance_name, daily_limit_hit=daily_limit_hit, maxdd_hit=maxdd_hit)
-            PHOENIX_ACTIVE.labels(instance=instance_name).set(1.0 if maxdd_hit else 0.0)  # Update Phoenix status
+            PHOENIX_ACTIVE.labels(instance=instance_name).set(1.0 if maxdd_hit else 0.0)
 
-
-            # --- ALERT: Risk Trigger (Place this here!) ---
-            if maxdd_hit and not state.get("alert_sent_maxdd", False):
-                # Calculate DD % manually since it's not a local variable
-                eq_high = float(state.get("risk_equity_high", W))
+            # --- ALERT: Risk Trigger ---
+            if maxdd_hit and not bot_state.alert_sent_maxdd:
+                eq_high = bot_state.risk.equity_high or W
                 dd_pct = (eq_high - W) / eq_high if eq_high > 0 else 0.0
                 log.warning("🚨 MAX DD HIT: %.2f%%. Halting all trading.", dd_pct * 100)
-                # alerter.send(...) -> Moved to StoryWriter.log_safety_breaker
                 story.log_safety_breaker(bar_dt, dd_pct)
-                state["alert_sent_maxdd"] = True
+                bot_state.alert_sent_maxdd = True
             
-            # Reset alert flag if we recover (optional but good practice)
             if not maxdd_hit:
-                state["alert_sent_maxdd"] = False
-
-            # NOTE: WEALTH_TOTAL, PRICE_MID, BAL_FREE are set via snapshot_wealth_balances() 
-            # called later in the loop (line ~927) - no need to duplicate here
+                bot_state.alert_sent_maxdd = False
 
             q_usd, b_usd = 0.0, 0.0
             try:
@@ -700,8 +480,7 @@ def main():
             if q_usd > 0:
                 WEALTH_USD.labels(instance=instance_name).set(W * q_usd)
             
-            log.debug("Wallet: %s=%.8f, %s=%.8f, W=%.8f, cur_w=%.4f", 
-                      quote_asset, quote_bal, base_asset, base_bal, W, cur_w)
+            log.debug("Wallet: %s=%.8f, W=%.8f, cur_w=%.4f", quote_asset, acc_state["quote_bal"], W, cur_w)
 
             # --- INDICATORS (Common) ---
             # Fix: Use correct params for bands if Meta Strategy is active
@@ -816,11 +595,11 @@ def main():
                         current_regime = "TREND" if current_score > adx_thresh else "CHOP"
                         
                         # Compare with memory
-                        last_regime = state.get("last_regime", current_regime)
+                        last_regime = bot_state.last_regime or current_regime
                         
                         if current_regime != last_regime:
                             # alerter.send(...) -> Moved to StoryWriter.check_regime_switch
-                            state["last_regime"] = current_regime
+                            bot_state.last_regime = current_regime
                         
                         # Update Metrics
                         REGIME_SCORE.labels(instance=instance_name).set(current_score)
@@ -913,7 +692,7 @@ def main():
             if maxdd_hit:
                 reset_days = float(getattr(cfg.risk, "drawdown_reset_days", 0.0))
                 reset_score = float(getattr(cfg.risk, "drawdown_reset_score", 30.0))
-                hit_ts_str = state.get("risk_maxdd_hit_ts")
+                hit_ts_str = bot_state.risk.maxdd_hit_ts
                 
                 if reset_days > 0 and hit_ts_str:
                     try:
@@ -954,10 +733,10 @@ def main():
                             
                             # Reset Risk State
                             maxdd_hit = False
-                            state["risk_maxdd_hit"] = False
-                            state["risk_maxdd_hit_ts"] = None
-                            state["risk_equity_high"] = W # Reset High Water Mark to NOW
-                            state["alert_sent_maxdd"] = False
+                            bot_state.risk.maxdd_hit = False
+                            bot_state.risk.maxdd_hit_ts = None
+                            bot_state.risk.equity_high = W # Reset High Water Mark to NOW
+                            bot_state.alert_sent_maxdd = False
                             
                             # Notify User
                             # alerter.send(...) -> Moved to StoryWriter.log_phoenix_activation
@@ -1178,9 +957,9 @@ def main():
                 SKIPS.labels(instance=instance_name, reason="balance").inc()
                 mark_decision(instance_name, "skip_sell_no_balance")
                 log.info("Skip: SELL requested but no %s to sell (base_bal=0).", base_asset)
-                state["last_target_w"] = target_w
-                state["last_bar_close"] = bar_ts
-                save_state(args.state, state)
+                bot_state.last_target_w = target_w
+                bot_state.last_bar_close = bar_ts
+                save_state(args.state, bot_state.to_flat_dict())
                 last_seen_bar = bar_ts
                 if args.once:
                     break
@@ -1200,9 +979,9 @@ def main():
                         )
                         SKIPS.labels(instance=instance_name, reason="balance").inc()
                         mark_decision(instance_name, "skip_balance")
-                        state["last_target_w"] = target_w
-                        state["last_bar_close"] = bar_ts
-                        save_state(args.state, state)
+                        bot_state.last_target_w = target_w
+                        bot_state.last_bar_close = bar_ts
+                        save_state(args.state, bot_state.to_flat_dict())
                         last_seen_bar = bar_ts
                         if args.once: break
                         time.sleep(cfg.execution.poll_sec)
@@ -1251,8 +1030,8 @@ def main():
                     "max_dd_btc": float(getattr(cfg.risk, "max_dd_btc", 0.0) or 0.0),
                     "max_daily_loss_frac": float(getattr(cfg.risk, "max_daily_loss_frac", 0.0) or 0.0),
                     "max_dd_frac": float(getattr(cfg.risk, "max_dd_frac", 0.0) or 0.0),
-                    "maxdd_hit": bool(state.get("risk_maxdd_hit", False)),
-                    "daily_limit_hit": bool(state.get("risk_daily_limit_hit", False)),
+                    "maxdd_hit": bool(bot_state.risk.maxdd_hit),
+                    "daily_limit_hit": bool(bot_state.risk.daily_limit_hit),
                 },
             })
 
@@ -1290,12 +1069,12 @@ def main():
                 SKIPS.labels(instance=instance_name, reason="delta_zero").inc()
                 mark_decision(instance_name, "skip_delta_zero")
                 log.info("Skip: cur_w==target_w==%.4f (no change).", cur_w)
-                state["last_target_w"] = target_w
-                state["last_bar_close"] = bar_ts
-                save_state(args.state, state)
+                bot_state.last_target_w = target_w
+                bot_state.last_bar_close = bar_ts
+                save_state(args.state, bot_state.to_flat_dict())
                 EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
                 EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
-                PNL_QUOTE.labels(instance=instance_name).set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.labels(instance=instance_name).set(W - (bot_state.session_start_wealth or W))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (no-op).")
@@ -1310,12 +1089,12 @@ def main():
                     "Skip: |Δw|=%.4f < threshold=%.4f (need ≥ %.4f).",
                     abs_delta, active_rebalance_threshold, active_rebalance_threshold
                 )
-                state["last_target_w"] = target_w
-                state["last_bar_close"] = bar_ts
-                save_state(args.state, state)
+                bot_state.last_target_w = target_w
+                bot_state.last_bar_close = bar_ts
+                save_state(args.state, bot_state.to_flat_dict())
                 EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
                 EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
-                PNL_QUOTE.labels(instance=instance_name).set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.labels(instance=instance_name).set(W - (bot_state.session_start_wealth or W))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip threshold).")
@@ -1328,12 +1107,12 @@ def main():
                 SKIPS.labels(instance=instance_name, reason="balance").inc()
                 mark_decision(instance_name, "skip_balance")
                 log.info("Skip: SELL requested but %s balance is 0 (cur_w=%.4f, target_w=%.4f).", base_asset, cur_w, target_w)
-                state["last_target_w"] = target_w
-                state["last_bar_close"] = bar_ts
-                save_state(args.state, state)
+                bot_state.last_target_w = target_w
+                bot_state.last_bar_close = bar_ts
+                save_state(args.state, bot_state.to_flat_dict())
                 EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
                 EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
-                PNL_QUOTE.labels(instance=instance_name).set(W - float(state.get("session_start_W", W)))
+                PNL_QUOTE.labels(instance=instance_name).set(W - (bot_state.session_start_wealth or W))
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip balance).")
@@ -1371,9 +1150,9 @@ def main():
                 SKIPS.labels(instance=instance_name, reason="min_notional").inc()
                 mark_decision(instance_name, "skip_min_notional")
                 log.info("Skip: notional below minimum (%.8f %s < min %.8f)", notional_quote, quote_asset, need)
-                state["last_target_w"] = target_w
-                state["last_bar_close"] = bar_ts
-                save_state(args.state, state)
+                bot_state.last_target_w = target_w
+                bot_state.last_bar_close = bar_ts
+                save_state(args.state, bot_state.to_flat_dict())
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip min_notional).")
@@ -1406,9 +1185,9 @@ def main():
                     side, qty_rounded, max_qty_by_balance, quote_asset, quote_bal, base_asset, base_bal
                 )
                 inc_rejection(instance_name, "insufficient_balance")
-                state["last_target_w"] = target_w
-                state["last_bar_close"] = bar_ts
-                save_state(args.state, state)
+                bot_state.last_target_w = target_w
+                bot_state.last_bar_close = bar_ts
+                save_state(args.state, bot_state.to_flat_dict())
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip balance clamped).")
@@ -1533,9 +1312,9 @@ def main():
                         log.exception("Taker order rejected: %s", e)
                         # If we filled nothing, we effectively skipped/failed
                         if executed_qty == 0:
-                            state["last_target_w"] = target_w
-                            state["last_bar_close"] = bar_ts
-                            save_state(args.state, state)
+                            bot_state.last_target_w = target_w
+                            bot_state.last_bar_close = bar_ts
+                            save_state(args.state, bot_state.to_flat_dict())
                             last_seen_bar = bar_ts
                             mark_decision(instance_name, "skip_order_error")
                             if args.once: break
@@ -1545,10 +1324,10 @@ def main():
                 elif remaining > 0:
                     log.info("Remainder %.8f too small for Taker (Notional %.8f < %.8f). Stopping.", remaining, rem_notional, need)
 
-            # Update state/metrics after trade logic
-            state["last_target_w"] = target_w
-            state["last_bar_close"] = bar_ts
-            save_state(args.state, state)
+            if bot_state.session_start_wealth <= 0:
+                bot_state.session_start_wealth = cur_w
+                log.info("Session High Water Mark: %.4f ETH", bot_state.session_start_wealth)
+            save_state(args.state, bot_state.to_flat_dict())
 
             # CRITICAL: Re-fetch actual position if we had unfilled orders
             # This ensures Grafana shows REAL Binance data, not bot's assumptions
@@ -1558,9 +1337,9 @@ def main():
                 try:
                     actual_position = adapter.get_position(args.symbol)
                     # FIX #5: Store successful position fetch
-                    state["last_known_position"] = actual_position
-                    state["last_known_cur_w"] = (actual_position * price) / max(W, 1e-12)
-                    actual_current_w = state["last_known_cur_w"]
+                    bot_state.last_known_position = actual_position
+                    bot_state.extra["last_known_cur_w"] = (actual_position * price) / max(W, 1e-12)
+                    actual_current_w = bot_state.extra["last_known_cur_w"]
                     if abs(actual_current_w - new_w) > 0.01:
                         log.warning("Position mismatch! Bot calculated: %.4f, Actual: %.4f (unfilled orders)", new_w, actual_current_w)
                 except Exception as e:

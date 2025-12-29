@@ -74,6 +74,7 @@ LEVERAGE = Gauge("leverage", "Current leverage multiplier", ["instance"])
 EXPOSURE_SIGNAL_WEIGHT = Gauge("exposure_signal_weight", "Signal weight (unleveraged target)", ["instance"])
 EXPOSURE_NOTIONAL = Gauge("exposure_notional", "Actual leveraged notional exposure as % of margin", ["instance"])
 CONFIG_LONG_ONLY = Gauge("config_long_only", "1 if Long Only, 0 if Shorts Allowed", ["instance"])
+POSITION_STALE = Gauge("position_stale", "1 if position data is stale, 0 otherwise", ["instance"])
 
 # --- RISK & EXECUTION METRICS ---
 MARGIN_UTIL = Gauge("margin_utilization_pct", "Used Margin percentage (Futures Only)", ["instance"])
@@ -183,3 +184,15 @@ def mark_execution_stats(instance: str, slippage_bps: float, fee_amt: float, fee
 def mark_futures_risk(instance: str, margin_util: float, liq_dist_pct: float, symbol: str) -> None:
     MARGIN_UTIL.labels(instance=instance).set(margin_util)
     LIQ_DIST.labels(instance=instance, symbol=symbol).set(liq_dist_pct)
+DECISION_KEYS = (
+    "exec_buy", "exec_sell", "skip_threshold", "skip_balance", "skip_min_notional", 
+    "skip_cooldown", "skip_gate_closed", "skip_delta_zero","skip_order_error"
+)
+
+def reset_trade_decision(instance_name: str):
+    """Reset all trade decision metrics to 0 for a specific instance."""
+    for k in DECISION_KEYS:
+        try:
+            TRADE_DECISION.labels(instance=instance_name, trade_decision=k).set(0)
+        except Exception:
+            pass
