@@ -23,6 +23,8 @@ FUNDING_DATA=$DEFAULT_FUND
 TAG=$DEFAULT_TAG
 WFO_MODE=false
 EXHAUSTIVE_MODE=false
+LONG_ONLY_FUTURES_MODE=false
+FUTURES_ONLY_MODE=false
 
 # Parse Arguments
 while [[ $# -gt 0 ]]; do
@@ -32,6 +34,16 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --exhaustive)
+      EXHAUSTIVE_MODE=true
+      shift
+      ;;
+    --long-only-futures)
+      LONG_ONLY_FUTURES_MODE=true
+      EXHAUSTIVE_MODE=true
+      shift
+      ;;
+    --futures-only)
+      FUTURES_ONLY_MODE=true
       EXHAUSTIVE_MODE=true
       shift
       ;;
@@ -155,6 +167,16 @@ if [[ "$EXHAUSTIVE_MODE" == "true" ]]; then
   for trend in sma roc; do
     for sizing in static volatility; do
       for long_only in true false; do
+        
+        # Filter for Long-Only Futures Mode
+        if [[ "$LONG_ONLY_FUTURES_MODE" == "true" ]]; then
+           if [[ "$long_only" == "false" ]]; then continue; fi
+        fi
+        
+        # Filter for Futures Only Mode (Shorts Allowed)
+        if [[ "$FUTURES_ONLY_MODE" == "true" ]]; then
+           if [[ "$long_only" == "true" ]]; then continue; fi
+        fi
         
         # --- FIX: ROBUST THROTTLING ---
         # While number of running jobs >= max, sleep briefly
@@ -298,7 +320,6 @@ else
       --out "$OUT_TR_CSV"
 
     echo "[4/6] Picking Robust Static Params..."
-    set -x
     python3 tools/wf_pick.py \
       --runs "$OUT_TR_CSV" \
       --emit-config "$OUT_TR_PARAMS" \

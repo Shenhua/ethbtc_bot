@@ -713,8 +713,42 @@ def cmd_backtest(args):
     story_writer = None
     
     # Infer symbols from args or default
-    base_asset = args.base if args.base else "ETH"
-    quote_asset = args.quote if args.quote else "BTC"
+    base_asset = args.base
+    quote_asset = args.quote
+    
+    # Smart Inference from Data Filename if not provided
+    if (not base_asset or not quote_asset) and args.data:
+        import os
+        filename = os.path.basename(args.data)
+        # Attempt to match common patterns like "BTCUSDT_..." or "ETHBTC_..."
+        upper_name = filename.upper()
+        
+        # Common Quote Assets to check for at the end of the symbol part
+        known_quotes = ["USDT", "USDC", "BTC", "ETH", "BNB"]
+        
+        detected_base = None
+        detected_quote = None
+        
+        for q in known_quotes:
+            # Check if filename starts with SOMETHING + QUOTE + optional separator
+            # e.g. BTCUSDT_15m... -> starts with BTCUSDT
+            # We look for the quote asset in the first chunk
+            parts = upper_name.split('_')
+            first_part = parts[0] # e.g. "BTCUSDT" or "ETHBTC"
+            
+            if first_part.endswith(q) and len(first_part) > len(q):
+                detected_quote = q
+                detected_base = first_part[:-len(q)]
+                break
+        
+        if detected_base and detected_quote:
+            if not base_asset: base_asset = detected_base
+            if not quote_asset: quote_asset = detected_quote
+            print(f"ℹ️  Inferred Asset: {base_asset}/{quote_asset} from filename '{filename}'")
+
+    # Final Fallbacks
+    base_asset = base_asset if base_asset else "ETH"
+    quote_asset = quote_asset if quote_asset else "BTC"
     symbol_str = f"{base_asset}{quote_asset}"
 
     if args.story:
