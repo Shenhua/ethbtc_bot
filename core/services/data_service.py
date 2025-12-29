@@ -4,7 +4,7 @@ import time
 from typing import Optional, Dict, Any
 from core.resilience import CircuitBreaker, CircuitBreakerOpen, retry_api_call
 from core.exchange_adapter import ExchangeAdapter
-from core.logging import get_logger
+from core.log_setup import get_logger
 
 log = get_logger("data_service")
 

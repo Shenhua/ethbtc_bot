@@ -21,6 +21,8 @@ from typing import Dict, Optional, Any, Union
 import pandas as pd
 import numpy as np
 
+import logging
+import core.log_setup  # Initialize structured logging
 log = logging.getLogger("ethbtc_accum_bot")
 
 # --- Strategy Imports (Safe) ---
@@ -753,6 +755,8 @@ def cmd_backtest(args):
             price_series=df["close"],
             strategy_name=strategy_name,
             symbol=symbol_str,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
         )
         
         # Print to terminal

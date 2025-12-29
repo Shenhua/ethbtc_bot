@@ -7,9 +7,9 @@ set -e  # Exit on error
 # --- 1. CONFIGURATION & ARGUMENT PARSING ---
 
 # Defaults
-DEFAULT_PRICE="data/raw/ETHBTC_15m_2021-2025_vision.csv"
-DEFAULT_FUND="data/raw/ETHUSDT_funding_2021-2025.csv"
-DEFAULT_TAG="ETH"
+DEFAULT_PRICE="data/raw/BTCUSDT_15m_2021-2025_vision.csv"
+DEFAULT_FUND="data/raw/BTCUSDT_funding_2021-2025.csv"
+DEFAULT_TAG="BTC"
 
 # Default Dates (Full History)
 TRAIN_START="2021-01-01"
@@ -178,7 +178,7 @@ if [[ "$EXHAUSTIVE_MODE" == "true" ]]; then
             --jobs $JOBS_PER_COMBO \
             --force-trend-kind $trend \
             --force-sizing-mode $sizing \
-            --force-long-only $long_only \ #falseto force short testonly
+            --force-long-only $long_only \
             --storage "sqlite:///data/db/optuna.db" \
             --study-name "mr_${TAG}_${trend}_${sizing}_${long_str}" \
             --out "results/opt_mr_${TAG}_${trend}_${sizing}_${long_str}.csv" \
@@ -298,6 +298,7 @@ else
       --out "$OUT_TR_CSV"
 
     echo "[4/6] Picking Robust Static Params..."
+    set -x
     python3 tools/wf_pick.py \
       --runs "$OUT_TR_CSV" \
       --emit-config "$OUT_TR_PARAMS" \

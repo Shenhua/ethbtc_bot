@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Optional, Any
 from dataclasses import dataclass
 from core.models.state import RiskState
-from core.logging import get_logger
+from core.log_setup import get_logger
 import pandas as pd
 
 log = get_logger("risk_manager")

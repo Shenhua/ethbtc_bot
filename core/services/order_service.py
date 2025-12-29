@@ -9,7 +9,7 @@ from core.metrics import (
     EXPOSURE_NOTIONAL, EXPOSURE_SIGNAL_WEIGHT,
     POSITION_STALE
 )
-from core.logging import get_logger
+from core.log_setup import get_logger
 
 log = get_logger("order_service")
 

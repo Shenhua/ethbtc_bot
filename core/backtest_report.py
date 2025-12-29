@@ -30,6 +30,8 @@ class BacktestReport:
     # Strategy identification
     strategy_name: str = "Strategy"
     symbol: str = "ASSET"
+    base_asset: str = "ETH"
+    quote_asset: str = "BTC"
     start_date: str = ""
     end_date: str = ""
     duration_days: float = 0.0
@@ -87,6 +89,8 @@ class BacktestReport:
         price_series: pd.Series,
         strategy_name: str = "Strategy",
         symbol: str = "ASSET",
+        base_asset: str = "ETH",
+        quote_asset: str = "BTC",
         exposure_series: Optional[pd.Series] = None,
         regime_series: Optional[pd.Series] = None,
     ) -> "BacktestReport":
@@ -142,7 +146,7 @@ class BacktestReport:
             hodl_base_return = (price_series.iloc[-1] / price_series.iloc[0]) - 1.0
         else:
             hodl_base_return = 0.0
-        alpha = total_return - 0.0  # vs holding quote asset
+        alpha = total_return - hodl_base_return  # Excess return vs Base Asset
         
         # Daily Returns for Risk Metrics
         daily_wealth = wealth.resample('D').last().dropna()
@@ -196,6 +200,8 @@ class BacktestReport:
         return cls(
             strategy_name=strategy_name,
             symbol=symbol,
+            base_asset=base_asset,
+            quote_asset=quote_asset,
             start_date=start_date,
             end_date=end_date,
             duration_days=duration_days,
@@ -543,8 +549,8 @@ class BacktestReport:
         
         # Benchmark Section
         print(f"{CYAN}{BOLD}📊 BENCHMARK COMPARISON{RESET}")
-        print(f"   HODL Quote (BTC):       {GREEN}+0.00%{RESET}  (Your baseline)")
-        print(f"   HODL Base Asset:        {color_value(self.hodl_base_return_pct)}%")
+        print(f"   HODL Quote ({self.quote_asset}):       {GREEN}+0.00%{RESET}  (Your baseline)")
+        print(f"   HODL {self.base_asset}:        {color_value(self.hodl_base_return_pct)}%")
         alpha_color = GREEN if self.alpha_pct > 0 else RED
         print(f"   {BOLD}✨ ALPHA vs HODL:        {alpha_color}{self.alpha_pct:+.2f}%{RESET}  ← {BOLD}YOUR VALUE ADD{RESET}")
         print()
@@ -647,8 +653,8 @@ class BacktestReport:
 
 | Benchmark | Return |
 |-----------|-------:|
-| HODL Quote (BTC) | 0.00% |
-| HODL Base Asset | {self.hodl_base_return_pct:+.2f}% |
+| HODL Quote ({self.quote_asset}) | 0.00% |
+| HODL {self.base_asset} | {self.hodl_base_return_pct:+.2f}% |
 | **✨ Alpha (Value Added)** | **{self.alpha_pct:+.2f}%** |
 
 ---
