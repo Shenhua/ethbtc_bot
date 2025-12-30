@@ -600,22 +600,39 @@ class Backtester:
                 else:
                     btc[i] -= fee_val
                 
-                # Apply trade
+                # ------------------------------------------------------------
+                # SLIPPAGE MODELING (Hardening Fix)
+                # Applies slippage penalty to realistic fill price:
+                # - Buys: Pay slightly MORE than the bar's close.
+                # - Sells: Receive slightly LESS than the bar's close.
+                # This makes backtest results more pessimistic and realistic.
+                # ------------------------------------------------------------
+                slippage_penalty_bps = getattr(self.fee, 'slippage_bps', 0.0)
+                slippage_multiplier = slippage_penalty_bps / 10000.0  # Convert bps to decimal
+                
+                if delta > 0:  # Buy
+                    fill_price = price * (1.0 + slippage_multiplier)  # Penalize: pay more
+                else:  # Sell
+                    fill_price = price * (1.0 - slippage_multiplier)  # Penalize: receive less
+                
+                # Apply trade using the slippage-adjusted fill price
                 eth[i] += delta
-                btc[i] -= delta * price
+                btc[i] -= delta * fill_price
+                
                 if delta > 0: # Buy
-                    trades.append({"time": px.index[i], "side":"BUY", "price":price, "qty":delta, "fee":fee_val})
+                    trades.append({"time": px.index[i], "side":"BUY", "price":fill_price, "qty":delta, "fee":fee_val})
                     # Story: Log trade
                     if story_writer:
-                        story_writer.log_trade(timestamp, "BUY", delta, price, base_asset, quote_asset)
+                        story_writer.log_trade(timestamp, "BUY", delta, fill_price, base_asset, quote_asset)
                 else: # Sell
-                    trades.append({"time": px.index[i], "side":"SELL", "price":price, "qty":delta, "fee":fee_val})
+                    trades.append({"time": px.index[i], "side":"SELL", "price":fill_price, "qty":delta, "fee":fee_val})
                     # Story: Log trade
                     if story_writer:
-                        story_writer.log_trade(timestamp, "SELL", delta, price, base_asset, quote_asset)
+                        story_writer.log_trade(timestamp, "SELL", delta, fill_price, base_asset, quote_asset)
                 
                 total_fees_btc += fee_val
                 total_turnover += notional
+
 
             # cur_w tracks signal weight (unleveraged), not actual position
             # With leverage=2, if position is 100% notional, cur_w should be 0.5

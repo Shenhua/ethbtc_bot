@@ -118,8 +118,112 @@ cleanup() {
 # Register the trap for SIGINT (Ctrl+C) and SIGTERM
 trap cleanup SIGINT SIGTERM
 
-echo "[INFO] Detected $AVAIL_CORES CPU cores"
-echo "[INFO] Parallelization: $MAX_PARALLEL_COMBOS combinations × $JOBS_PER_COMBO Optuna jobs each"
+# =============================================
+# LOGGING & PROGRESS TRACKING
+# =============================================
+START_TIME=$(date +%s)
+LOG_FILE="results/optimization_log_${TAG}_$(date +%Y%m%d_%H%M%S).log"
+LOG_LEVEL="${LOG_LEVEL:-INFO}"  # INFO, DEBUG, or QUIET
+
+# Logging function with timestamps
+log() {
+    local level="$1"
+    local message="$2"
+    local elapsed=$(($(date +%s) - START_TIME))
+    local mins=$((elapsed / 60))
+    local secs=$((elapsed % 60))
+    local timestamp=$(date +"%H:%M:%S")
+    local formatted="[$timestamp][+${mins}m${secs}s][$level] $message"
+    
+    # Always write to log file
+    echo "$formatted" >> "$LOG_FILE"
+    
+    # Console output based on log level
+    case "$LOG_LEVEL" in
+        QUIET)
+            [[ "$level" == "ERROR" || "$level" == "DONE" ]] && echo "$formatted"
+            ;;
+        INFO)
+            [[ "$level" != "DEBUG" ]] && echo "$formatted"
+            ;;
+        DEBUG)
+            echo "$formatted"
+            ;;
+    esac
+}
+
+# Progress bar function
+progress_bar() {
+    local current=$1
+    local total=$2
+    local pct=$((current * 100 / total))
+    local filled=$((pct / 5))
+    local empty=$((20 - filled))
+    printf "\r  [%s%s] %d/%d (%d%%)" \
+        "$(printf '█%.0s' $(seq 1 $filled 2>/dev/null))" \
+        "$(printf '░%.0s' $(seq 1 $empty 2>/dev/null))" \
+        "$current" "$total" "$pct"
+}
+
+# ETA calculator
+calc_eta() {
+    local current=$1
+    local total=$2
+    local start=$3
+    local elapsed=$(($(date +%s) - start))
+    
+    if [[ $current -gt 0 ]]; then
+        local rate=$((elapsed / current))
+        local remaining=$(( (total - current) * rate ))
+        local eta_mins=$((remaining / 60))
+        local eta_secs=$((remaining % 60))
+        echo "${eta_mins}m ${eta_secs}s"
+    else
+        echo "calculating..."
+    fi
+}
+
+# Heartbeat function (run in background)
+start_heartbeat() {
+    (
+        while true; do
+            sleep 60
+            local elapsed=$(($(date +%s) - START_TIME))
+            local mins=$((elapsed / 60))
+            log "HEARTBEAT" "Still running... (${mins} minutes elapsed)"
+        done
+    ) &
+    HEARTBEAT_PID=$!
+}
+
+stop_heartbeat() {
+    if [[ -n "$HEARTBEAT_PID" ]]; then
+        kill $HEARTBEAT_PID 2>/dev/null
+    fi
+}
+
+# Update cleanup to stop heartbeat
+cleanup() {
+    echo ""
+    log "ERROR" "Interrupt received! Killing background jobs..."
+    stop_heartbeat
+    pids=$(jobs -p)
+    if [ -n "$pids" ]; then
+        kill $pids 2>/dev/null
+    fi
+    log "DONE" "Cleanup complete. Exiting."
+    exit 1
+}
+
+# Re-register trap with updated cleanup
+trap cleanup SIGINT SIGTERM
+
+# Start heartbeat in background
+start_heartbeat
+
+log "INFO" "Detected $AVAIL_CORES CPU cores"
+log "INFO" "Parallelization: $MAX_PARALLEL_COMBOS combinations × $JOBS_PER_COMBO Optuna jobs each"
+log "INFO" "Log file: $LOG_FILE"
 
 # Filenames
 OUT_MR_CSV="results/opt_mr_${TAG}.csv"
@@ -158,7 +262,110 @@ mkdir -p results configs
 # =============================================
 # Step 1: Optimize Mean Reversion
 # =============================================
-if [[ "$EXHAUSTIVE_MODE" == "true" ]]; then
+OUT_MR_WFO_CSV="results/wfo_mr_${TAG}.csv"
+
+if [[ "$WFO_MODE" == "true" && "$EXHAUSTIVE_MODE" == "true" ]]; then
+  # --- WFO + EXHAUSTIVE MODE (Most Thorough) ---
+  echo "[1/6] Optimizing Mean Reversion (WFO + Exhaustive)..."
+  echo "  🚀 Rolling Windows: ${WINDOW_DAYS}d train + ${STEP_DAYS}d OOS"
+  echo "  🔍 Testing ALL 8 combinations per window"
+  echo "  ⚡ Parallel Limit: $MAX_PARALLEL_COMBOS concurrent jobs"
+  
+  # For each combo, run WFO and merge results
+  COMBO_COUNT=0
+  for trend in sma roc; do
+    for sizing in static volatility; do
+      for long_only in true false; do
+        
+        # Filter for Long-Only Futures Mode
+        if [[ "$LONG_ONLY_FUTURES_MODE" == "true" ]]; then
+           if [[ "$long_only" == "false" ]]; then continue; fi
+        fi
+        
+        # Filter for Futures Only Mode (Shorts Allowed)
+        if [[ "$FUTURES_ONLY_MODE" == "true" ]]; then
+           if [[ "$long_only" == "true" ]]; then continue; fi
+        fi
+        
+        # Throttle parallel jobs
+        while [[ $(jobs -r | wc -l) -ge $MAX_PARALLEL_COMBOS ]]; do
+           sleep 2
+        done
+
+        COMBO_COUNT=$((COMBO_COUNT + 1))
+        long_str=$([ "$long_only" == "true" ] && echo "long" || echo "short")
+        echo "  → [$COMBO_COUNT/8] Launching WFO: trend=$trend, sizing=$sizing, long_only=$long_only"
+        
+        # Run WFO for this combo in background
+        (
+          python3 tools/optimizer_cli.py \
+            --data "$PRICE_DATA" \
+            --funding-data "$FUNDING_DATA" \
+            --wfo \
+            --window-days $WINDOW_DAYS \
+            --step-days $STEP_DAYS \
+            --n-trials $MR_TRIALS \
+            --jobs $JOBS_PER_COMBO \
+            --force-trend-kind $trend \
+            --force-sizing-mode $sizing \
+            --force-long-only $long_only \
+            --storage "sqlite:///data/db/optuna.db" \
+            --study-name "mr_${TAG}_wfo_${trend}_${sizing}_${long_str}" \
+            --out "results/wfo_mr_${TAG}_${trend}_${sizing}_${long_str}.csv" \
+            2>&1 | sed "s/^/    [$trend-$sizing-$long_str] /"
+        ) &
+        
+      done
+    done
+  done
+  
+  echo "  ⏳ Waiting for all WFO combinations to complete..."
+  wait
+  echo "  ✅ All WFO combinations finished!"
+  
+  # Merge all WFO results into single CSV
+  echo "  → Merging WFO results..."
+  {
+    FIRST_FILE=$(find results -name "wfo_mr_${TAG}_*.csv" 2>/dev/null | head -n 1)
+    if [[ -n "$FIRST_FILE" ]]; then
+        head -1 "$FIRST_FILE"
+        for trend in sma roc; do
+          for sizing in static volatility; do
+            for long_only in true false; do
+              long_str=$([ "$long_only" == "true" ] && echo "long" || echo "short")
+              tail -n +2 "results/wfo_mr_${TAG}_${trend}_${sizing}_${long_str}.csv" 2>/dev/null || true
+            done
+          done
+        done
+    fi
+  } > "$OUT_MR_WFO_CSV"
+  
+  TOTAL_ROWS=$(($(wc -l < "$OUT_MR_WFO_CSV") - 1))
+  echo "  ✅ WFO + Exhaustive complete ($TOTAL_ROWS window-combo results)"
+  
+  # Copy for downstream steps
+  cp "$OUT_MR_WFO_CSV" "$OUT_MR_CSV"
+
+elif [[ "$WFO_MODE" == "true" ]]; then
+  # --- WFO MODE ONLY ---
+  echo "[1/6] Optimizing Mean Reversion (Walk-Forward)..."
+  echo "  🚀 Rolling Windows: ${WINDOW_DAYS}d train + ${STEP_DAYS}d OOS"
+  python3 tools/optimizer_cli.py \
+    --data "$PRICE_DATA" \
+    --funding-data "$FUNDING_DATA" \
+    --wfo \
+    --window-days $WINDOW_DAYS \
+    --step-days $STEP_DAYS \
+    --n-trials $MR_TRIALS \
+    --jobs $AVAIL_CORES \
+    --storage "sqlite:///data/db/optuna.db" \
+    --study-name "mr_${TAG}_wfo" \
+    --out "$OUT_MR_WFO_CSV"
+  
+  # Copy WFO output as MR CSV for downstream steps
+  cp "$OUT_MR_WFO_CSV" "$OUT_MR_CSV"
+
+elif [[ "$EXHAUSTIVE_MODE" == "true" ]]; then
   echo "[1/6] Optimizing Mean Reversion (Exhaustive - All Combinations)..."
   echo "  ⚡ Parallel Limit: $MAX_PARALLEL_COMBOS concurrent jobs"
   
@@ -256,10 +463,18 @@ fi
 
 # Step 2: Pick Best MR
 echo "[2/6] Selecting Best MR..."
-python3 tools/wf_pick.py \
-  --runs "$OUT_MR_CSV" \
-  --emit-config "$OUT_MR_PARAMS" \
-  --family-index 0 --min-occurs 1
+if [[ "$WFO_MODE" == "true" ]]; then
+  # Use smart WFO selection for MR
+  python3 tools/wfo_select_best.py \
+    --wfo-csv "$OUT_MR_WFO_CSV" \
+    --out "$OUT_MR_PARAMS" \
+    --strategy weighted
+else
+  python3 tools/wf_pick.py \
+    --runs "$OUT_MR_CSV" \
+    --emit-config "$OUT_MR_PARAMS" \
+    --family-index 0 --min-occurs 1
+fi
 
 # Wrap MR Config
 python3 - <<PYTHON
@@ -368,9 +583,51 @@ python3 tools/assemble_v2_config.py \
   --meta-results "$OUT_META_CSV" \
   --out "$FINAL_CONFIG"
 
+# =============================================
+# Step 7: Walk-Forward Audit (Optional Validation)
+# =============================================
+# Runs WFO analyzer on both MR and Trend results when WFO mode is used.
+if [[ "$WFO_MODE" == "true" ]]; then
+  log "INFO" "Running Walk-Forward Validation..."
+  
+  # Analyze MR WFO
+  if [[ -f "$OUT_MR_WFO_CSV" ]]; then
+    log "INFO" "  → Analyzing MR strategy..."
+    python3 tools/wfo_analyzer.py \
+      --wfo-csv "$OUT_MR_WFO_CSV" \
+      --out "results/wfo_analysis_mr_${TAG}.json"
+  fi
+  
+  # Analyze Trend WFO
+  if [[ -f "$OUT_TR_WFO_CSV" ]]; then
+    log "INFO" "  → Analyzing Trend strategy..."
+    python3 tools/wfo_analyzer.py \
+      --wfo-csv "$OUT_TR_WFO_CSV" \
+      --out "results/wfo_analysis_trend_${TAG}.json"
+  fi
+fi
+
+# Stop heartbeat
+stop_heartbeat
+
+# Final Summary
+ELAPSED=$(($(date +%s) - START_TIME))
+ELAPSED_MINS=$((ELAPSED / 60))
+ELAPSED_SECS=$((ELAPSED % 60))
+
 echo ""
-echo "========================================"
-echo "✓ DONE: ${TAG} Optimization Complete"
-echo "========================================"
-echo "File: ${FINAL_CONFIG}"
+echo "════════════════════════════════════════════════════════════"
+log "DONE" "Optimization Complete!"
+echo "════════════════════════════════════════════════════════════"
+echo "  Tag:           ${TAG}"
+echo "  Total Time:    ${ELAPSED_MINS}m ${ELAPSED_SECS}s"
+echo "  Config:        ${FINAL_CONFIG}"
+echo "  Log File:      ${LOG_FILE}"
+if [[ "$WFO_MODE" == "true" ]]; then
+  echo ""
+  echo "  WFO Analysis:"
+  echo "    MR:    results/wfo_analysis_mr_${TAG}.json"
+  echo "    Trend: results/wfo_analysis_trend_${TAG}.json"
+fi
+echo "════════════════════════════════════════════════════════════"
 echo ""

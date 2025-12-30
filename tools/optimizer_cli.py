@@ -180,16 +180,98 @@ class Objective:
             log.error(f"Trial {tid} CRASHED: {e}", exc_info=True)
             return -1e9
 
+
+# =============================================
+# Walk-Forward Optimization Helper (NEW!)
+# =============================================
+def run_slice_optimization_mr(args, fee, df, start_idx, end_idx, test_end_idx, funding_series, bnb_series):
+    """
+    Run Mean Reversion optimization for a single WFO window.
+    
+    This mirrors the logic in optimize_trend.py::run_slice_optimization
+    but uses the MR strategy and EthBtcStrategy.
+    
+    Args:
+        args: CLI arguments
+        fee: FeeParams instance
+        df: Full OHLC dataframe
+        start_idx: Start index for training window
+        end_idx: End index for training window
+        test_end_idx: End index for test window
+        funding_series: Optional funding rate series
+        bnb_series: Optional BNB price series
+    
+    Returns:
+        Dict with window results or None if window is too small.
+    """
+    train_close = df["close"].iloc[start_idx:end_idx]
+    test_close = df["close"].iloc[end_idx:test_end_idx]
+    
+    if len(train_close) < 100 or len(test_close) < 10:
+        return None
+    
+    # Align funding and BNB prices to window
+    f_tr = f_te = None
+    if funding_series is not None:
+        f_tr = funding_series.reindex(train_close.index, method="ffill").fillna(0.0)
+        f_te = funding_series.reindex(test_close.index, method="ffill").fillna(0.0)
+    
+    bnb_tr = bnb_te = None
+    if bnb_series is not None:
+        bnb_tr = bnb_series.reindex(train_close.index, method="ffill")
+        bnb_te = bnb_series.reindex(test_close.index, method="ffill")
+    
+    # Unique study name for this window
+    window_name = f"{args.study_name}_{train_close.index[-1].strftime('%Y%m%d')}"
+    log.info(f"[WFO] Starting window: {window_name}")
+    
+    study = optuna.create_study(
+        study_name=window_name, direction="maximize",
+        storage=args.storage, load_if_exists=True
+    )
+    
+    # Create dataframes for Objective
+    train_df = df.iloc[start_idx:end_idx]
+    test_df = df.iloc[end_idx:test_end_idx]
+    
+    obj = Objective(args, fee, train_close, test_close, bnb_tr, bnb_te, f_tr, f_te, train_df, test_df)
+    study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
+    
+    # Get best trial
+    best_trial = study.best_trial
+    oos_profit = best_trial.user_attrs.get("test_final_btc", best_trial.value)
+    train_profit = best_trial.user_attrs.get("train_final_btc", best_trial.value)
+    
+    log.info(f"[WFO] Window {train_close.index[-1].date()}: Train={train_profit:.4f} | OOS={oos_profit:.4f}")
+    
+    return {
+        "window_end": train_close.index[-1],
+        "oos_start": test_close.index[0],
+        "oos_end": test_close.index[-1],
+        "oos_profit": oos_profit,
+        "train_profit": train_profit,
+        "best_params": json.dumps(best_trial.params)
+    }
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Bayesian Optimizer (Optuna)")
+    ap = argparse.ArgumentParser(description="Bayesian Optimizer (Optuna) for Mean Reversion")
     ap.add_argument("--data", required=True)
     ap.add_argument("--funding-data", help="Path to funding rates CSV")
     ap.add_argument("--bnb-data")
     ap.add_argument("--config")
-    ap.add_argument("--train-start", required=True)
-    ap.add_argument("--train-end", required=True)
-    ap.add_argument("--test-start", required=True)
-    ap.add_argument("--test-end", required=True)
+    
+    # Date arguments (optional if --wfo is used)
+    ap.add_argument("--train-start", default=None)
+    ap.add_argument("--train-end", default=None)
+    ap.add_argument("--test-start", default=None)
+    ap.add_argument("--test-end", default=None)
+    
+    # Walk-Forward Optimization Mode (NEW!)
+    ap.add_argument("--wfo", action="store_true", help="Enable Walk-Forward Optimization (rolling windows)")
+    ap.add_argument("--window-days", type=int, default=180, help="Training window size in days")
+    ap.add_argument("--step-days", type=int, default=30, help="Step size for re-optimization in days")
+    
     ap.add_argument("--n-trials", type=int, default=200)
     
     # Fees
@@ -273,83 +355,128 @@ def main():
     close = df["close"]
     
     print(f"Index Monotonic: {close.index.is_monotonic_increasing}")
-    train_close = close.loc[args.train_start:args.train_end].dropna()
-    test_close  = close.loc[args.test_start:args.test_end].dropna()
-
-    bnb_train = bnb_test = None
-    if cfg.get("bnb_data", args.bnb_data):
-        df_bnb = load_vision_csv(cfg.get("bnb_data", args.bnb_data))["close"]
-        bnb_train = df_bnb.reindex(train_close.index, method="ffill")
-        bnb_test  = df_bnb.reindex(test_close.index,  method="ffill")
-
-    funding_train = funding_test = None
+    
+    # Load optional funding series (global)
+    funding_series = None
     if args.funding_data:
         log.info(f"Loading funding data from {args.funding_data}...")
         f_df = pd.read_csv(args.funding_data)
         f_df["time"] = pd.to_datetime(f_df["time"], format="mixed", utc=True)
         f_df = f_df.set_index("time").sort_index()
         funding_series = f_df["rate"]
-        funding_train = funding_series.reindex(train_close.index, method="ffill").fillna(0.0)
-        funding_test  = funding_series.reindex(test_close.index, method="ffill").fillna(0.0)
+    
+    # Load optional BNB series (global)
+    bnb_series = None
+    if cfg.get("bnb_data", args.bnb_data):
+        bnb_series = load_vision_csv(cfg.get("bnb_data", args.bnb_data))["close"]
 
-    log.info(f"Starting Optuna study '{args.study_name}' with {args.n_trials} trials...")
-    log.info(f"🔍 Exploration: {args.n_startup_trials}/{args.n_trials} trials will explore randomly")
-    
-    # Create sampler with improved exploration
-    sampler = optuna.samplers.TPESampler(
-        n_startup_trials=args.n_startup_trials,  # Random exploration trials
-        multivariate=True,  # Consider parameter interactions
-        seed=42  # Reproducibility
-    )
-    
-    study = optuna.create_study(
-        study_name=args.study_name, 
-        direction="maximize",
-        storage=args.storage,
-        load_if_exists=True,
-        sampler=sampler
-    )
-    
-    # Split dataframes for train/test
-    train_df = df.loc[args.train_start:args.train_end]
-    test_df = df.loc[args.test_start:args.test_end]
-    
-    obj = Objective(args, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test, train_df, test_df)
-    
-    try:
-        study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
-    except KeyboardInterrupt:
-        log.warning("Stopping optimization early...")
-
-    log.info(f"Exporting results to {args.out}...")
-    
-    rows = []
-    for t in study.trials:
-        if t.state != optuna.trial.TrialState.COMPLETE:
-            continue
-        row = t.user_attrs.copy()
-        row.update(t.params) 
-        rows.append(row)
+    # =============================================
+    # WFO MODE: Walk-Forward Optimization
+    # =============================================
+    if args.wfo:
+        log.info(f"🚀 Starting Walk-Forward Optimization (Window={args.window_days}d, Step={args.step_days}d)")
         
-    df_out = pd.DataFrame(rows)
-    
-    # Ensure robust_score column exists
-    if "robust_score" not in df_out.columns:
-        if "value" in df_out.columns:
-            df_out["robust_score"] = df_out["value"]
-        elif "test_final_btc" in df_out.columns:
-            df_out["robust_score"] = df_out["test_final_btc"]
+        bars_per_day = 96  # 15m candles
+        window_bars = args.window_days * bars_per_day
+        step_bars = args.step_days * bars_per_day
+        
+        wfo_results = []
+        
+        for i in range(0, len(df) - window_bars - step_bars, step_bars):
+            train_end = i + window_bars
+            test_end = train_end + step_bars
+            
+            res = run_slice_optimization_mr(
+                args, fee, df, i, train_end, test_end, funding_series, bnb_series
+            )
+            if res:
+                wfo_results.append(res)
+        
+        if wfo_results:
+            wfo_df = pd.DataFrame(wfo_results)
+            wfo_df.to_csv(args.out, index=False)
+            log.info(f"✅ WFO Complete. {len(wfo_results)} windows saved to {args.out}")
         else:
-            # Last resort: create a dummy column
-            df_out["robust_score"] = 0.0
-
-    if not df_out.empty:
-        df_out = df_out.sort_values("robust_score", ascending=False)
-        df_out.to_csv(args.out, index=False)
-        log.info(f"Done. Best score: {study.best_value:.4f}")
-        print(json.dumps(study.best_trial.params, indent=2))
+            log.error("❌ WFO failed: No valid windows found.")
+            
+    # =============================================
+    # STATIC MODE: Traditional Train/Test Split
+    # =============================================
     else:
-        log.warning("No successful trials found.")
+        # Validate required date arguments for static mode
+        if not all([args.train_start, args.train_end, args.test_start, args.test_end]):
+            log.error("Static mode requires --train-start, --train-end, --test-start, --test-end")
+            log.error("Use --wfo for Walk-Forward Optimization without explicit dates.")
+            sys.exit(1)
+        
+        train_close = close.loc[args.train_start:args.train_end].dropna()
+        test_close  = close.loc[args.test_start:args.test_end].dropna()
+
+        bnb_train = bnb_test = None
+        if bnb_series is not None:
+            bnb_train = bnb_series.reindex(train_close.index, method="ffill")
+            bnb_test  = bnb_series.reindex(test_close.index,  method="ffill")
+
+        funding_train = funding_test = None
+        if funding_series is not None:
+            funding_train = funding_series.reindex(train_close.index, method="ffill").fillna(0.0)
+            funding_test  = funding_series.reindex(test_close.index, method="ffill").fillna(0.0)
+
+        log.info(f"Starting Optuna study '{args.study_name}' with {args.n_trials} trials...")
+        log.info(f"🔍 Exploration: {args.n_startup_trials}/{args.n_trials} trials will explore randomly")
+        
+        # Create sampler with improved exploration
+        sampler = optuna.samplers.TPESampler(
+            n_startup_trials=args.n_startup_trials,
+            multivariate=True,
+            seed=42
+        )
+        
+        study = optuna.create_study(
+            study_name=args.study_name, 
+            direction="maximize",
+            storage=args.storage,
+            load_if_exists=True,
+            sampler=sampler
+        )
+        
+        train_df = df.loc[args.train_start:args.train_end]
+        test_df = df.loc[args.test_start:args.test_end]
+        
+        obj = Objective(args, fee, train_close, test_close, bnb_train, bnb_test, funding_train, funding_test, train_df, test_df)
+        
+        try:
+            study.optimize(obj, n_trials=args.n_trials, n_jobs=args.jobs)
+        except KeyboardInterrupt:
+            log.warning("Stopping optimization early...")
+
+        log.info(f"Exporting results to {args.out}...")
+        
+        rows = []
+        for t in study.trials:
+            if t.state != optuna.trial.TrialState.COMPLETE:
+                continue
+            row = t.user_attrs.copy()
+            row.update(t.params) 
+            rows.append(row)
+            
+        df_out = pd.DataFrame(rows)
+        
+        if "robust_score" not in df_out.columns:
+            if "value" in df_out.columns:
+                df_out["robust_score"] = df_out["value"]
+            elif "test_final_btc" in df_out.columns:
+                df_out["robust_score"] = df_out["test_final_btc"]
+            else:
+                df_out["robust_score"] = 0.0
+
+        if not df_out.empty:
+            df_out = df_out.sort_values("robust_score", ascending=False)
+            df_out.to_csv(args.out, index=False)
+            log.info(f"Done. Best score: {study.best_value:.4f}")
+            print(json.dumps(study.best_trial.params, indent=2))
+        else:
+            log.warning("No successful trials found.")
 
 if __name__ == "__main__":
     main()
