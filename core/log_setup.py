@@ -44,6 +44,8 @@ def configure_logging(
     
     # Shared processors for all output types
     shared_processors: list[Processor] = [
+        structlog.stdlib.filter_by_level,
+        structlog.stdlib.PositionalArgumentsFormatter(), # Support legacy %s formatting
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso") if add_timestamp else structlog.processors.TimeStamper(fmt=None),

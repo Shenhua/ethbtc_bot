@@ -59,7 +59,7 @@ from core.services.order_service import OrderService
 from core.models.state import BotState
 import core.log_setup  # Auto-configures structured logging
 
-log = logging.getLogger("live_executor")
+log = core.log_setup.get_logger("live_executor")
 
 # Global circuit breaker for API calls (shared across all calls)
 API_CIRCUIT_BREAKER = CircuitBreaker(max_failures=5, reset_timeout=60.0)
