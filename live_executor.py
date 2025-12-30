@@ -57,6 +57,7 @@ from core.services.order_service import OrderService
 
 # --- STATE MODELS (Phase 2 Refactoring) ---
 from core.models.state import BotState
+import core.log_setup  # Auto-configures structured logging
 
 log = logging.getLogger("live_executor")
 
@@ -1073,7 +1074,7 @@ def main():
                 mark_decision(instance_name, "skip_delta_zero")
                 log.info("Skip: cur_w==target_w==%.4f (no change).", cur_w)
                 bot_state.last_target_w = target_w
-                bot_state.last_bar_close = bar_ts
+                bot_state.last_bar_close = str(bar_ts)
                 save_state(args.state, bot_state.to_flat_dict())
                 EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
                 EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
@@ -1093,7 +1094,7 @@ def main():
                     abs_delta, active_rebalance_threshold, active_rebalance_threshold
                 )
                 bot_state.last_target_w = target_w
-                bot_state.last_bar_close = bar_ts
+                bot_state.last_bar_close = str(bar_ts)
                 save_state(args.state, bot_state.to_flat_dict())
                 EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
                 EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
@@ -1111,7 +1112,7 @@ def main():
                 mark_decision(instance_name, "skip_balance")
                 log.info("Skip: SELL requested but %s balance is 0 (cur_w=%.4f, target_w=%.4f).", base_asset, cur_w, target_w)
                 bot_state.last_target_w = target_w
-                bot_state.last_bar_close = bar_ts
+                bot_state.last_bar_close = str(bar_ts)
                 save_state(args.state, bot_state.to_flat_dict())
                 EXPOSURE_W.labels(instance=instance_name, kind="target").set(target_w)
                 EXPOSURE_W.labels(instance=instance_name, kind="current").set(cur_w)
@@ -1154,7 +1155,7 @@ def main():
                 mark_decision(instance_name, "skip_min_notional")
                 log.info("Skip: notional below minimum (%.8f %s < min %.8f)", notional_quote, quote_asset, need)
                 bot_state.last_target_w = target_w
-                bot_state.last_bar_close = bar_ts
+                bot_state.last_bar_close = str(bar_ts)
                 save_state(args.state, bot_state.to_flat_dict())
                 last_seen_bar = bar_ts
                 if args.once:
@@ -1189,7 +1190,7 @@ def main():
                 )
                 inc_rejection(instance_name, "insufficient_balance")
                 bot_state.last_target_w = target_w
-                bot_state.last_bar_close = bar_ts
+                bot_state.last_bar_close = str(bar_ts)
                 save_state(args.state, bot_state.to_flat_dict())
                 last_seen_bar = bar_ts
                 if args.once:
@@ -1207,9 +1208,9 @@ def main():
                     "Skip: notional below minimum after clamp (%.8f %s < min %.8f) [side=%s qty=%.8f]",
                     notional_quote, quote_asset, need, side, qty_exec
                 )
-                state["last_target_w"] = target_w
-                state["last_bar_close"] = bar_ts
-                save_state(args.state, state)
+                bot_state.last_target_w = target_w
+                bot_state.last_bar_close = str(bar_ts)
+                save_state(args.state, bot_state.to_flat_dict())
                 last_seen_bar = bar_ts
                 if args.once:
                     log.info("Run-once complete (skip min_notional clamped).")
@@ -1316,7 +1317,7 @@ def main():
                         # If we filled nothing, we effectively skipped/failed
                         if executed_qty == 0:
                             bot_state.last_target_w = target_w
-                            bot_state.last_bar_close = bar_ts
+                            bot_state.last_bar_close = str(bar_ts)
                             save_state(args.state, bot_state.to_flat_dict())
                             last_seen_bar = bar_ts
                             mark_decision(instance_name, "skip_order_error")
