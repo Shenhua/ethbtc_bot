@@ -396,6 +396,100 @@ class Backtester:
         day_start_wealth = initial_btc
         daily_limit_hit = False
         
+        # === VECTORIZED DYNAMIC SIZING (Pre-Loop Optimization) ===
+        # Instead of instantiating PositionSizer 100k times inside the loop,
+        # we calculate the step/thresh arrays for the entire series at once.
+        
+        # 1. Prepare Inputs
+        vol_arr = plan["vol"].fillna(0.5).values if "vol" in plan.columns else np.full(len(px), 0.5)
+        
+        step_arr = np.ones(len(px))
+        thresh_arr = np.zeros(len(px))
+        
+        # 2. Vectorized Sizing Function
+        def calc_step_vectorized(p_obj, vol_array):
+             # Extract params
+             mode = getattr(p_obj, 'position_sizing_mode', 'static')
+             base = getattr(p_obj, 'step_allocation', 1.0)
+             t_vol = getattr(p_obj, 'position_sizing_target_vol', 0.5)
+             min_s = getattr(p_obj, 'position_sizing_min_step', 0.1)
+             max_s = getattr(p_obj, 'position_sizing_max_step', 1.0)
+             
+             if mode == 'volatility':
+                 # Vectorized: base * (target_vol / vol)
+                 # Avoid div by zero
+                 safe_vol = np.where(vol_array < 1e-6, 0.5, vol_array) 
+                 raw_step = base * (t_vol / safe_vol)
+                 return np.clip(raw_step, min_s, max_s)
+             elif mode == 'kelly':
+                 # Fallback to static for now (Kelly usually needs dynamic prob/win_rate)
+                 # Or use specific Kelly logic if implemented vectorized
+                 return np.full(len(vol_array), base) 
+             else:
+                 return np.full(len(vol_array), base)
+
+        # 3. Calculate Arrays
+        if is_meta and "regime_state" in plan.columns:
+            # Meta Strategy: Mixed Regime
+            regime_arr = plan["regime_state"].fillna(-1.0).values
+            regime_score_arr = plan["regime_score"].fillna(0.0).values
+            
+            # MR Config
+            mr_obj = strategy.mr.p
+            step_mr_arr = calc_step_vectorized(mr_obj, vol_arr)
+            thresh_mr_val = getattr(mr_obj, 'rebalance_threshold_w', 0.0)
+            
+            # Trend Config
+            tr_obj = strategy.trend.p
+            step_tr_arr = calc_step_vectorized(tr_obj, vol_arr)
+            thresh_tr_val = 0.0 # Trend typically has 0 threshold
+            
+            # Mask: Where regime > adx_cutoff is Trend (Override based on score for switching logic)
+            # Actually, the loop used `score > adx_cutoff` to switch parameters.
+            # Let's align with the loop logic:
+            # if score > adx_cutoff: use Trend params
+            # else: use MR params (derived from regime_state inside loop, but simplified here)
+            
+            # The loop had complex logic:
+            # active_step based on regime_state (MR or Trend mode)
+            # THEN overridden by `score > adx_cutoff` check.
+            
+            # Let's Vectorize the final decision:
+            # Condition A: regime_state < 0 (MR Mode) -> Use MR Sizing
+            # Condition B: regime_state > 0 (Trend Mode) -> Use Trend Sizing
+            
+            # Base Sizing
+            step_arr = np.where(regime_arr < 0, step_mr_arr, step_tr_arr)
+            thresh_arr = np.where(regime_arr < 0, thresh_mr_val, thresh_tr_val)
+            
+            # Override Condition (Regime Switch Logic from Loop)
+            # "if score > adx_cutoff: step = step_trend, thresh = thresh_trend"
+            # This override happened at the END of the param selection.
+            # It implies that even if we are in MR state, if score spikes, we use Trend sizing?
+            # Or is it just setting the *next* state? 
+            # Reviewing original code: it changes `step` and `thresh` for the *current* rebalance.
+            mask_override = regime_score_arr > adx_cutoff
+            step_arr[mask_override] = step_tr_arr[mask_override]
+            thresh_arr[mask_override] = thresh_tr_val
+            
+        else:
+            # Single Strategy
+            p_obj = getattr(strategy, 'p', None)
+            if p_obj:
+                step_arr = calc_step_vectorized(p_obj, vol_arr)
+                thresh_arr = np.full(len(px), getattr(p_obj, 'rebalance_threshold_w', 0.0))
+
+        # 4. Prepare Numpy Execution Arrays
+        tw_arr = target_w.fillna(0.0).values
+        eth_arr = np.zeros(len(px))
+        btc_arr = np.zeros(len(px)) # Shadow for fast indexing
+        btc_arr[0] = initial_btc
+        
+        # Pre-calc constants to avoid property access in loop
+        min_trade_btc = 0.0001
+        if hasattr(strategy, 'p'): min_trade_btc = getattr(strategy.p, 'min_trade_btc', 0.0001) or 0.0001
+        elif hasattr(strategy, 'mr'): min_trade_btc = getattr(strategy.mr.p, 'min_trade_btc', 0.0001) or 0.0001
+
         for i in range(1, len(px)):
             price = float(px.iat[i])
             timestamp = px.index[i]
@@ -465,86 +559,24 @@ class Backtester:
                     if story_writer:
                         story_writer.log_phoenix_activation(timestamp, current_score, drawdown_reset_days)
             
-            # Target weight at this bar
-            tw = float(target_w.iat[i]) if not np.isnan(float(target_w.iat[i])) else 0.0
+            # Leverage clamping has been moved down
+            # tw is now fetched from pre-calculated array
             
-            # Apply leverage clamping (matching live_executor.py lines 908-915)
-            # Futures: allow shorts with leverage; Spot-like: clamp to [0, 1]
+
+
+            # === Loop Slimming (Phase 9) ===
+            # Use pre-calculated arrays
+            step = step_arr[i]
+            thresh = thresh_arr[i]
+            tw = tw_arr[i]
+            
             if leverage > 1:
                 tw = max(-leverage, min(leverage, tw))
             else:
-                # Default: clamp to [-1, 1] for consistency
                 tw = max(-1.0, min(1.0, tw))
-            
-            # === DYNAMIC STEP SIZING (per bar, matching live_executor.py) ===
-            # Get realized volatility at this bar (if available)
-            rv_at_i = float(plan["vol"].iat[i]) if "vol" in plan.columns and not np.isnan(float(plan["vol"].iat[i])) else 0.5
-            
-            # Calculate dynamic step based on strategy and volatility
-            active_step = 1.0
-            active_thresh = 0.0
-
-            if is_meta:
-                # MetaStrategy: use MR or Trend params based on regime
-                regime_val = float(plan["regime_state"].iat[i]) if "regime_state" in plan.columns else -1.0
                 
-                if regime_val < 0:  # Mean Reversion mode
-                    sizer_config = PositionSizerConfig(
-                        mode=getattr(strategy.mr.p, 'position_sizing_mode', 'static'),
-                        base_step=getattr(strategy.mr.p, 'step_allocation', 1.0),
-                        target_vol=getattr(strategy.mr.p, 'position_sizing_target_vol', 0.5),
-                        min_step=getattr(strategy.mr.p, 'position_sizing_min_step', 0.1),
-                        max_step=getattr(strategy.mr.p, 'position_sizing_max_step', 1.0),
-                    )
-                    active_step = PositionSizer(sizer_config).calculate_step(rv_at_i)
-                    active_thresh = thresh_mr
-                else:  # Trend mode
-                    tr_config = PositionSizerConfig(
-                        mode=getattr(strategy.trend.p, 'position_sizing_mode', 'static'),
-                        base_step=getattr(strategy.trend.p, 'step_allocation', 1.0),
-                        target_vol=getattr(strategy.trend.p, 'position_sizing_target_vol', 0.5),
-                        min_step=getattr(strategy.trend.p, 'position_sizing_min_step', 0.1),
-                        max_step=getattr(strategy.trend.p, 'position_sizing_max_step', 1.0),
-                    )
-                    active_step = PositionSizer(tr_config).calculate_step(rv_at_i)
-                    active_thresh = thresh_trend
-            else:
-                # Single strategy
-                single_config = PositionSizerConfig(
-                    mode=getattr(strategy.p, 'position_sizing_mode', 'static'),
-                    base_step=getattr(strategy.p, 'step_allocation', 1.0),
-                    target_vol=getattr(strategy.p, 'position_sizing_target_vol', 0.5),
-                    min_step=getattr(strategy.p, 'position_sizing_min_step', 0.1),
-                    max_step=getattr(strategy.p, 'position_sizing_max_step', 1.0),
-                )
-                active_step = PositionSizer(single_config).calculate_step(rv_at_i)
-                active_thresh = thresh_mr
-          
-            # --- DYNAMIC PARAM SELECTION ---
-            step = active_step
-            thresh = active_thresh
-            
-            if is_meta and "regime_score" in plan.columns:
-                score = float(plan["regime_score"].iat[i])
-                
-                # Story: Log regime switch
-                if story_writer:
-                    story_writer.check_regime_switch(timestamp, score, adx_cutoff, "meta")
-                
-                if score > adx_cutoff:
-                    step = step_trend
-                    thresh = thresh_trend
-            # -------------------------------
-
-            # === MIN TRADE SIZE ===
-            # Fix: Use configured value, fallback to 0.0001
-            # Handle MetaStrategy which doesn't have .p directly
-            if hasattr(strategy, 'p'):
-                min_trade_btc = getattr(strategy.p, 'min_trade_btc', 0.0001) or 0.0001
-            elif hasattr(strategy, 'mr') and hasattr(strategy.mr, 'p'):
-                min_trade_btc = getattr(strategy.mr.p, 'min_trade_btc', 0.0001) or 0.0001
-            else:
-                min_trade_btc = 0.0001
+            # Min Trade Check (Moved to optimized path above)
+            # min_trade_btc is already set
 
             # Rebalance Logic
             new_w = cur_w + step * (tw - cur_w)

@@ -3,11 +3,8 @@
 Walk-Forward Analyzer (wfo_analyzer.py)
 
 This tool validates the Walk-Forward Optimization (WFO) *process*.
-Instead of just selecting the "best" historical window, it:
-1.  Concatenates all Out-of-Sample (OOS) periods to create a realistic
-    "What-If" equity curve that simulates continuous re-optimization.
-2.  Calculates Walk-Forward Efficiency (WFE) = (OOS Performance) / (IS Performance).
-3.  Analyzes parameter stability across windows to detect "Drift" (overfitting).
+It detects if multiple combinations (e.g. roc-static, sma-volatility) exist in the results
+and analyzes each one separately to avoid "Frankenstein" equity curves.
 
 Usage:
     python3 tools/wfo_analyzer.py --wfo-csv results/wfo_trend_BTC.csv --out results/wfo_analysis.json
@@ -43,6 +40,7 @@ def load_wfo_results(csv_path: str) -> pd.DataFrame:
     - oos_profit: Final BTC value at end of Out-of-Sample period.
     - train_profit: Final BTC value at end of In-Sample (training) period.
     - best_params: JSON string of the optimal parameters for this window.
+    - combo: (Optional) Strategy combination identifier.
     
     Returns:
         A DataFrame with parsed parameters.
@@ -57,24 +55,17 @@ def load_wfo_results(csv_path: str) -> pd.DataFrame:
     # Parse the best_params JSON column
     df["params_dict"] = df["best_params"].apply(lambda x: json.loads(x) if isinstance(x, str) else x)
     
-    log.info(f"Loaded {len(df)} WFO windows.")
+    # Ensure combo column exists
+    if "combo" not in df.columns:
+        df["combo"] = "default"
+        
+    log.info(f"Loaded {len(df)} WFO windows across {df['combo'].nunique()} combinations.")
     return df
 
 
 def calculate_wfo_efficiency(df: pd.DataFrame) -> Dict[str, Any]:
     """
     Calculate the Walk-Forward Efficiency (WFE).
-    
-    WFE is a measure of how well In-Sample (training) performance
-    translates to Out-of-Sample (live) performance.
-    
-    Formula:
-        Total OOS Return = Average(oos_profit) across all windows
-        Total IS Return = Average(train_profit) across all windows
-        WFE = Total OOS Return / Total IS Return
-    
-    A WFE of 0.5 means OOS performance is 50% of IS performance.
-    A WFE > 0.7 is generally considered robust.
     """
     total_oos_return = df["oos_profit"].mean()
     total_is_return = df["train_profit"].mean()
@@ -82,13 +73,8 @@ def calculate_wfo_efficiency(df: pd.DataFrame) -> Dict[str, Any]:
     # Guard against division by zero
     if total_is_return == 0:
         wfe = 0.0
-        log.warning("Walk-Forward Efficiency is 0.0 due to zero IS return.")
     else:
         wfe = total_oos_return / total_is_return
-    
-    log.info(f"Walk-Forward Efficiency (WFE): {wfe:.2%}")
-    log.info(f"  - Avg. OOS Profit: {total_oos_return:.4f}")
-    log.info(f"  - Avg. IS (Train) Profit: {total_is_return:.4f}")
     
     return {
         "wfe": wfe,
@@ -100,15 +86,10 @@ def calculate_wfo_efficiency(df: pd.DataFrame) -> Dict[str, Any]:
 def stitch_oos_equity_curve(df: pd.DataFrame) -> List[Dict[str, Any]]:
     """
     Conceptually stitch together OOS returns into a single curve.
-    
-    This simulates a "live" equity trajectory where you re-optimize
-    every 30 days and trade the OOS period with the new parameters.
-    The "cumulative return" compounds all OOS periods.
-    
-    Returns:
-        A list of dicts representing the equity curve points.
+    Should be called on a filtered DataFrame (single combo).
     """
-    log.info("Stitching concatenated OOS equity curve...")
+    # Sort by window_end to ensure chronological order
+    df = df.sort_values("window_end")
     
     cumulative_wealth = 1.0  # Start with 1 BTC
     equity_curve = []
@@ -116,7 +97,6 @@ def stitch_oos_equity_curve(df: pd.DataFrame) -> List[Dict[str, Any]]:
     for idx, row in df.iterrows():
         # The OOS profit *is* the final_btc value after starting at 1.0 BTC
         # So, the period return is (oos_profit / 1.0 - 1) = oos_profit - 1
-        # If oos_profit = 1.02, the window made +2%.
         period_return = row["oos_profit"] - 1.0
         
         # Compound: new_wealth = old_wealth * (1 + return)
@@ -128,20 +108,13 @@ def stitch_oos_equity_curve(df: pd.DataFrame) -> List[Dict[str, Any]]:
             "cumulative_wealth_btc": cumulative_wealth
         })
         
-    log.info(f"Final Concatenated OOS Wealth: {cumulative_wealth:.4f} BTC")
     return equity_curve
 
 
 def analyze_parameter_stability(df: pd.DataFrame) -> Dict[str, Any]:
     """
     Analyze how much the "optimal" parameters vary across windows.
-    High variance = Overfitting to noise.
-    
-    We extract key numeric parameters and compute their standard deviation
-    relative to their mean (Coefficient of Variation).
     """
-    log.info("Analyzing parameter stability across windows...")
-    
     # Expand the params_dict into columns
     params_df = pd.json_normalize(df["params_dict"])
     
@@ -153,26 +126,19 @@ def analyze_parameter_stability(df: pd.DataFrame) -> Dict[str, Any]:
         mean_val = params_df[col].mean()
         std_val = params_df[col].std()
         
-        # Coefficient of Variation (CV) - lower is more stable
         if mean_val != 0:
             cv = std_val / abs(mean_val)
         else:
             cv = np.inf if std_val > 0 else 0.0
         
-        # Determine stability (heuristic: CV < 50% is stable)
-        is_stable = bool(cv < 0.5)  # Explicit bool conversion for JSON
+        is_stable = bool(cv < 0.5)
         
         stability_report[col] = {
-            "mean": float(round(mean_val, 4)),  # Ensure native Python float
+            "mean": float(round(mean_val, 4)),
             "std": float(round(std_val, 4)),
-            "cv": float(round(cv, 4)),  # Coefficient of Variation
+            "cv": float(round(cv, 4)),
             "is_stable": is_stable
         }
-        
-        if cv > 0.5:
-            log.warning(f"  ⚠️ UNSTABLE PARAM: '{col}' (CV={cv:.2%})")
-        else:
-            log.debug(f"  ✅ Stable param: '{col}' (CV={cv:.2%})")
             
     return stability_report
 
@@ -184,43 +150,74 @@ def main():
     args = parser.parse_args()
     
     # 1. Load Data
-    df = load_wfo_results(args.wfo_csv)
+    full_df = load_wfo_results(args.wfo_csv)
     
-    # 2. Calculate WFE
-    wfe_metrics = calculate_wfo_efficiency(df)
+    final_report = {}
+    combos = full_df["combo"].unique()
     
-    # 3. Stitch OOS Curve
-    equity_curve = stitch_oos_equity_curve(df)
+    print("\n" + "=" * 80)
+    print(f"WALK-FORWARD ANALYSIS ({len(combos)} Combinations)")
+    print("=" * 80)
+    print(f"{'Combo':<25} | {'WFE':<8} | {'Final Wealth':<12} | {'Windows':<8}")
+    print("-" * 80)
+
+    best_wealth = -1.0
+    best_combo_report = None
+
+    for combo in combos:
+        # Filter for this combo
+        df = full_df[full_df["combo"] == combo].copy()
+        
+        # Calculate Metrics
+        wfe_metrics = calculate_wfo_efficiency(df)
+        equity_curve = stitch_oos_equity_curve(df)
+        stability = analyze_parameter_stability(df)
+        
+        final_wealth = equity_curve[-1]["cumulative_wealth_btc"] if equity_curve else 0.0
+        
+        # Build Report Block
+        combo_report = {
+            "wfo_efficiency": wfe_metrics,
+            "concatenated_oos_curve": equity_curve,
+            "parameter_stability": stability,
+            "summary": {
+                "final_concatenated_wealth": final_wealth,
+                "wfe_score": wfe_metrics["wfe"],
+                "num_windows": len(df),
+            }
+        }
+        
+        final_report[combo] = combo_report
+        
+        # Print Row
+        print(f"{combo:<25} | {wfe_metrics['wfe']:.2%}   | {final_wealth:.4f} BTC   | {len(df):<8}")
+
+        # Track "Best" for summary JSON structure compatibility if needed
+        # (For now we dump the full dict, but simple tools might want the 'best' at top level)
+        if final_wealth > best_wealth:
+            best_wealth = final_wealth
+            best_combo_report = combo_report
+
+    print("=" * 80 + "\n")
     
-    # 4. Analyze Stability
-    stability = analyze_parameter_stability(df)
+    # 2. Save Report
+    # We save the FULL breakdown keyed by combo.
+    # If a tool expects the flat structure, it might break, but this is accurate.
+    # To be safe, we can add a "best_overall" key.
     
-    # 5. Assemble Report
-    report = {
-        "wfo_efficiency": wfe_metrics,
-        "concatenated_oos_curve": equity_curve,
-        "parameter_stability": stability,
+    output_payload = {
+        "combos": final_report,
+        "best_strategy": best_combo_report,  # Backwards compatibility / ease of use
         "summary": {
-            "final_concatenated_wealth": equity_curve[-1]["cumulative_wealth_btc"] if equity_curve else 0.0,
-            "wfe_score": wfe_metrics["wfe"],
-            "num_windows": len(df),
+            "best_wealth": best_wealth,
+            "analyzed_combinations": list(combos)
         }
     }
-    
-    # 6. Save Report
+
     with open(args.out, "w") as f:
-        json.dump(report, f, indent=2)
+        json.dump(output_payload, f, indent=2)
     
     log.info(f"✅ Analysis complete. Report saved to: {args.out}")
-    
-    # 7. Print Summary
-    print("\n" + "=" * 60)
-    print("WALK-FORWARD ANALYSIS SUMMARY")
-    print("=" * 60)
-    print(f"  WFE Score:                  {wfe_metrics['wfe']:.2%}")
-    print(f"  Final Concatenated Wealth:  {report['summary']['final_concatenated_wealth']:.4f} BTC")
-    print(f"  Number of Windows:          {len(df)}")
-    print("=" * 60 + "\n")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,74 @@
+{
+    "fees": {
+        "maker_fee": 0.0002,
+        "taker_fee": 0.0004,
+        "slippage_bps": 1.0,
+        "bnb_discount": 0.25,
+        "pay_fees_in_bnb": true
+    },
+    "strategy": {
+        "strategy_type": "meta",
+        "adx_threshold": 10.0,
+        "bar_interval_minutes": 15,
+        "mean_reversion_overrides": {
+            "comment": "Optimized MR Settings",
+            "cooldown_minutes": 144,
+            "position_sizing_mode": "volatility",
+            "funding_limit_short": -0.047632,
+            "trend_lookback": 176,
+            "min_mult": 0.58,
+            "flip_band_exit": 0.01469,
+            "vol_adapt_k": 0.0045,
+            "position_sizing_min_step": 0.22702,
+            "max_position": 1.0,
+            "target_vol": 0.58,
+            "funding_limit_long": 0.067506,
+            "step_allocation": 1.0,
+            "vol_window": 54,
+            "gate_window_days": 54,
+            "position_sizing_target_vol": 0.484777,
+            "flip_band_entry": 0.046821,
+            "max_mult": 1.52,
+            "rebalance_threshold_w": 0.008,
+            "gate_roc_threshold": 0.0,
+            "bar_interval_minutes": 15
+        },
+        "trend_overrides": {
+            "comment": "Optimized Trend Settings (+225% Backtest, Official WFO Dec 2025)",
+            "position_sizing_min_step": 0.15753,
+            "long_only": true,
+            "ma_type": "ema",
+            "position_sizing_mode": "volatility",
+            "fast_period": 66,
+            "cooldown_minutes": 336,
+            "position_sizing_target_vol": 0.501245,
+            "slow_period": 236,
+            "funding_limit_short": -0.048901,
+            "funding_limit_long": 0.069571,
+            "step_allocation": 1.0,
+            "max_position": 1.0,
+            "rebalance_threshold_w": 0.03
+        }
+    },
+    "execution": {
+        "exchange_type": "futures",
+        "leverage": 2,
+        "interval": "15m",
+        "poll_sec": 5,
+        "ttl_sec": 30,
+        "taker_fallback": true,
+        "max_taker_btc": 0.002,
+        "max_spread_bps_for_taker": 2.0,
+        "min_trade_frac": 0.0015,
+        "min_trade_floor_btc": 0.0,
+        "min_trade_cap_btc": 0.0,
+        "min_trade_btc": 0.0001
+    },
+    "risk": {
+        "basis_btc": 1.0,
+        "risk_mode": "dynamic",
+        "max_dd_frac": 0.2,
+        "drawdown_reset_days": 7.0,
+        "drawdown_reset_score": 30.0
+    }
+}

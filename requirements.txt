@@ -14,3 +14,4 @@ tenacity>=8.2.0
 # Phase 3: Structured Logging & Type Safety
 structlog>=24.0.0
 types-requests>=2.31.0
+rich>=14.2.0

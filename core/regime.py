@@ -79,17 +79,14 @@ def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
         # FIX: Shift by 1 to avoid look-ahead (use previous completed bar)
         adx_30m = adx_30m.shift(1)
         
-        # Manual forward fill to avoid monotonicity issues
-        adx_30m_aligned = pd.Series(index=clean_index, dtype=float)
-        adx_30m_sorted = adx_30m.sort_index()  # Ensure source is sorted
-        for ts in clean_index:
-            # Find the most recent 30m value at or before this timestamp
-            mask = adx_30m_sorted.index <= ts
-            if mask.any():
-                adx_30m_aligned.loc[ts] = adx_30m_sorted[mask].iloc[-1]
-            else:
-                adx_30m_aligned.loc[ts] = 0.0
-        adx_30m_aligned = adx_30m_aligned.fillna(0.0)
+        # High-performance Vectorized Alignment (O(N log N) vs O(N^2))
+        adx_30m_aligned = pd.merge_asof(
+            pd.DataFrame(index=clean_index),
+            adx_30m.rename("adx"),
+            left_index=True,
+            right_index=True,
+            direction="backward"
+        )["adx"].fillna(0.0)
     else:
         adx_30m_aligned = pd.Series(0.0, index=clean_index)
 
@@ -100,16 +97,14 @@ def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
         # FIX: Shift by 1 to avoid look-ahead
         adx_1h = adx_1h.shift(1)
         
-        # Manual forward fill
-        adx_1h_aligned = pd.Series(index=clean_index, dtype=float)
-        adx_1h_sorted = adx_1h.sort_index()
-        for ts in clean_index:
-            mask = adx_1h_sorted.index <= ts
-            if mask.any():
-                adx_1h_aligned.loc[ts] = adx_1h_sorted[mask].iloc[-1]
-            else:
-                adx_1h_aligned.loc[ts] = 0.0
-        adx_1h_aligned = adx_1h_aligned.fillna(0.0)
+        # High-performance Vectorized Alignment (O(N log N) vs O(N^2))
+        adx_1h_aligned = pd.merge_asof(
+            pd.DataFrame(index=clean_index),
+            adx_1h.rename("adx"),
+            left_index=True,
+            right_index=True,
+            direction="backward"
+        )["adx"].fillna(0.0)
     else:
         adx_1h_aligned = pd.Series(0.0, index=clean_index)
     

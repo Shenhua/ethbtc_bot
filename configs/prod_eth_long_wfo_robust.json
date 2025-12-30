@@ -1,0 +1,74 @@
+{
+  "fees": {
+    "maker_fee": 0.0002,
+    "taker_fee": 0.0004,
+    "slippage_bps": 1.0,
+    "bnb_discount": 0.25,
+    "pay_fees_in_bnb": true
+  },
+  "strategy": {
+    "strategy_type": "meta",
+    "adx_threshold": 25.0,
+    "bar_interval_minutes": 15,
+    "mean_reversion_overrides": {
+      "comment": "Optimized MR Settings",
+      "min_mult": 0.5,
+      "flip_band_entry": 0.049744,
+      "funding_limit_long": 0.055626,
+      "position_sizing_target_vol": 0.484479,
+      "vol_window": 72,
+      "trend_lookback": 228,
+      "gate_window_days": 48,
+      "max_mult": 1.68,
+      "funding_limit_short": -0.04546,
+      "vol_adapt_k": 0.0035,
+      "target_vol": 0.52,
+      "cooldown_minutes": 144,
+      "flip_band_exit": 0.012727,
+      "position_sizing_mode": "static",
+      "max_position": 0.92,
+      "step_allocation": 0.8,
+      "gate_roc_threshold": 0.0,
+      "position_sizing_min_step": 0.238295,
+      "rebalance_threshold_w": 0.006,
+      "bar_interval_minutes": 15
+    },
+    "trend_overrides": {
+      "comment": "Optimized Trend Settings",
+      "slow_period": 188,
+      "funding_limit_short": -0.06059,
+      "position_sizing_mode": "volatility",
+      "position_sizing_target_vol": 0.565686,
+      "position_sizing_min_step": 0.200353,
+      "fast_period": 124,
+      "ma_type": "sma",
+      "funding_limit_long": 0.074826,
+      "cooldown_minutes": 204,
+      "long_only": true,
+      "step_allocation": 1.0,
+      "max_position": 1.0,
+      "rebalance_threshold_w": 0.03
+    }
+  },
+  "execution": {
+    "exchange_type": "futures",
+    "leverage": 1,
+    "interval": "15m",
+    "poll_sec": 5,
+    "ttl_sec": 30,
+    "taker_fallback": true,
+    "max_taker_btc": 0.002,
+    "max_spread_bps_for_taker": 2.0,
+    "min_trade_frac": 0.0015,
+    "min_trade_floor_btc": 0.0,
+    "min_trade_cap_btc": 0.0,
+    "min_trade_btc": 0.0001
+  },
+  "risk": {
+    "basis_btc": 1.0,
+    "risk_mode": "dynamic",
+    "max_dd_frac": 0.2,
+    "drawdown_reset_days": 7.0,
+    "drawdown_reset_score": 30.0
+  }
+}

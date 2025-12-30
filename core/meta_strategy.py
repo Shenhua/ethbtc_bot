@@ -12,53 +12,69 @@ class MetaStrategy:
     def __init__(self, 
                  mr_params: StratParams, 
                  trend_params: TrendParams, 
-                 adx_threshold: float = 25.0):
+                 adx_threshold: float = 25.0,
+                 precomputed_signals: pd.DataFrame = None):
         """
         Ensemble Strategy.
         :param adx_threshold: The 'Regime Switch' level. 
                               ADX < threshold = Mean Reversion.
                               ADX > threshold = Trend.
+        :param precomputed_signals: Optional DataFrame with pre-calced [v_mr, v_tr, regime_score] columns.
         """
         self.mr = EthBtcStrategy(mr_params)
         self.trend = TrendStrategy(trend_params)
         self.adx_threshold = adx_threshold
+        self.pre = precomputed_signals
 
     def generate_positions(self, df: pd.DataFrame, funding=None) -> pd.DataFrame:
         if isinstance(df, pd.Series): raise ValueError("Need OHLC")
 
-        # 1. Generate Sub-Signals
-        log.debug(f"[META] Generating Mean Reversion signal")
-        df_mr = self.mr.generate_positions(df["close"], funding)
-        sig_mr = df_mr["target_w"]
-        log.debug(f"[META] MR signal: {sig_mr.iloc[-1]:.4f}")
+        # 0. Check for Cached Signals (Optimization Mode)
+        v_mr, v_tr, v_sc = None, None, None
+        common_idx = df.index # Default
         
-        log.debug(f"[META] Generating Trend signal")
-        # FIX #6: Pass full DataFrame for consistency (Trend can handle both)
-        df_trend = self.trend.generate_positions(df, funding)
-        sig_trend = df_trend["target_w"]
-        log.debug(f"[META] Trend signal: {sig_trend.iloc[-1]:.4f}")
+        if self.pre is not None:
+            # Slicing from Master Cache is fast
+            # We align via intersection in case backtest window is a subset
+            common = df.index.intersection(self.pre.index)
+            if len(common) > 0:
+                sliced = self.pre.loc[common]
+                v_mr = sliced["v_mr"].values
+                v_tr = sliced["v_tr"].values
+                v_sc = sliced["regime_score"].values
+                common_idx = common
+            else:
+                log.warning("[META] Cached signals provided but index disjoint! Fallback to calc.")
+
+        # 1. Generate Sub-Signals (if not cached)
+        if v_mr is None:
+            log.debug(f"[META] Generating Mean Reversion signal")
+            df_mr = self.mr.generate_positions(df["close"], funding)
+            sig_mr = df_mr["target_w"]
+            log.debug(f"[META] MR signal: {sig_mr.iloc[-1]:.4f}")
+            
+            log.debug(f"[META] Generating Trend signal")
+            df_trend = self.trend.generate_positions(df, funding)
+            sig_trend = df_trend["target_w"]
+            log.debug(f"[META] Trend signal: {sig_trend.iloc[-1]:.4f}")
+            
+            # 2. Calculate Regime Score
+            regime_score = get_regime_score(df)
+            
+            # 3. FORCE ALIGNMENT
+            common_idx = df.index.intersection(regime_score.index)
+            if len(common_idx) == 0:
+                return self._empty_result(df)
+
+            v_mr = sig_mr.reindex(common_idx).fillna(0.0).values
+            v_tr = sig_trend.reindex(common_idx).fillna(0.0).values
+            v_sc = regime_score.reindex(common_idx).fillna(0.0).values
+        else:
+             # Just ensure we have index
+             pass
         
-        # 2. Calculate Regime Score
-        # get_regime_score now handles the resampling 'left'/'closed' internally
-        regime_score = get_regime_score(df)
-        
-        # 3. FORCE ALIGNMENT
-        common_idx = df.index.intersection(regime_score.index)
-        
-        # Guard against empty alignment (edge case with mismatched indices)
-        if len(common_idx) == 0:
-            log.warning("[META] Empty index intersection - returning neutral signal")
-            return pd.DataFrame({
-                "target_w": [0.0],
-                "regime_score": [0.0],
-                "regime_state": [-1.0],
-                "sig_mr": [0.0],
-                "sig_trend": [0.0]
-            }, index=df.index[-1:] if len(df) > 0 else pd.DatetimeIndex([]))
-        
-        v_mr = sig_mr.reindex(common_idx).fillna(0.0).values
-        v_tr = sig_trend.reindex(common_idx).fillna(0.0).values
-        v_sc = regime_score.reindex(common_idx).fillna(0.0).values
+        # Guard against empty alignment
+        if len(common_idx) == 0: return self._empty_result(df)
         
         # --- 4. HYSTERESIS LOGIC (The Churn Killer) ---
         # Instead of a simple check, we use a latching mechanism.

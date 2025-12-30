@@ -115,31 +115,44 @@ class TrendStrategy:
             # If Signal flips 0->1, but funding is high, stay 0.
             # If Signal is already 1, and funding gets high, stay 1 (Hold).
             
+            # Vectorized "Filter Entry Only" Logic
+            # We want to block Entry if funding is bad, but allow Holding if already in.
+            # This is equivalent to: In a block of Signal=1, we become 1 only AFTER the first safe funding bar.
+            
+            # 1. Identify Blocks
+            # A new block starts whenever the raw signal changes
+            diff = clean_sig != clean_sig.shift()
+            block_id = diff.cumsum()
+            
+            # 2. Define "Safe to Enter/Hold" Conditions
+            # For 0 signal, always safe (trivial)
+            # For 1 signal, safe if funding <= limit OR we were safe previously in this block (handled by cummax)
+            # For -1 signal, safe if funding >= limit ...
+            
+            # Create boolean masks for valid funding
+            valid_long = (funding <= self.p.funding_limit_long)
+            valid_short = (funding >= self.p.funding_limit_short)
+            
+            # 3. Apply Logic per Block Type
+            # Positive Blocks
+            is_pos = clean_sig > 0
+            # Within a positive block, we are "Active" (1.0) if we have encountered ANY valid funding bar so far
+            # We use groupby().cummax() to propagate the "Entry Permit"
+            pos_permit = valid_long.groupby(block_id).cummax()
+            
+            # Negative Blocks
+            is_neg = clean_sig < 0
+            neg_permit = valid_short.groupby(block_id).cummax()
+            
+            # 4. Synthesize Final Signal
             final_sig = clean_sig.copy()
             
-            # We iterate to apply stateful "Filter Entry Only" logic
-            # (Vectorizing this specific state machine is complex, falling back to efficient loop)
-            curr = 0.0
-            for i in range(len(final_sig)):
-                raw = clean_sig.iat[i]
-                f = funding.iat[i]
-                
-                # Default to raw signal
-                proposed = raw
-                
-                # Check Long Entry Block
-                if raw > 0 and curr <= 0: # Trying to enter Long
-                    if f > self.p.funding_limit_long:
-                        proposed = 0.0 # Block entry
-                
-                # Check Short Entry Block
-                if raw < 0 and curr >= 0: # Trying to enter Short
-                    if f < self.p.funding_limit_short:
-                        proposed = 0.0 # Block entry
-                        
-                curr = proposed
-                final_sig.iat[i] = curr
-                
+            # Apply masks: Signal exists AND Permit exists
+            # If Signal is 1 but Permit is False, result is 0
+            # If Signal is -1 but Permit is False, result is 0
+            final_sig[is_pos & ~pos_permit] = 0.0
+            final_sig[is_neg & ~neg_permit] = 0.0
+            
             clean_sig = final_sig
 
         # 5. Allocation
