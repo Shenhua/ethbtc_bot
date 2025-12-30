@@ -78,14 +78,17 @@ def configure_logging(
     
     # Configure standard library logging to work with structlog
     logging.basicConfig(
-        format="%(message)s",
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         stream=sys.stdout,
         level=level,
     )
     
-    # Reduce noise from third-party libraries
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("binance").setLevel(logging.WARNING)
+    # Configure 3rd party loggers via Env Var (Industry Standard: Transport Visibility)
+    binance_level_str = os.getenv("BINANCE_LOG_LEVEL", "WARNING").upper()
+    binance_level = getattr(logging, binance_level_str, logging.WARNING)
+    
+    logging.getLogger("urllib3").setLevel(binance_level)
+    logging.getLogger("binance").setLevel(binance_level)
 
 
 def get_logger(name: str | None = None) -> Any:

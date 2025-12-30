@@ -1,5 +1,6 @@
 from __future__ import annotations
 import logging
+import time
 from typing import List, Dict, Any, Tuple
 from binance.um_futures import UMFutures
 from binance.error import ClientError
@@ -147,16 +148,28 @@ class BinanceFuturesAdapter(ExchangeAdapter):
         return str(resp["orderId"])
 
     def market_order(self, symbol: str, side: str, quantity: float) -> str:
-        """Execute market order on Futures."""
+        """Execute market order on Futures with Telemetry."""
+        t0 = time.time()
         log.debug(f"[FUTURES] Placing MARKET {side} order: {quantity:.8f} {symbol}")
-        resp = self.client.new_order(
-            symbol=symbol,
-            side=side,
-            type="MARKET",
-            quantity=f"{quantity:.8f}"
-        )
-        log.debug(f"[FUTURES] Market order response: {resp}")
-        return str(resp["orderId"])
+        
+        try:
+            resp = self.client.new_order(
+                symbol=symbol,
+                side=side,
+                type="MARKET",
+                quantity=f"{quantity:.8f}"
+            )
+            dt_ms = (time.time() - t0) * 1000
+            
+            # Telemetry: Log Latency & Weight (if available via client.response or env)
+            # Standard binance-connector doesn't easily expose headers per-call without hooks.
+            # But we log the duration which is critical.
+            log.info(f"⚡ ORDER EXECUTED in {dt_ms:.1f}ms | OID={resp['orderId']}")
+            log.debug(f"[FUTURES] Market order response: {resp}")
+            return str(resp["orderId"])
+        except Exception as e:
+            log.error(f"[FUTURES] Market order FAILED ({side} {quantity} {symbol}): {e}")
+            raise e
 
     def cancel(self, symbol: str, order_id: str) -> None:
         log.debug(f"[FUTURES] Attempting to cancel order {order_id} for {symbol}")
