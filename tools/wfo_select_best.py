@@ -239,6 +239,12 @@ def main():
         if isinstance(params, str):
             params = json.loads(params)
     
+    # Post-processing: Cleanup redundant config
+    if "exchange_type" in params:
+        del params["exchange_type"]
+    if "execution" in params and isinstance(params["execution"], dict):
+        params["execution"].pop("exchange_type", None)
+
     # Save params
     with open(args.out, "w") as f:
         json.dump(params, f, indent=2)

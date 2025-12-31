@@ -60,7 +60,6 @@
     }
   },
   "execution": {
-    "exchange_type": "futures",
     "leverage": 1,
     "interval": "15m",
     "poll_sec": 5,

@@ -54,6 +54,7 @@ from core.risk_manager import RiskManager, RiskConfig
 # --- SERVICES (Phase 1 Modularization) ---
 from core.services.data_service import DataService
 from core.services.order_service import OrderService
+from core.order_manager import wait_for_fill
 
 # --- STATE MODELS (Phase 2 Refactoring) ---
 from core.models.state import BotState
@@ -253,8 +254,13 @@ def main():
 
     log.info("Using Binance base_url=%s (mode=%s)", base_url, args.mode)
 
-    # 1. Determine Mode
-    is_futures = (getattr(cfg.execution, "exchange_type", "spot") == "futures")
+    # 1. Determine Mode (Env Var Priority > Config)
+    env_exchange_type = os.getenv("EXCHANGE_TYPE", "").lower().strip()
+    if env_exchange_type in ["spot", "futures"]:
+        is_futures = (env_exchange_type == "futures")
+        log.info(f"Context Override: EXCHANGE_TYPE={env_exchange_type} (forced via Env Var)")
+    else:
+        is_futures = (getattr(cfg.execution, "exchange_type", "spot") == "futures")
     
     if is_futures:
         log.info("🚀 STARTING IN FUTURES MODE (USDS-M) 🚀")
