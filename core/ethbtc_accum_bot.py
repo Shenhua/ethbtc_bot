@@ -399,6 +399,7 @@ class Backtester:
         # === VECTORIZED DYNAMIC SIZING (Pre-Loop Optimization) ===
         # Instead of instantiating PositionSizer 100k times inside the loop,
         # we calculate the step/thresh arrays for the entire series at once.
+        # EXCEPTION: Kelly mode uses dynamic step calculation inside the loop.
         
         # 1. Prepare Inputs
         vol_arr = plan["vol"].fillna(0.5).values if "vol" in plan.columns else np.full(len(px), 0.5)
@@ -406,7 +407,64 @@ class Backtester:
         step_arr = np.ones(len(px))
         thresh_arr = np.zeros(len(px))
         
-        # 2. Vectorized Sizing Function
+        # Check if any strategy uses Kelly mode (needs dynamic step)
+        uses_kelly = False
+        kelly_sizer_mr = None
+        kelly_sizer_tr = None
+        
+        if is_meta:
+            mr_mode = getattr(strategy.mr.p, 'position_sizing_mode', 'static')
+            tr_mode = getattr(strategy.trend.p, 'position_sizing_mode', 'static')
+            uses_kelly = (mr_mode == 'kelly' or tr_mode == 'kelly')
+            
+            if mr_mode == 'kelly':
+                from core.position_sizer import PositionSizer, PositionSizerConfig
+                kelly_sizer_mr = PositionSizer(PositionSizerConfig(
+                    mode='kelly',
+                    base_step=getattr(strategy.mr.p, 'step_allocation', 0.5),
+                    target_vol=getattr(strategy.mr.p, 'position_sizing_target_vol', 0.5),
+                    min_step=getattr(strategy.mr.p, 'position_sizing_min_step', 0.1),
+                    max_step=getattr(strategy.mr.p, 'position_sizing_max_step', 1.0),
+                    kelly_win_rate=getattr(strategy.mr.p, 'kelly_win_rate', 0.55),
+                    kelly_avg_win=getattr(strategy.mr.p, 'kelly_avg_win', 0.02),
+                    kelly_avg_loss=getattr(strategy.mr.p, 'kelly_avg_loss', 0.015),
+                    kelly_fraction=getattr(strategy.mr.p, 'kelly_fraction', 0.5),
+                ))
+            if tr_mode == 'kelly':
+                from core.position_sizer import PositionSizer, PositionSizerConfig
+                kelly_sizer_tr = PositionSizer(PositionSizerConfig(
+                    mode='kelly',
+                    base_step=getattr(strategy.trend.p, 'step_allocation', 0.5),
+                    target_vol=getattr(strategy.trend.p, 'position_sizing_target_vol', 0.5),
+                    min_step=getattr(strategy.trend.p, 'position_sizing_min_step', 0.1),
+                    max_step=getattr(strategy.trend.p, 'position_sizing_max_step', 1.0),
+                    kelly_win_rate=getattr(strategy.trend.p, 'kelly_win_rate', 0.55),
+                    kelly_avg_win=getattr(strategy.trend.p, 'kelly_avg_win', 0.02),
+                    kelly_avg_loss=getattr(strategy.trend.p, 'kelly_avg_loss', 0.015),
+                    kelly_fraction=getattr(strategy.trend.p, 'kelly_fraction', 0.5),
+                ))
+        elif hasattr(strategy, 'p'):
+            single_mode = getattr(strategy.p, 'position_sizing_mode', 'static')
+            uses_kelly = (single_mode == 'kelly')
+            if uses_kelly:
+                from core.position_sizer import PositionSizer, PositionSizerConfig
+                kelly_sizer_mr = PositionSizer(PositionSizerConfig(
+                    mode='kelly',
+                    base_step=getattr(strategy.p, 'step_allocation', 0.5),
+                    target_vol=getattr(strategy.p, 'position_sizing_target_vol', 0.5),
+                    min_step=getattr(strategy.p, 'position_sizing_min_step', 0.1),
+                    max_step=getattr(strategy.p, 'position_sizing_max_step', 1.0),
+                    kelly_win_rate=getattr(strategy.p, 'kelly_win_rate', 0.55),
+                    kelly_avg_win=getattr(strategy.p, 'kelly_avg_win', 0.02),
+                    kelly_avg_loss=getattr(strategy.p, 'kelly_avg_loss', 0.015),
+                    kelly_fraction=getattr(strategy.p, 'kelly_fraction', 0.5),
+                ))
+        
+        # Trade tracking for Kelly dynamic updates
+        last_trade_entry_price = 0.0
+        last_trade_entry_wealth = initial_btc
+        
+        # 2. Vectorized Sizing Function (for non-Kelly modes)
         def calc_step_vectorized(p_obj, vol_array):
              # Extract params
              mode = getattr(p_obj, 'position_sizing_mode', 'static')
@@ -422,8 +480,7 @@ class Backtester:
                  raw_step = base * (t_vol / safe_vol)
                  return np.clip(raw_step, min_s, max_s)
              elif mode == 'kelly':
-                 # Fallback to static for now (Kelly usually needs dynamic prob/win_rate)
-                 # Or use specific Kelly logic if implemented vectorized
+                 # Will be calculated dynamically inside loop
                  return np.full(len(vol_array), base) 
              else:
                  return np.full(len(vol_array), base)
@@ -565,10 +622,23 @@ class Backtester:
 
 
             # === Loop Slimming (Phase 9) ===
-            # Use pre-calculated arrays
+            # Use pre-calculated arrays, OR calculate dynamically for Kelly mode
             step = step_arr[i]
             thresh = thresh_arr[i]
             tw = tw_arr[i]
+            
+            # Dynamic Kelly: Recalculate step based on current trade stats
+            if uses_kelly:
+                rv = vol_arr[i] if i < len(vol_arr) else 0.5
+                # Determine which sizer to use based on regime
+                if is_meta and "regime_state" in plan.columns:
+                    regime_state = plan["regime_state"].iat[i] if i < len(plan) else -1
+                    if regime_state > 0 and kelly_sizer_tr is not None:
+                        step = kelly_sizer_tr.calculate_step(rv)
+                    elif kelly_sizer_mr is not None:
+                        step = kelly_sizer_mr.calculate_step(rv)
+                elif kelly_sizer_mr is not None:
+                    step = kelly_sizer_mr.calculate_step(rv)
             
             if leverage > 1:
                 tw = max(-leverage, min(leverage, tw))
@@ -656,11 +726,35 @@ class Backtester:
                     # Story: Log trade
                     if story_writer:
                         story_writer.log_trade(timestamp, "BUY", delta, fill_price, base_asset, quote_asset)
+                    
+                    # Dynamic Kelly: Track entry for later P&L calculation
+                    if uses_kelly:
+                        last_trade_entry_price = fill_price
+                        last_trade_entry_wealth = wealth
+                        
                 else: # Sell
                     trades.append({"time": px.index[i], "side":"SELL", "price":fill_price, "qty":delta, "fee":fee_val})
                     # Story: Log trade
                     if story_writer:
                         story_writer.log_trade(timestamp, "SELL", delta, fill_price, base_asset, quote_asset)
+                    
+                    # Dynamic Kelly: Calculate P&L and record trade
+                    if uses_kelly and last_trade_entry_price > 0:
+                        # Calculate P&L as fraction of wealth at entry
+                        trade_pnl = (fill_price - last_trade_entry_price) / last_trade_entry_price
+                        trade_pnl_adjusted = trade_pnl * abs(delta) * last_trade_entry_price / max(last_trade_entry_wealth, 1e-12)
+                        
+                        # Record to appropriate sizer based on regime
+                        if is_meta and "regime_state" in plan.columns:
+                            regime_state = plan["regime_state"].iat[i] if i < len(plan) else -1
+                            if regime_state > 0 and kelly_sizer_tr is not None:
+                                kelly_sizer_tr.record_trade(trade_pnl_adjusted)
+                            elif kelly_sizer_mr is not None:
+                                kelly_sizer_mr.record_trade(trade_pnl_adjusted)
+                        elif kelly_sizer_mr is not None:
+                            kelly_sizer_mr.record_trade(trade_pnl_adjusted)
+                        
+                        last_trade_entry_price = 0.0  # Reset for next trade
                 
                 total_fees_btc += fee_val
                 total_turnover += notional

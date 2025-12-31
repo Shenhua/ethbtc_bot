@@ -14,6 +14,7 @@ from core.trend_strategy import TrendStrategy, TrendParams
 from core.meta_strategy import MetaStrategy
 from core.regime import get_regime_score
 from core.position_sizer import PositionSizer, PositionSizerConfig
+from core.strategy_factory import merge_strategy_params  # Canonical source
 from core.metrics import (
     BAR_LATENCY, REGIME_SCORE, REGIME_THRESHOLD, 
     STRATEGY_MODE, REGIME_STATE, PHOENIX_ACTIVE,
@@ -47,21 +48,11 @@ class BotEngine:
         self.bot_state = bot_state
         self.instance_name = instance_name
         
-        # Pre-calculated config values for quick access
-        self.mr_params = self._merge_strategy_params()
-        self.tr_params = self._get_trend_params()
-
-    def _merge_strategy_params(self) -> Dict[str, Any]:
-        """Merge base strategy params with MR-specific overrides."""
-        base = self.cfg.strategy.model_dump()
-        overrides = base.get("mean_reversion_overrides", {})
-        return {**base, **overrides}
-
-    def _get_trend_params(self) -> Dict[str, Any]:
-        """Merge base strategy params with Trend-specific overrides."""
-        base = self.cfg.strategy.model_dump()
-        overrides = base.get("trend_overrides", {})
-        return {**base, **overrides}
+        # Use canonical merge_strategy_params from strategy_factory
+        # This ensures parity with backtest parameter handling
+        self.merged_cfg = merge_strategy_params(self.cfg)
+        self.mr_params = self.merged_cfg["mr_params"]
+        self.tr_params = self.merged_cfg["tr_params"]
 
     def process_bar(self, bar_ts: int, now_s: int):
         """

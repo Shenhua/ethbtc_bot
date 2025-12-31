@@ -26,6 +26,16 @@ class MetaStrategy:
         self.adx_threshold = adx_threshold
         self.pre = precomputed_signals
 
+    def _empty_result(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Return an empty result DataFrame with correct structure."""
+        return pd.DataFrame({
+            "target_w": np.zeros(len(df)),
+            "regime_score": np.zeros(len(df)),
+            "regime_state": np.full(len(df), -1),  # Default to MR
+            "sig_mr": np.zeros(len(df)),
+            "sig_trend": np.zeros(len(df))
+        }, index=df.index)
+
     def generate_positions(self, df: pd.DataFrame, funding=None) -> pd.DataFrame:
         if isinstance(df, pd.Series): raise ValueError("Need OHLC")
 
