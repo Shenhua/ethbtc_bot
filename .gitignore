@@ -62,3 +62,7 @@ coverage.xml
 run_state/state.json
 run_state/
 results/
+
+# Prometheus and Grafana Data
+prometheus_data/
+grafana_data/

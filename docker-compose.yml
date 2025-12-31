@@ -114,7 +114,7 @@ services:
     restart: unless-stopped
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - prometheus_data:/prometheus
+      - ./prometheus_data:/prometheus
     ports:
       - "9999:9090"
     networks:
@@ -127,7 +127,7 @@ services:
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
-      - grafana_data:/var/lib/grafana
+      - ./grafana_data:/var/lib/grafana
     ports:
       - "3000:3000"
     depends_on:
@@ -136,9 +136,7 @@ services:
       - trading-net
 
 # Ensure volumes are defined at the bottom of the file
-volumes:
-  prometheus_data:
-  grafana_data:
+
 
 
 networks:
