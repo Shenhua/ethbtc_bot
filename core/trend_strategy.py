@@ -32,6 +32,20 @@ class TrendParams:
     volume_threshold_mult: float = 1.5  # Volume > 1.5x average to confirm
     volume_lookback_bars: int = 20  # 20-bar rolling average
     
+    # Bollinger Squeeze (detect volatility compression before breakouts)
+    bollinger_squeeze_enabled: bool = False
+    bollinger_period: int = 20  # SMA period for middle band
+    bollinger_std: float = 2.0  # Standard deviation multiplier
+    squeeze_threshold: float = 0.5  # Band width < 50% of average = squeeze
+    squeeze_lookback_bars: int = 50  # Lookback for average band width
+    squeeze_signal_bars: int = 10  # Signal valid for N bars after squeeze ends
+    
+    # Higher Timeframe Filter (align with higher TF trend)
+    htf_filter_enabled: bool = False
+    htf_multiplier: int = 16  # 16x base = 4H for 15m base
+    htf_ma_period: int = 50   # MA period on HTF
+    htf_ma_type: str = "ema"  # 'ema' or 'sma'
+    
     # Dynamic Position Sizing
     position_sizing_mode: str = "static"
     position_sizing_target_vol: float = 0.5
@@ -100,6 +114,44 @@ class TrendStrategy:
             
             clean_sig.loc[t] = state
 
+        # 3a. Higher Timeframe Filter (NEW)
+        # Only allow entries that align with HTF trend direction
+        if self.p.htf_filter_enabled and isinstance(df, pd.DataFrame):
+            # Calculate HTF using downsampling
+            htf_minutes = self.p.bar_interval_minutes * self.p.htf_multiplier
+            htf_close = close.resample(f'{htf_minutes}min').last().ffill()
+            
+            # Calculate HTF MA
+            if self.p.htf_ma_type == "sma":
+                htf_ma = htf_close.rolling(self.p.htf_ma_period).mean()
+            else:
+                htf_ma = htf_close.ewm(span=self.p.htf_ma_period, adjust=False).mean()
+            
+            # HTF trend: 1 if price > MA (bullish), -1 if below (bearish)
+            htf_trend = np.where(htf_close > htf_ma, 1.0, -1.0)
+            htf_trend = pd.Series(htf_trend, index=htf_close.index)
+            
+            # Reindex back to base timeframe
+            htf_trend_aligned = htf_trend.reindex(close.index).ffill().fillna(0.0)
+            
+            # Block entries that contradict HTF trend
+            sig_change = clean_sig != clean_sig.shift()
+            
+            for t in close.index:
+                if sig_change.loc[t]:
+                    current_sig = clean_sig.loc[t]
+                    htf_dir = htf_trend_aligned.loc[t]
+                    
+                    # Block long entry if HTF bearish, block short if HTF bullish
+                    if current_sig == 1.0 and htf_dir == -1.0:
+                        # Long entry blocked - revert
+                        prev_idx = close.index.get_loc(t) - 1
+                        clean_sig.loc[t] = clean_sig.iloc[prev_idx] if prev_idx >= 0 else 0.0
+                    elif current_sig == -1.0 and htf_dir == 1.0:
+                        # Short entry blocked - revert
+                        prev_idx = close.index.get_loc(t) - 1
+                        clean_sig.loc[t] = clean_sig.iloc[prev_idx] if prev_idx >= 0 else 0.0
+
         # 3b. Volume Confirmation Filter (NEW)
         # Only allow ENTRIES when volume > threshold * average
         # Existing positions are held regardless of volume
@@ -117,6 +169,41 @@ class TrendStrategy:
             for t in close.index:
                 if sig_change.loc[t] and not vol_confirmed.loc[t]:
                     # New entry but volume too low - revert to previous state
+                    prev_idx = close.index.get_loc(t) - 1
+                    if prev_idx >= 0:
+                        clean_sig.loc[t] = clean_sig.iloc[prev_idx]
+                    else:
+                        clean_sig.loc[t] = 0.0
+
+        # 3c. Bollinger Squeeze Filter (NEW)
+        # Only allow ENTRIES after detecting a volatility squeeze (band compression)
+        # This catches breakout moves after consolidation periods
+        if self.p.bollinger_squeeze_enabled and isinstance(df, pd.DataFrame):
+            # Calculate Bollinger Bands
+            middle = close.rolling(self.p.bollinger_period).mean()
+            std = close.rolling(self.p.bollinger_period).std()
+            upper = middle + (self.p.bollinger_std * std)
+            lower = middle - (self.p.bollinger_std * std)
+            
+            # Calculate band width (normalized)
+            band_width = (upper - lower) / middle
+            avg_band_width = band_width.rolling(self.p.squeeze_lookback_bars).mean()
+            
+            # Squeeze detection: band width < threshold * average
+            is_squeeze = band_width < (avg_band_width * self.p.squeeze_threshold)
+            
+            # Squeeze ends when bands expand again
+            squeeze_end = is_squeeze.shift(1) & ~is_squeeze
+            
+            # Signal valid for N bars after squeeze ends
+            squeeze_signal = squeeze_end.rolling(self.p.squeeze_signal_bars).max().fillna(0) > 0
+            
+            # Apply filter: only allow new entries when squeeze signal is active
+            sig_change = clean_sig != clean_sig.shift()
+            
+            for t in close.index:
+                if sig_change.loc[t] and not squeeze_signal.loc[t]:
+                    # New entry but no recent squeeze - revert to previous state
                     prev_idx = close.index.get_loc(t) - 1
                     if prev_idx >= 0:
                         clean_sig.loc[t] = clean_sig.iloc[prev_idx]

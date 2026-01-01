@@ -57,6 +57,12 @@ class Strategy(BaseModel):
     kelly_avg_win: float = Field(0.02, ge=0.0)
     kelly_avg_loss: float = Field(0.01, ge=0.0)
     
+    # RSI Filter params (for MR strategy)
+    rsi_filter_enabled: bool = False
+    rsi_period: int = Field(14, ge=2, le=50)
+    rsi_oversold: float = Field(30.0, ge=0.0, le=50.0)
+    rsi_overbought: float = Field(70.0, ge=50.0, le=100.0)
+    
     funding_limit_long: float = Field(0.05, ge=0.0, le=1.0)
     funding_limit_short: float = Field(-0.05, ge=-1.0, le=0.0)
     
@@ -71,6 +77,20 @@ class Strategy(BaseModel):
     volume_confirm_enabled: bool = False
     volume_threshold_mult: float = Field(1.5, ge=1.0, le=5.0)
     volume_lookback_bars: int = Field(20, ge=5, le=100)
+    
+    # Bollinger Squeeze params
+    bollinger_squeeze_enabled: bool = False
+    bollinger_period: int = Field(20, ge=5, le=100)
+    bollinger_std: float = Field(2.0, ge=1.0, le=4.0)
+    squeeze_threshold: float = Field(0.5, ge=0.1, le=1.0)
+    squeeze_lookback_bars: int = Field(50, ge=10, le=200)
+    squeeze_signal_bars: int = Field(10, ge=1, le=50)
+    
+    # Higher Timeframe Filter params
+    htf_filter_enabled: bool = False
+    htf_multiplier: int = Field(16, ge=2, le=96)  # 2x to 96x (24H for 15m)
+    htf_ma_period: int = Field(50, ge=10, le=200)
+    htf_ma_type: str = Field("ema", pattern="^(ema|sma)$")
     
     # --- Overrides for Meta Strategy ---
     mean_reversion_overrides: Dict[str, Any] = {}

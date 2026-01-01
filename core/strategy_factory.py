@@ -89,6 +89,12 @@ def build_mr_params(merged: Dict[str, Any]) -> StratParams:
         kelly_win_rate=float(merged.get("kelly_win_rate", 0.55)),
         kelly_avg_win=float(merged.get("kelly_avg_win", 0.02)),
         kelly_avg_loss=float(merged.get("kelly_avg_loss", 0.01)),
+        # RSI Filter params
+        rsi_filter_enabled=bool(merged.get("rsi_filter_enabled", False)),
+        rsi_period=int(merged.get("rsi_period", 14)),
+        rsi_oversold=float(merged.get("rsi_oversold", 30.0)),
+        rsi_overbought=float(merged.get("rsi_overbought", 70.0)),
+        # Funding & Trend params
         funding_limit_long=float(merged.get("funding_limit_long", 0.05)),
         funding_limit_short=float(merged.get("funding_limit_short", -0.05)),
         fast_period=int(merged.get("fast_period", 50)),
@@ -127,6 +133,18 @@ def build_tr_params(merged: Dict[str, Any]) -> TrendParams:
         volume_confirm_enabled=bool(merged.get("volume_confirm_enabled", False)),
         volume_threshold_mult=float(merged.get("volume_threshold_mult", 1.5)),
         volume_lookback_bars=int(merged.get("volume_lookback_bars", 20)),
+        # Bollinger Squeeze params
+        bollinger_squeeze_enabled=bool(merged.get("bollinger_squeeze_enabled", False)),
+        bollinger_period=int(merged.get("bollinger_period", 20)),
+        bollinger_std=float(merged.get("bollinger_std", 2.0)),
+        squeeze_threshold=float(merged.get("squeeze_threshold", 0.5)),
+        squeeze_lookback_bars=int(merged.get("squeeze_lookback_bars", 50)),
+        squeeze_signal_bars=int(merged.get("squeeze_signal_bars", 10)),
+        # Higher Timeframe Filter params
+        htf_filter_enabled=bool(merged.get("htf_filter_enabled", False)),
+        htf_multiplier=int(merged.get("htf_multiplier", 16)),
+        htf_ma_period=int(merged.get("htf_ma_period", 50)),
+        htf_ma_type=merged.get("htf_ma_type", "ema"),
         # Position sizing params
         position_sizing_mode=merged.get("position_sizing_mode", "static"),
         position_sizing_target_vol=float(merged.get("position_sizing_target_vol", 0.5)),

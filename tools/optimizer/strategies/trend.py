@@ -100,6 +100,54 @@ class TrendOptimizer(BaseOptimizer):
             params["volume_threshold_mult"] = 1.5
             params["volume_lookback_bars"] = 20
         
+        # Bollinger Squeeze Detection (toggleable feature)
+        params["bollinger_squeeze_enabled"] = trial.suggest_categorical(
+            "bollinger_squeeze_enabled", [True, False]
+        )
+        
+        if params["bollinger_squeeze_enabled"]:
+            params["bollinger_period"] = trial.suggest_categorical(
+                "bollinger_period", [10, 20, 30, 50]
+            )
+            params["bollinger_std"] = trial.suggest_float(
+                "bollinger_std", 1.5, 3.0
+            )
+            params["squeeze_threshold"] = trial.suggest_float(
+                "squeeze_threshold", 0.3, 0.7
+            )
+            params["squeeze_lookback_bars"] = trial.suggest_categorical(
+                "squeeze_lookback_bars", [20, 50, 100]
+            )
+            params["squeeze_signal_bars"] = trial.suggest_categorical(
+                "squeeze_signal_bars", [5, 10, 20]
+            )
+        else:
+            params["bollinger_period"] = 20
+            params["bollinger_std"] = 2.0
+            params["squeeze_threshold"] = 0.5
+            params["squeeze_lookback_bars"] = 50
+            params["squeeze_signal_bars"] = 10
+        
+        # Higher Timeframe Filter (toggleable feature)
+        params["htf_filter_enabled"] = trial.suggest_categorical(
+            "htf_filter_enabled", [True, False]
+        )
+        
+        if params["htf_filter_enabled"]:
+            params["htf_multiplier"] = trial.suggest_categorical(
+                "htf_multiplier", [4, 8, 16, 24, 48]  # 1H, 2H, 4H, 6H, 12H for 15m
+            )
+            params["htf_ma_period"] = trial.suggest_categorical(
+                "htf_ma_period", [20, 50, 100, 200]
+            )
+            params["htf_ma_type"] = trial.suggest_categorical(
+                "htf_ma_type", ["ema", "sma"]
+            )
+        else:
+            params["htf_multiplier"] = 16
+            params["htf_ma_period"] = 50
+            params["htf_ma_type"] = "ema"
+        
         return params
 
     def create_strategy(self, params: Dict[str, Any]) -> TrendStrategy:

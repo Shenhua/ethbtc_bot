@@ -134,6 +134,12 @@ class StratParams:
     kelly_win_rate: float = 0.55
     kelly_avg_win: float = 0.02
     kelly_avg_loss: float = 0.01
+    
+    # RSI Filter (for MR entries)
+    rsi_filter_enabled: bool = False
+    rsi_period: int = 14
+    rsi_oversold: float = 30.0  # Enter long only if RSI < 30
+    rsi_overbought: float = 70.0  # Enter short only if RSI > 70
 
     # Funding & Trend (New)
     funding_limit_long: float = 0.05
@@ -197,6 +203,26 @@ class EthBtcStrategy:
             allow_buy = f_aligned <= self.p.funding_limit_long
             allow_sell = f_aligned >= self.p.funding_limit_short
 
+        # 3b. RSI Filter (NEW)
+        # Only allow MR entries when RSI confirms oversold/overbought
+        rsi_allow_long = pd.Series(True, index=close.index)
+        rsi_allow_short = pd.Series(True, index=close.index)
+        
+        if self.p.rsi_filter_enabled:
+            # Calculate RSI
+            delta = close.diff()
+            gain = delta.where(delta > 0, 0.0)
+            loss = (-delta).where(delta < 0, 0.0)
+            avg_gain = gain.ewm(span=self.p.rsi_period, adjust=False).mean()
+            avg_loss = loss.ewm(span=self.p.rsi_period, adjust=False).mean()
+            rs = avg_gain / avg_loss.replace(0, np.nan)
+            rsi = 100.0 - (100.0 / (1.0 + rs))
+            rsi = rsi.fillna(50.0)  # Default to neutral
+            
+            rsi_allow_long = rsi < self.p.rsi_oversold
+            rsi_allow_short = rsi > self.p.rsi_overbought
+            log.debug(f"[STRATEGY] RSI: {rsi.iloc[-1]:.2f}")
+
         # 4. State Machine (Vectorized Loop Optimization)
         # Instead of iterating .loc/iloc (slow), we use numpy arrays.
         
@@ -208,6 +234,8 @@ class EthBtcStrategy:
         gs_arr = gate_sell_mask.values
         ab_arr = allow_buy.values
         as_arr = allow_sell.values
+        rl_arr = rsi_allow_long.values  # RSI filter for longs
+        rs_arr = rsi_allow_short.values  # RSI filter for shorts
         idx_arr = close.index
         
         out_sig = np.zeros(len(close))
@@ -242,11 +270,11 @@ class EthBtcStrategy:
                 if r < bx:          # Price fell back to "Exit Band" -> Take Profit/Close
                     desired = 0.0
 
-            # 2. Check Entries (Strong Signals override Exits)
-            if r < -be and gb_arr[i] and ab_arr[i]:
-                desired = 1.0       # Strong Dip -> Buy Long
-            elif r > be and gs_arr[i] and as_arr[i]:
-                desired = -1.0      # Strong Rally -> Sell Short
+            # 2. Check Entries (Strong Signals + RSI Filter)
+            if r < -be and gb_arr[i] and ab_arr[i] and rl_arr[i]:
+                desired = 1.0       # Strong Dip + RSI oversold -> Buy Long
+            elif r > be and gs_arr[i] and as_arr[i] and rs_arr[i]:
+                desired = -1.0      # Strong Rally + RSI overbought -> Sell Short
 
             if desired != state:
                 state = desired
