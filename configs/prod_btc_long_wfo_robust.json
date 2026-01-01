@@ -52,7 +52,15 @@
             "funding_limit_long": 0.062617,
             "step_allocation": 1.0,
             "max_position": 1.0,
-            "rebalance_threshold_w": 0.03
+            "rebalance_threshold_w": 0.03,
+            "funding_counter_enabled": true,
+            "extreme_funding_long_threshold": 0.0005,
+            "extreme_funding_short_threshold": -0.0005,
+            "funding_counter_position_size": 0.5,
+            "funding_counter_cooldown_minutes": 480,
+            "volume_confirm_enabled": true,
+            "volume_threshold_mult": 1.5,
+            "volume_lookback_bars": 20
         }
     },
     "execution": {
