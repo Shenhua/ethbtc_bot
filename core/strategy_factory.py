@@ -117,6 +117,21 @@ def build_tr_params(merged: Dict[str, Any]) -> TrendParams:
         funding_limit_long=float(merged.get("funding_limit_long", 0.05)),
         funding_limit_short=float(merged.get("funding_limit_short", -0.05)),
         rebalance_threshold_w=float(merged.get("rebalance_threshold_w", 0.0)),
+        # Funding Counter-Trend params
+        funding_counter_enabled=bool(merged.get("funding_counter_enabled", False)),
+        extreme_funding_long_threshold=float(merged.get("extreme_funding_long_threshold", 0.0005)),
+        extreme_funding_short_threshold=float(merged.get("extreme_funding_short_threshold", -0.0005)),
+        funding_counter_position_size=float(merged.get("funding_counter_position_size", 0.5)),
+        funding_counter_cooldown_minutes=int(merged.get("funding_counter_cooldown_minutes", 480)),
+        # Volume Confirmation params
+        volume_confirm_enabled=bool(merged.get("volume_confirm_enabled", False)),
+        volume_threshold_mult=float(merged.get("volume_threshold_mult", 1.5)),
+        volume_lookback_bars=int(merged.get("volume_lookback_bars", 20)),
+        # Position sizing params
+        position_sizing_mode=merged.get("position_sizing_mode", "static"),
+        position_sizing_target_vol=float(merged.get("position_sizing_target_vol", 0.5)),
+        position_sizing_min_step=float(merged.get("position_sizing_min_step", 0.1)),
+        position_sizing_max_step=float(merged.get("position_sizing_max_step", 1.0)),
     )
 
 

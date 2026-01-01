@@ -20,6 +20,18 @@ class TrendParams:
     funding_limit_long: float = 0.05
     funding_limit_short: float = -0.05
     
+    # Funding Counter-Trend (opens opposite position on extreme funding)
+    funding_counter_enabled: bool = False
+    extreme_funding_long_threshold: float = 0.0005  # >0.05% funding → SHORT signal
+    extreme_funding_short_threshold: float = -0.0005  # <-0.05% funding → LONG signal
+    funding_counter_position_size: float = 0.5  # Position size for counter trades
+    funding_counter_cooldown_minutes: int = 480  # 8 hours (1 funding period)
+    
+    # Volume Confirmation (only enter if volume confirms the move)
+    volume_confirm_enabled: bool = False
+    volume_threshold_mult: float = 1.5  # Volume > 1.5x average to confirm
+    volume_lookback_bars: int = 20  # 20-bar rolling average
+    
     # Dynamic Position Sizing
     position_sizing_mode: str = "static"
     position_sizing_target_vol: float = 0.5
@@ -88,7 +100,68 @@ class TrendStrategy:
             
             clean_sig.loc[t] = state
 
-        # 4. Funding Filter (Safety)
+        # 3b. Volume Confirmation Filter (NEW)
+        # Only allow ENTRIES when volume > threshold * average
+        # Existing positions are held regardless of volume
+        if self.p.volume_confirm_enabled and isinstance(df, pd.DataFrame) and "volume" in df.columns:
+            volume = df["volume"]
+            avg_vol = volume.rolling(self.p.volume_lookback_bars).mean()
+            vol_confirmed = volume > (avg_vol * self.p.volume_threshold_mult)
+            
+            # Apply "filter entry only" logic:
+            # - If signal flips (new entry), require volume confirmation
+            # - If already in position, allow holding
+            sig_change = clean_sig != clean_sig.shift()
+            
+            # Block new entries without volume confirmation, but allow holds
+            for t in close.index:
+                if sig_change.loc[t] and not vol_confirmed.loc[t]:
+                    # New entry but volume too low - revert to previous state
+                    prev_idx = close.index.get_loc(t) - 1
+                    if prev_idx >= 0:
+                        clean_sig.loc[t] = clean_sig.iloc[prev_idx]
+                    else:
+                        clean_sig.loc[t] = 0.0
+
+        # 4. Funding Counter-Trend Signal (NEW)
+        # Opens SHORT when funding extremely positive (overleveraged longs)
+        # Opens LONG when funding extremely negative
+        funding_counter_signal = pd.Series(0.0, index=close.index)
+        
+        if self.p.funding_counter_enabled and funding is not None:
+            # Align funding
+            funding_aligned = funding.reindex(close.index).ffill().fillna(0.0)
+            
+            # Extreme funding thresholds
+            extreme_long = funding_aligned > self.p.extreme_funding_long_threshold
+            extreme_short = funding_aligned < self.p.extreme_funding_short_threshold
+            
+            # Counter-trend signals (opposite of crowded side)
+            raw_counter = np.where(extreme_long, -self.p.funding_counter_position_size,
+                          np.where(extreme_short, self.p.funding_counter_position_size, 0.0))
+            
+            # Apply cooldown to counter signals
+            counter_sig = pd.Series(raw_counter, index=close.index)
+            counter_clean = pd.Series(0.0, index=close.index)
+            counter_state = 0.0
+            last_counter_ts = close.index[0]
+            counter_delta = pd.Timedelta(minutes=self.p.funding_counter_cooldown_minutes)
+            
+            for t in close.index:
+                cs = counter_sig.loc[t]
+                if cs != 0.0 and cs != counter_state:
+                    if (t - last_counter_ts) >= counter_delta:
+                        counter_state = cs
+                        last_counter_ts = t
+                elif cs == 0.0:
+                    counter_state = 0.0
+                counter_clean.loc[t] = counter_state
+            
+            funding_counter_signal = counter_clean
+            
+            # NOTE: Counter signal applied AFTER long_only clipping in step 7 below
+
+        # 5. Funding Filter (Safety)
         if funding is not None:
             # Align
             funding = funding.reindex(close.index).ffill().fillna(0.0)
@@ -155,8 +228,14 @@ class TrendStrategy:
             
             clean_sig = final_sig
 
-        # 5. Allocation
+        # 6. Allocation (apply long_only clipping BEFORE counter-trend)
         lo = 0.0 if self.p.long_only else -self.p.max_position
         target_w = clean_sig.clip(lo, self.p.max_position)
+        
+        # 7. Apply Funding Counter-Trend AFTER long_only clipping
+        # This allows counter-shorts even when long_only=True
+        if self.p.funding_counter_enabled and funding is not None:
+            target_w = np.where(funding_counter_signal != 0, funding_counter_signal, target_w)
+            target_w = pd.Series(target_w, index=close.index)
         
         return pd.DataFrame({"target_w": target_w})

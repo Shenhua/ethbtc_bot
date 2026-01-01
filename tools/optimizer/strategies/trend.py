@@ -58,6 +58,48 @@ class TrendOptimizer(BaseOptimizer):
             "long_only": trial.suggest_categorical("long_only", [True, False]) if allow_shorts else True,
         }
         
+        # Funding Counter-Trend (toggleable feature)
+        params["funding_counter_enabled"] = trial.suggest_categorical(
+            "funding_counter_enabled", [True, False]
+        )
+        
+        if params["funding_counter_enabled"]:
+            params["extreme_funding_long_threshold"] = trial.suggest_float(
+                "extreme_funding_long_threshold", 0.0003, 0.001  # 0.03% to 0.1%
+            )
+            params["extreme_funding_short_threshold"] = trial.suggest_float(
+                "extreme_funding_short_threshold", -0.001, -0.0003  # -0.1% to -0.03%
+            )
+            params["funding_counter_position_size"] = trial.suggest_float(
+                "funding_counter_position_size", 0.25, 1.0
+            )
+            params["funding_counter_cooldown_minutes"] = trial.suggest_categorical(
+                "funding_counter_cooldown_minutes", [240, 480, 720, 1440]  # 4h to 24h
+            )
+        else:
+            # Set defaults when disabled
+            params["extreme_funding_long_threshold"] = 0.0005
+            params["extreme_funding_short_threshold"] = -0.0005
+            params["funding_counter_position_size"] = 0.5
+            params["funding_counter_cooldown_minutes"] = 480
+        
+        # Volume Confirmation (toggleable feature)
+        params["volume_confirm_enabled"] = trial.suggest_categorical(
+            "volume_confirm_enabled", [True, False]
+        )
+        
+        if params["volume_confirm_enabled"]:
+            params["volume_threshold_mult"] = trial.suggest_float(
+                "volume_threshold_mult", 1.2, 3.0  # 1.2x to 3x average
+            )
+            params["volume_lookback_bars"] = trial.suggest_categorical(
+                "volume_lookback_bars", [10, 20, 50, 100]
+            )
+        else:
+            # Set defaults when disabled
+            params["volume_threshold_mult"] = 1.5
+            params["volume_lookback_bars"] = 20
+        
         return params
 
     def create_strategy(self, params: Dict[str, Any]) -> TrendStrategy:

@@ -60,6 +60,18 @@ class Strategy(BaseModel):
     funding_limit_long: float = Field(0.05, ge=0.0, le=1.0)
     funding_limit_short: float = Field(-0.05, ge=-1.0, le=0.0)
     
+    # Funding Counter-Trend params
+    funding_counter_enabled: bool = False
+    extreme_funding_long_threshold: float = Field(0.0005, ge=0.0, le=0.01)
+    extreme_funding_short_threshold: float = Field(-0.0005, ge=-0.01, le=0.0)
+    funding_counter_position_size: float = Field(0.5, ge=0.0, le=1.0)
+    funding_counter_cooldown_minutes: int = Field(480, ge=0, le=10000)
+    
+    # Volume Confirmation params
+    volume_confirm_enabled: bool = False
+    volume_threshold_mult: float = Field(1.5, ge=1.0, le=5.0)
+    volume_lookback_bars: int = Field(20, ge=5, le=100)
+    
     # --- Overrides for Meta Strategy ---
     mean_reversion_overrides: Dict[str, Any] = {}
     trend_overrides: Dict[str, Any] = {}
