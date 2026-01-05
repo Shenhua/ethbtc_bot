@@ -134,23 +134,14 @@ class TrendStrategy:
             # Reindex back to base timeframe
             htf_trend_aligned = htf_trend.reindex(close.index).ffill().fillna(0.0)
             
-            # Block entries that contradict HTF trend
+            # Vectorized: Block entries that contradict HTF trend
             sig_change = clean_sig != clean_sig.shift()
+            prev_sig = clean_sig.shift().fillna(0.0)
             
-            for t in close.index:
-                if sig_change.loc[t]:
-                    current_sig = clean_sig.loc[t]
-                    htf_dir = htf_trend_aligned.loc[t]
-                    
-                    # Block long entry if HTF bearish, block short if HTF bullish
-                    if current_sig == 1.0 and htf_dir == -1.0:
-                        # Long entry blocked - revert
-                        prev_idx = close.index.get_loc(t) - 1
-                        clean_sig.loc[t] = clean_sig.iloc[prev_idx] if prev_idx >= 0 else 0.0
-                    elif current_sig == -1.0 and htf_dir == 1.0:
-                        # Short entry blocked - revert
-                        prev_idx = close.index.get_loc(t) - 1
-                        clean_sig.loc[t] = clean_sig.iloc[prev_idx] if prev_idx >= 0 else 0.0
+            # Block long if HTF bearish, block short if HTF bullish
+            block_long = sig_change & (clean_sig == 1.0) & (htf_trend_aligned == -1.0)
+            block_short = sig_change & (clean_sig == -1.0) & (htf_trend_aligned == 1.0)
+            clean_sig = clean_sig.where(~(block_long | block_short), prev_sig)
 
         # 3b. Volume Confirmation Filter (NEW)
         # Only allow ENTRIES when volume > threshold * average
@@ -160,20 +151,11 @@ class TrendStrategy:
             avg_vol = volume.rolling(self.p.volume_lookback_bars).mean()
             vol_confirmed = volume > (avg_vol * self.p.volume_threshold_mult)
             
-            # Apply "filter entry only" logic:
-            # - If signal flips (new entry), require volume confirmation
-            # - If already in position, allow holding
+            # Vectorized: Block new entries without volume confirmation
             sig_change = clean_sig != clean_sig.shift()
-            
-            # Block new entries without volume confirmation, but allow holds
-            for t in close.index:
-                if sig_change.loc[t] and not vol_confirmed.loc[t]:
-                    # New entry but volume too low - revert to previous state
-                    prev_idx = close.index.get_loc(t) - 1
-                    if prev_idx >= 0:
-                        clean_sig.loc[t] = clean_sig.iloc[prev_idx]
-                    else:
-                        clean_sig.loc[t] = 0.0
+            prev_sig = clean_sig.shift().fillna(0.0)
+            block_entry = sig_change & ~vol_confirmed
+            clean_sig = clean_sig.where(~block_entry, prev_sig)
 
         # 3c. Bollinger Squeeze Filter (NEW)
         # Only allow ENTRIES after detecting a volatility squeeze (band compression)
@@ -198,17 +180,11 @@ class TrendStrategy:
             # Signal valid for N bars after squeeze ends
             squeeze_signal = squeeze_end.rolling(self.p.squeeze_signal_bars).max().fillna(0) > 0
             
-            # Apply filter: only allow new entries when squeeze signal is active
+            # Vectorized: Block entries without squeeze signal
             sig_change = clean_sig != clean_sig.shift()
-            
-            for t in close.index:
-                if sig_change.loc[t] and not squeeze_signal.loc[t]:
-                    # New entry but no recent squeeze - revert to previous state
-                    prev_idx = close.index.get_loc(t) - 1
-                    if prev_idx >= 0:
-                        clean_sig.loc[t] = clean_sig.iloc[prev_idx]
-                    else:
-                        clean_sig.loc[t] = 0.0
+            prev_sig = clean_sig.shift().fillna(0.0)
+            block_entry = sig_change & ~squeeze_signal
+            clean_sig = clean_sig.where(~block_entry, prev_sig)
 
         # 4. Funding Counter-Trend Signal (NEW)
         # Opens SHORT when funding extremely positive (overleveraged longs)

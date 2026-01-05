@@ -41,7 +41,7 @@ class BaseOptimizer(ABC):
         logger: Optional[logging.Logger] = None,
         min_trades: int = 10,
         penalty_gap: float = 0.25,
-        penalty_trades: float = 0.001,
+        penalty_trades: float = 0.0001,  # Reduced from 0.001 to allow more trades
     ):
         """
         Initialize the base optimizer.
