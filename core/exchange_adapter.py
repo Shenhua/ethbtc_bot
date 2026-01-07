@@ -48,6 +48,5 @@ class ExchangeAdapter:
         return floor(qty / step) * step
 
     def round_price(self, price: float, tick: float) -> float:
-        from math import floor
         if tick <= 0: return price
-        return floor(price / tick) * tick
+        return round(price / tick) * tick
