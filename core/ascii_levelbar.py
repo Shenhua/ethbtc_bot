@@ -24,6 +24,7 @@ Notes
 
 from __future__ import annotations
 import sys
+import math
 from typing import List, Optional, Tuple
 
 # ANSI colors (used only if stdout isatty())
@@ -62,6 +63,8 @@ def ascii_level_bar(ratio: float, entry: float, exitb: float, width: int = 44) -
         lo, hi = -1.0, 1.0  # safety
 
     def to_pos(x: float) -> int:
+        if math.isnan(x):
+            return -1
         # clamp to [0,width]
         t = (x - lo) / max(hi - lo, 1e-12)
         return max(0, min(width, int(round(t * width))))
