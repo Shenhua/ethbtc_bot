@@ -1,7 +1,6 @@
 from __future__ import annotations
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any
-from datetime import datetime
 
 class RiskState(BaseModel):
     """Sub-model for risk-related state."""
@@ -15,6 +14,7 @@ class RiskState(BaseModel):
 class BotState(BaseModel):
     """Root model for application state."""
     session_start_wealth: float = Field(0.0, alias="session_start_W")
+    session_start_price: float = 0.0
     last_known_position: float = 0.0
     last_position_fetch_ts: Optional[str] = None
     last_balance_log_ts: int = 0

@@ -1,6 +1,11 @@
 # live_executor.py
 from __future__ import annotations
-import os, json, time, logging, argparse, math, threading
+import os
+import json
+import time
+import logging
+import argparse
+import threading
 from dotenv import load_dotenv
 load_dotenv()
 from typing import Dict, Any
@@ -17,16 +22,15 @@ from core.alert_manager import AlertManager
 # --- METRICS ---
 from core.metrics import (
     ORDERS_SUBMITTED, FILLS, REJECTIONS, PNL_QUOTE, EXPOSURE_W, SPREAD_BPS, BAR_LATENCY, 
-    GATE_STATE, SIGNAL_ZONE, TRADE_DECISION, DELTA_W, DELTA_BASE, WEALTH_TOTAL, WEALTH_USD, 
-    PRICE_MID, BAL_FREE, SKIPS, PRICE_ASSET_USD, SIGNAL_RATIO, SIGNAL_BAND,
-    DIST_TO_BUY_BPS, DIST_TO_SELL_BPS, FUNDING_RATE,REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
+    TRADE_DECISION, WEALTH_USD, 
+    SKIPS, SIGNAL_BAND,
+    REGIME_SCORE,REGIME_THRESHOLD,STRATEGY_MODE, 
     REGIME_STATE, PHOENIX_ACTIVE, POSITION_STEP, REALIZED_VOL,
-    LEVERAGE, EXPOSURE_SIGNAL_WEIGHT, EXPOSURE_NOTIONAL, CONFIG_LONG_ONLY,
-    FEES_PAID, LIQ_DIST, SLIPPAGE, LAST_TRADE_TS,
-    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics, 
-    snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags, 
+    LEVERAGE, CONFIG_LONG_ONLY,
+    start_metrics_server, mark_gate, mark_zone, mark_decision, mark_signal_metrics,
+    snapshot_wealth_balances, set_delta_metrics, mark_risk_mode, mark_risk_flags,
     mark_trade_readiness, mark_funding_rate, mark_asset_price_usd,
-    mark_futures_risk, mark_execution_stats, mark_bot_up, reset_trade_decision,
+    mark_execution_stats, mark_bot_up, reset_trade_decision, mark_benchmark_metrics,
 )
 from core.ascii_levelbar import dist_to_buy_sell_bps, ascii_level_bar
 from core.story_writer import StoryWriter
@@ -39,12 +43,11 @@ from core.regime import get_regime_score
 
 # --- SHARED STRATEGY FACTORY (Parity with Backtest) ---
 from core.strategy_factory import (
-    merge_strategy_params, build_strategy, 
-    build_mr_params, build_tr_params, get_active_params
+    merge_strategy_params
 )
 
 # --- RESILIENCE (Phase 1 Stabilization) ---
-from core.resilience import CircuitBreaker, retry_api_call, CircuitBreakerOpen
+from core.resilience import CircuitBreaker, CircuitBreakerOpen
 
 # --- RISK MANAGER (Phase 2 Refactoring) ---
 # NOTE: RiskManager class extracted for testability. Original _ensure_risk_state 
@@ -139,7 +142,9 @@ def load_state(path: str) -> Dict[str, Any]:
         return {}
 
 def save_state(path: str, st: Dict[str, Any]) -> None:
-    import json, os, errno
+    import json
+    import os
+    import errno
     p = Path(path)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -322,7 +327,7 @@ def main():
 
     # --- STORY WRITER INITIALIZATION ---
     story_file = os.path.join(os.path.dirname(args.state), f"story_{args.symbol.lower()}.txt")
-    story = StoryWriter(story_file, symbol=args.symbol, alerter=alerter)    
+    story = StoryWriter(story_file, symbol=args.symbol, base_asset=base_asset, alerter=alerter)
     
     # --- SERVICE INITIALIZATION (After adapter/assets confirmed) ---
     data_svc = DataService(
@@ -449,6 +454,10 @@ def main():
 
             if bot_state.session_start_wealth == 0.0 and W > 0:
                 bot_state.session_start_wealth = W
+
+            if bot_state.session_start_price == 0.0 and price > 1e-9:
+                bot_state.session_start_price = price
+            story.session_start_price = bot_state.session_start_price
 
             # Risk Management (now using RiskManager class)
             risk_mgr.ensure_state(bot_state.risk, W, bar_dt)
@@ -760,10 +769,12 @@ def main():
             # Check and update ATH
             story.check_ath(bar_dt, W, quote_asset)
             
-            # Check for period summaries (weekly/monthly/annual)
-            story.check_and_log_weekly(bar_dt, W, quote_asset)
-            story.check_and_log_monthly(bar_dt, W, quote_asset)
-            story.check_and_log_annual(bar_dt, W, quote_asset)
+            # Check for period summaries (daily/weekly/monthly/annual)
+            daily_pnl_live = W - (bot_state.risk.daily_start_wealth or W)
+            story.check_and_log_daily(bar_dt, daily_pnl_live, W, quote_asset, price)
+            story.check_and_log_weekly(bar_dt, W, quote_asset, price)
+            story.check_and_log_monthly(bar_dt, W, quote_asset, price)
+            story.check_and_log_annual(bar_dt, W, quote_asset, price)
             
             # --- METRICS UPDATE (General) ---
             # --- METRICS UPDATE (General) ---
@@ -850,7 +861,18 @@ def main():
             dist_to_buy_bps, dist_to_sell_bps = dist_to_buy_sell_bps(cur_ratio, entry, exitb)
             mark_signal_metrics(instance_name, cur_ratio, dist_to_buy_bps, dist_to_sell_bps)
             snapshot_wealth_balances(instance_name, W, price, quote_bal, base_bal, quote_asset, base_asset)
-            
+
+            # Benchmark metrics (HODL comparison per period)
+            _start_prices = story.get_period_start_prices()
+            for _period in ("daily", "weekly", "monthly", "annual", "session"):
+                _p_start = _start_prices.get(_period, 0.0)
+                _w_start = (story.period_start_wealth.get(_period, 0.0)
+                            if _period != "session" else bot_state.session_start_wealth)
+                if _p_start > 1e-9 and _w_start > 1e-9 and price > 1e-9:
+                    _hodl = (price - _p_start) / _p_start * 100
+                    _bot  = (W - _w_start) / _w_start * 100
+                    mark_benchmark_metrics(instance_name, _period, _hodl, _bot - _hodl)
+
             gate_display = "OPEN" if gate_ok else f"CLOSED ({gate_reason})"
             log.info("[SIG] ratio=%+0.4f  bands: -entry=%0.4f  -exit=%0.4f  +exit=%0.4f  +entry=%0.4f  gate=%s  %s",
                     cur_ratio, -entry, -exitb, exitb, entry, gate_display, meter)

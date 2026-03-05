@@ -2,7 +2,6 @@
 from prometheus_client import Counter, Gauge, Summary, start_http_server, REGISTRY
 import threading
 from http.server import HTTPServer
-import os
 from typing import Optional
 
 # --- Reload-safe registry setup for tests ------------------------------------
@@ -24,6 +23,15 @@ REJECTIONS = Counter("rejections_total", "Order rejections", ["instance", "reaso
 
 # Performance
 PNL_QUOTE = Gauge("pnl_quote", "PnL in Quote Asset since session start", ["instance"])
+
+HODL_RETURN = Gauge("hodl_return_pct",
+    "HODL return % for base asset since period start",
+    ["instance", "period"])
+
+ALPHA = Gauge("alpha_pct",
+    "Bot PnL % minus HODL return % for period",
+    ["instance", "period"])
+
 EXPOSURE_W = Gauge("exposure_base_weight", "Base Asset target/curr weights", ["instance", "kind"])
 SPREAD_BPS = Gauge("spread_bps", "Current spread in basis points", ["instance"])
 BAR_LATENCY = Summary("bar_latency_seconds", "Latency of processing a closed bar", ["instance"])
@@ -172,6 +180,15 @@ def mark_trade_readiness(instance: str, *, zone_ok: bool, gate_ok: bool, delta_o
 
 def mark_funding_rate(instance: str, rate: float) -> None:
     FUNDING_RATE.labels(instance=instance).set(rate)
+
+def mark_benchmark_metrics(instance: str, period: str, hodl_pct: float, alpha_pct: float) -> None:
+    """Update HODL benchmark and alpha metrics for a given period.
+
+    Args:
+        period: One of 'daily', 'weekly', 'monthly', 'annual', 'session'
+    """
+    HODL_RETURN.labels(instance=instance, period=period).set(hodl_pct)
+    ALPHA.labels(instance=instance, period=period).set(alpha_pct)
 
 def mark_asset_price_usd(instance: str, asset: str, price: float) -> None:
     PRICE_ASSET_USD.labels(instance=instance, asset=asset.lower()).set(price)

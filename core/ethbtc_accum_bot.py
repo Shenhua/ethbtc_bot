@@ -4,7 +4,8 @@ ethbtc_accum_bot.py — v5.3 (Optimized & Fixed)
 """
 
 from __future__ import annotations
-import sys, os
+import sys
+import os
 
 # --- MAGIC PATH FIX ---
 # Allows importing 'core' modules even if running this script directly
@@ -14,15 +15,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import math
 import argparse
 import json
-import random
 import logging
 from dataclasses import dataclass
-from typing import Dict, Optional, Any, Union
+from typing import Dict, Optional, Any
 import pandas as pd
 import numpy as np
 
-import logging
-import core.log_setup  # Initialize structured logging
 log = logging.getLogger("ethbtc_accum_bot")
 
 # --- Strategy Imports (Safe) ---
@@ -32,7 +30,7 @@ try:
 except ImportError:
     pass
 
-from core.config_schema import load_config, AppConfig
+from core.config_schema import load_config
 
 # ------------------ Loaders ------------------
 
@@ -603,10 +601,10 @@ class Backtester:
                 # Story: Log daily summary
                 if story_writer:
                     daily_pnl = wealth - day_start_wealth
-                    story_writer.check_and_log_daily(timestamp, daily_pnl, wealth, quote_asset)
-                    story_writer.check_and_log_weekly(timestamp, wealth, quote_asset)
-                    story_writer.check_and_log_monthly(timestamp, wealth, quote_asset)
-                    story_writer.check_and_log_annual(timestamp, wealth, quote_asset)
+                    story_writer.check_and_log_daily(timestamp, daily_pnl, wealth, quote_asset, price)
+                    story_writer.check_and_log_weekly(timestamp, wealth, quote_asset, price)
+                    story_writer.check_and_log_monthly(timestamp, wealth, quote_asset, price)
+                    story_writer.check_and_log_annual(timestamp, wealth, quote_asset, price)
                 
                 current_day = timestamp.date()
                 day_start_wealth = wealth # Reset for new day
@@ -924,7 +922,7 @@ def cmd_backtest(args):
 
     if args.story:
         try:
-            story_writer = StoryWriter(args.story, symbol=symbol_str, alerter=None)
+            story_writer = StoryWriter(args.story, symbol=symbol_str, base_asset=base_asset, alerter=None)
             log.info(f"Story logging enabled: {args.story}")
         except Exception as e:
             log.warning(f"Failed to initialize StoryWriter: {e}")
