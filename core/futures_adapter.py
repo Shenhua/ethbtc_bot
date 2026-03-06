@@ -39,11 +39,11 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             raise ValueError(f"Symbol {symbol} not found in Futures exchange info")
 
         # Futures filters are slightly different than Spot
-        price_filter = next((f for f in s_info["filters"] if f["filterType"] == "PRICE_FILTER"), {})
-        lot_filter = next((f for f in s_info["filters"] if f["filterType"] == "LOT_SIZE"), {})
+        price_filter: Dict[str, Any] = next((f for f in s_info["filters"] if f["filterType"] == "PRICE_FILTER"), {})
+        lot_filter: Dict[str, Any] = next((f for f in s_info["filters"] if f["filterType"] == "LOT_SIZE"), {})
         
         # Futures usually ~5 USDT min notional, but sometimes defined in MIN_NOTIONAL filter
-        notional_filter = next((f for f in s_info["filters"] if f["filterType"] == "MIN_NOTIONAL"), {})
+        notional_filter: Dict[str, Any] = next((f for f in s_info["filters"] if f["filterType"] == "MIN_NOTIONAL"), {})
         min_notional = float(notional_filter.get("notional", "5.0"))
 
         return Filters(
@@ -86,7 +86,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             return 0.0
         except Exception as e:
             log.error(f"Error fetching position for {symbol}: {e}")
-            return 0.0
+            raise
 
     def get_account_balance(self, asset: str) -> float:
         """Get Margin Balance (Wallet + PnL) for the asset"""
@@ -102,7 +102,7 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             return 0.0
         except Exception as e:
             log.error(f"Error fetching account balance for {asset}: {e}")
-            return 0.0
+            raise
 
     def cancel_open_orders(self, symbol: str) -> List[str]:
         log.debug(f"[FUTURES] Attempting to cancel all open orders for {symbol}")

@@ -1,5 +1,4 @@
 from __future__ import annotations
-import time
 import requests
 from typing import Any, Dict, List, Tuple
 from binance.spot import Spot
@@ -40,7 +39,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
             return 0.0
         except Exception as e:
             log.error(f"[SPOT] Failed to fetch balance for {asset}: {e}")
-            return 0.0
+            raise
     
     
     def get_usd_price(self, symbol: str) -> float:
@@ -70,7 +69,7 @@ class BinanceSpotAdapter(ExchangeAdapter):
     def _get_exchange_info_symbol(self, symbol: str) -> Dict[str, Any]:
         info = self.client.exchange_info(symbol=symbol)
         s = info["symbols"][0]
-        return s
+        return dict(s)
 
     def get_filters(self, symbol: str) -> Filters:
         s = self._get_exchange_info_symbol(symbol)
@@ -165,5 +164,6 @@ class BinanceSpotAdapter(ExchangeAdapter):
             data = resp.json()
             raw_rate = float(data.get("lastFundingRate", 0.0))
             return raw_rate * 100.0
-        except Exception:
-            return 0.0
+        except Exception as e:
+            log.error(f"[SPOT] Failed to fetch funding rate for {symbol}: {e}")
+            raise

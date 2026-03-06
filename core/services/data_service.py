@@ -1,7 +1,6 @@
 from __future__ import annotations
 import pandas as pd
-import time
-from typing import Optional, Dict, Any
+from typing import Optional, Any
 from core.resilience import CircuitBreaker, CircuitBreakerOpen, retry_api_call
 from core.exchange_adapter import ExchangeAdapter
 from core.log_setup import get_logger

@@ -1,11 +1,9 @@
 from __future__ import annotations
 import pandas as pd
-import time
-from typing import Optional, Dict, Any, Tuple
+from typing import Dict, Any
 from core.resilience import CircuitBreaker, CircuitBreakerOpen, retry_api_call
-from core.exchange_adapter import ExchangeAdapter
 from core.metrics import (
-    mark_asset_price_usd, mark_futures_risk,
+    mark_futures_risk,
     EXPOSURE_NOTIONAL, EXPOSURE_SIGNAL_WEIGHT,
     POSITION_STALE
 )
