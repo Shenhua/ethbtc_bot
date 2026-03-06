@@ -75,7 +75,7 @@ API_CIRCUIT_BREAKER = CircuitBreaker(max_failures=5, reset_timeout=60.0)
 try:
     from core.twap_maker import maker_chase
 except ImportError:
-    maker_chase = None
+    maker_chase = None  # type: ignore
     print("WARNING: core.twap_maker not found. Maker/Post-Only logic disabled.")
 
 # --- Simple JSON /status on :9110 ------------------------------------------------
@@ -84,9 +84,9 @@ except ImportError:
 def start_status_server(port: int = 9110):
     log = logging.getLogger("live_enhanced")
     _status_lock = Lock()
-    _STATUS = {}
+    _STATUS: Dict[str, Any] = {}
 
-    def update_status(payload: dict = None, **kwargs) -> None:
+    def update_status(payload: dict | None = None, **kwargs) -> None:
         if payload is None:
             payload = kwargs
         with _status_lock:
@@ -137,7 +137,7 @@ def last_closed_bar_ts(now_s: int, interval: str) -> int:
 def load_state(path: str) -> Dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            return dict(json.load(f))
     except Exception:
         return {}
 
@@ -267,6 +267,9 @@ def main():
     else:
         is_futures = (getattr(cfg.execution, "exchange_type", "spot") == "futures")
     
+    from core.exchange_adapter import ExchangeAdapter
+    adapter: ExchangeAdapter
+
     if is_futures:
         log.info("🚀 STARTING IN FUTURES MODE (USDS-M) 🚀")
         # --- CLIENT SETUP ---
@@ -582,6 +585,8 @@ def main():
             # Bug Fix #5: Initialize these outside strategy blocks for Phoenix Protocol
             mr_merged = {}
             tr_merged = {}
+            from typing import Union
+            strat: Union[TrendStrategy, MetaStrategy, EthBtcStrategy]
 
             try:
                 if strat_type == "trend":
@@ -625,7 +630,7 @@ def main():
                         STRATEGY_MODE.labels(instance=instance_name).set(1.0 if current_regime == "TREND" else 0.0)
                         
                         # Log regime switch to story
-                        story.check_regime_switch(bar_dt, current_score, adx_thresh, strat_type="meta")
+                        story.check_regime_switch(bar_dt, current_score, adx_thresh, strategy_type="meta")
 
                 elif strat_type == "meta":
                     # META Strategy with Overrides
@@ -780,7 +785,7 @@ def main():
             # --- METRICS UPDATE (General) ---
             # Calculate Regime Score if missing (for observability)
             current_score = 0.0
-            if 'plan' in locals() and "regime_score" in plan.columns:
+            if plan is not None and "regime_score" in plan.columns:
                 current_score = float(plan["regime_score"].iloc[-1])
             else:
                 try:
@@ -806,14 +811,14 @@ def main():
                 STRATEGY_MODE.labels(instance=instance_name).set(0.0) # Always MR
 
             # 4. Regime State (FIX #7: Export actual state with hysteresis)
-            if 'plan' in locals() and "regime_state" in plan.columns:
+            if plan is not None and "regime_state" in plan.columns:
                 regime_state_val = float(plan["regime_state"].iloc[-1])
                 REGIME_STATE.labels(instance=instance_name).set(regime_state_val)
 
             # --- FIX #4: REGIME-AWARE THRESHOLD SELECTION ---
             # Meta Strategy should use different thresholds based on current regime
             # This was previously only updated during Phoenix recovery (line 760)
-            if strat_type == "meta" and 'plan' in locals():
+            if strat_type == "meta" and plan is not None:
                 if "regime_score" in plan.columns:
                     current_score = float(plan["regime_score"].iloc[-1])
                     adx_thresh = getattr(cfg.strategy, "adx_threshold", 25.0)
@@ -990,7 +995,7 @@ def main():
                 mark_decision(instance_name, "skip_sell_no_balance")
                 log.info("Skip: SELL requested but no %s to sell (base_bal=0).", base_asset)
                 bot_state.last_target_w = target_w
-                bot_state.last_bar_close = bar_ts
+                bot_state.last_bar_close = str(bar_ts)
                 save_state(args.state, bot_state.to_flat_dict())
                 last_seen_bar = bar_ts
                 if args.once:
@@ -1012,7 +1017,7 @@ def main():
                         SKIPS.labels(instance=instance_name, reason="balance").inc()
                         mark_decision(instance_name, "skip_balance")
                         bot_state.last_target_w = target_w
-                        bot_state.last_bar_close = bar_ts
+                        bot_state.last_bar_close = str(bar_ts)
                         save_state(args.state, bot_state.to_flat_dict())
                         last_seen_bar = bar_ts
                         if args.once: break
@@ -1248,7 +1253,7 @@ def main():
 
             # ---- EXECUTION: MAKER vs TAKER -------------------------------
             use_maker = False
-            if cfg.execution.taker_fallback and maker_chase:
+            if cfg.execution.taker_fallback and maker_chase is not None:
                 use_maker = True
 
             executed_qty = 0.0
@@ -1367,13 +1372,14 @@ def main():
             if is_futures and executed_qty < qty_exec:
                 # Some or all of the order didn't fill - get truth from exchange
                 try:
-                    actual_position = adapter.get_position(args.symbol)
-                    # FIX #5: Store successful position fetch
-                    bot_state.last_known_position = actual_position
-                    bot_state.extra["last_known_cur_w"] = (actual_position * price) / max(W, 1e-12)
-                    actual_current_w = bot_state.extra["last_known_cur_w"]
-                    if abs(actual_current_w - new_w) > 0.01:
-                        log.warning("Position mismatch! Bot calculated: %.4f, Actual: %.4f (unfilled orders)", new_w, actual_current_w)
+                    if isinstance(adapter, BinanceFuturesAdapter):
+                        actual_position = adapter.get_position(args.symbol)
+                        # FIX #5: Store successful position fetch
+                        bot_state.last_known_position = actual_position
+                        bot_state.extra["last_known_cur_w"] = (actual_position * price) / max(W, 1e-12)
+                        actual_current_w = float(bot_state.extra["last_known_cur_w"])
+                        if abs(actual_current_w - new_w) > 0.01:
+                            log.warning("Position mismatch! Bot calculated: %.4f, Actual: %.4f (unfilled orders)", new_w, actual_current_w)
                 except Exception as e:
                     log.error("Failed to fetch actual position: %s", e)
 
