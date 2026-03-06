@@ -10,7 +10,7 @@ Generates comprehensive backtest reports with:
 from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 import pandas as pd
 import numpy as np
 import os
@@ -397,8 +397,9 @@ class BacktestReport:
             monthly_wealth = daily_wealth.resample('ME').last().dropna()
             monthly_rets = monthly_wealth.pct_change().dropna()
             for idx, ret in monthly_rets.items():
-                key = idx.strftime('%Y-%m')
-                monthly[key] = float(ret)
+                if isinstance(idx, (pd.Timestamp, datetime)):
+                    key = idx.strftime('%Y-%m')
+                    monthly[key] = float(ret)
         except:
             pass
         
@@ -407,8 +408,9 @@ class BacktestReport:
             yearly_wealth = daily_wealth.resample('YE').last().dropna()
             yearly_rets = yearly_wealth.pct_change().dropna()
             for idx, ret in yearly_rets.items():
-                key = str(idx.year)
-                yearly[key] = float(ret)
+                if hasattr(idx, 'year'):
+                    key = str(idx.year)
+                    yearly[key] = float(ret)
         except:
             pass
         

@@ -64,7 +64,7 @@ def load_vision_csv(path: str) -> pd.DataFrame:
         if pd.api.types.is_numeric_dtype(s):
             vmax = float(pd.to_numeric(s, errors="coerce").dropna().head(1).max() or 0)
             unit = "ms" if vmax > 1e11 else "s"
-            return pd.to_datetime(s, unit=unit, utc=True)
+            return pd.to_datetime(s, unit=unit, utc=True)  # type: ignore
         return pd.to_datetime(s, utc=True, errors="coerce")
 
     if "open_time" in df.columns: df["open_time"] = _parse_dt(df["open_time"])
@@ -574,7 +574,7 @@ class Backtester:
         elif hasattr(strategy, 'mr'): min_trade_btc = getattr(strategy.mr.p, 'min_trade_btc', 0.0001) or 0.0001
 
         for i in range(1, len(px)):
-            price = float(px.iat[i])
+            price = float(px.iat[i])  # type: ignore
             timestamp = px.index[i]
             
             # Carry forward balances
@@ -585,7 +585,7 @@ class Backtester:
             # Funding Fees
             if aligned_funding is not None and abs(eth[i-1]) > 0:
                 if timestamp.hour % 8 == 0 and timestamp.minute == 0:
-                    rate = float(aligned_funding.iat[i])
+                    rate = float(aligned_funding.iat[i])  # type: ignore
                     funding_cost = eth[i-1] * price * rate
                     btc[i] -= funding_cost
 
@@ -717,7 +717,7 @@ class Backtester:
                 fee_val = notional * f_rate
                 
                 if self.fee.pay_fees_in_bnb and bnb_price_series is not None:
-                    bnb_px = bnb_price_series.iat[i]
+                    bnb_px = float(bnb_price_series.iat[i])  # type: ignore
                     if bnb_px > 0:
                         bnb_cost = fee_val / bnb_px
                         if bnb[i] >= bnb_cost:
@@ -790,7 +790,7 @@ class Backtester:
             # With leverage=2, if position is 100% notional, cur_w should be 0.5
             cur_w = (eth[i] * price) / max(wealth, 1e-12) / leverage
 
-        final_btc = btc[-1] + eth[-1] * float(px.iat[-1])
+        final_btc = btc[-1] + eth[-1] * float(px.iat[-1])  # type: ignore
         
         port_df = pd.DataFrame({"wealth_btc": btc + eth*px}, index=px.index)
         
@@ -873,7 +873,7 @@ def cmd_backtest(args):
     reset_days = getattr(risk_cfg, 'drawdown_reset_days', 0.0)
     reset_score = getattr(risk_cfg, 'drawdown_reset_score', 30.0)
 
-    funding_series = load_funding_series(args.funding_data, df.index)
+    funding_series = load_funding_series(args.funding_data, pd.DatetimeIndex(df.index))
     bnb_series = None
     if args.bnb_data:
         bnb_df = load_vision_csv(args.bnb_data)

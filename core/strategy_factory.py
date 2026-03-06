@@ -193,11 +193,11 @@ def get_active_params(merged_cfg: Dict[str, Any], current_regime_score: float) -
     For non-meta strategies, returns mr_params.
     """
     if merged_cfg["strategy_type"] != "meta":
-        return merged_cfg["mr_params"]
+        return dict(merged_cfg["mr_params"])
     
     adx_thresh = float(merged_cfg["mr_params"].get("adx_threshold", 25.0))
     
     if current_regime_score > adx_thresh:
-        return merged_cfg["tr_params"]
+        return dict(merged_cfg["tr_params"])
     else:
-        return merged_cfg["mr_params"]
+        return dict(merged_cfg["mr_params"])

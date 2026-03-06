@@ -1,7 +1,6 @@
 import logging
-import time
 import pandas as pd
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Tuple, Union
 
 from core.services.data_service import DataService
 from core.services.order_service import OrderService
@@ -12,13 +11,10 @@ from core.alert_manager import AlertManager
 from core.ethbtc_accum_bot import StratParams, EthBtcStrategy
 from core.trend_strategy import TrendStrategy, TrendParams
 from core.meta_strategy import MetaStrategy
-from core.regime import get_regime_score
 from core.position_sizer import PositionSizer, PositionSizerConfig
 from core.strategy_factory import merge_strategy_params  # Canonical source
 from core.metrics import (
-    BAR_LATENCY, REGIME_SCORE, REGIME_THRESHOLD, 
-    STRATEGY_MODE, REGIME_STATE, PHOENIX_ACTIVE,
-    reset_trade_decision, mark_decision
+    BAR_LATENCY, REGIME_SCORE, STRATEGY_MODE, REGIME_STATE
 )
 
 log = logging.getLogger("BotEngine")
@@ -115,6 +111,7 @@ class BotEngine:
         plan = None
 
         try:
+            strat: Union[TrendStrategy, MetaStrategy, EthBtcStrategy]
             if strat_type == "trend":
                 tp = TrendParams(**self.tr_params)
                 strat = TrendStrategy(tp)
@@ -128,7 +125,7 @@ class BotEngine:
             else:
                 sp = StratParams(**self.mr_params)
                 strat = EthBtcStrategy(sp)
-                plan = strat.generate_positions(df)
+                plan = strat.generate_positions(df["close"])
 
             if plan is not None:
                 target_w = float(plan["target_w"].iloc[-1])

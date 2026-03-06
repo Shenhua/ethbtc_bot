@@ -2,7 +2,6 @@ import os
 import time
 import logging
 import requests
-import json
 from datetime import datetime
 
 class AlertManager:

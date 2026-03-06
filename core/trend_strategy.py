@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import pandas as pd
 import numpy as np
+from typing import Optional
 
 @dataclass
 class TrendParams:
@@ -72,7 +73,7 @@ class TrendStrategy:
     def __init__(self, p: TrendParams): 
         self.p = p
 
-    def generate_positions(self, df: pd.DataFrame | pd.Series, funding: pd.Series = None) -> pd.DataFrame:          # Support both Series (just close) and DataFrame (OHLC)
+    def generate_positions(self, df: pd.DataFrame | pd.Series, funding: Optional[pd.Series] = None) -> pd.DataFrame:          # Support both Series (just close) and DataFrame (OHLC)
         if isinstance(df, pd.Series):
             close = df
         else:
@@ -128,8 +129,8 @@ class TrendStrategy:
                 htf_ma = htf_close.ewm(span=self.p.htf_ma_period, adjust=False).mean()
             
             # HTF trend: 1 if price > MA (bullish), -1 if below (bearish)
-            htf_trend = np.where(htf_close > htf_ma, 1.0, -1.0)
-            htf_trend = pd.Series(htf_trend, index=htf_close.index)
+            htf_trend_raw = np.where(htf_close > htf_ma, 1.0, -1.0)
+            htf_trend = pd.Series(htf_trend_raw, index=htf_close.index)
             
             # Reindex back to base timeframe
             htf_trend_aligned = htf_trend.reindex(close.index).ffill().fillna(0.0)
@@ -295,10 +296,10 @@ class TrendStrategy:
         lo = 0.0 if self.p.long_only else -self.p.max_position
         target_w = clean_sig.clip(lo, self.p.max_position)
         
-        # 7. Apply Funding Counter-Trend AFTER long_only clipping
-        # This allows counter-shorts even when long_only=True
         if self.p.funding_counter_enabled and funding is not None:
-            target_w = np.where(funding_counter_signal != 0, funding_counter_signal, target_w)
-            target_w = pd.Series(target_w, index=close.index)
+            target_w_raw = np.where(funding_counter_signal != 0, funding_counter_signal, target_w)
+            target_w_final = pd.Series(target_w_raw, index=close.index)
+        else:
+            target_w_final = target_w
         
-        return pd.DataFrame({"target_w": target_w})
+        return pd.DataFrame({"target_w": target_w_final})

@@ -10,8 +10,8 @@ def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     # 1. Directional Movement
     plus_dm = high.diff()
     minus_dm = low.diff()
-    plus_dm = np.where((plus_dm > 0) & (plus_dm > minus_dm), plus_dm, 0.0)
-    minus_dm = np.where((minus_dm > 0) & (minus_dm > plus_dm), minus_dm, 0.0)
+    plus_dm_raw = np.where((plus_dm > 0) & (plus_dm > minus_dm), plus_dm, 0.0)
+    minus_dm_raw = np.where((minus_dm > 0) & (minus_dm > plus_dm), minus_dm, 0.0)
     
     # 2. True Range & Smoothing
     tr1 = pd.DataFrame({
@@ -21,8 +21,8 @@ def calculate_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     }).max(axis=1)
     
     atr = tr1.ewm(alpha=1/period, adjust=False).mean()
-    plus_di = 100 * (pd.Series(plus_dm, index=high.index).ewm(alpha=1/period, adjust=False).mean() / atr)
-    minus_di = 100 * (pd.Series(minus_dm, index=high.index).ewm(alpha=1/period, adjust=False).mean() / atr)
+    plus_di = 100 * (pd.Series(plus_dm_raw, index=high.index).ewm(alpha=1/period, adjust=False).mean() / atr)
+    minus_di = 100 * (pd.Series(minus_dm_raw, index=high.index).ewm(alpha=1/period, adjust=False).mean() / atr)
     
     dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di).replace(0, np.nan)
     adx = dx.ewm(alpha=1/period, adjust=False).mean().fillna(0.0)
@@ -37,12 +37,13 @@ def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
     df = df_15m.copy()
     
     # FIX ITEM 5: Robust Timezone Handling
-    if df.index.tz is None:
-        # Assume UTC if naive (or risk misalignment, but better than stripping)
-        df.index = df.index.tz_localize('UTC')
-    else:
-        # Standardize to UTC
-        df.index = df.index.tz_convert('UTC')
+    if isinstance(df.index, pd.DatetimeIndex):
+        if df.index.tz is None:
+            # Assume UTC if naive (or risk misalignment, but better than stripping)
+            df.index = df.index.tz_localize('UTC')
+        else:
+            # Standardize to UTC
+            df.index = df.index.tz_convert('UTC')
     
     # Ensure monotonic index for resampling
     df = df[~df.index.duplicated(keep='last')]
@@ -72,7 +73,7 @@ def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
     agg_dict = {'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'}
     
     # 30m Resample
-    df_30m = df.resample('30min', label='left', closed='left').agg(agg_dict).dropna()
+    df_30m = df.resample('30min', label='left', closed='left').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'}).dropna()
     log.debug(f"Resampled to 30m: {len(df_30m)} bars")
     if len(df_30m) > adx_period:
         adx_30m = calculate_adx(df_30m['high'], df_30m['low'], df_30m['close'], period=adx_period)
@@ -91,7 +92,7 @@ def get_regime_score(df_15m: pd.DataFrame, adx_period: int = 14) -> pd.Series:
         adx_30m_aligned = pd.Series(0.0, index=clean_index)
 
     # 1H Resample
-    df_1h = df.resample('1h', label='left', closed='left').agg(agg_dict).dropna()
+    df_1h = df.resample('1h', label='left', closed='left').agg({'open': 'first', 'high': 'max', 'low': 'min', 'close': 'last'}).dropna()
     if len(df_1h) > adx_period:
         adx_1h = calculate_adx(df_1h['high'], df_1h['low'], df_1h['close'], period=adx_period)
         # FIX: Shift by 1 to avoid look-ahead

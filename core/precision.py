@@ -10,7 +10,7 @@ Key Features:
 - PreciseBalance class for accumulating small amounts without drift
 """
 
-from decimal import Decimal, ROUND_DOWN, ROUND_UP, InvalidOperation
+from decimal import Decimal, ROUND_DOWN, InvalidOperation
 from typing import Union
 import logging
 

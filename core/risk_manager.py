@@ -12,7 +12,7 @@ IMPORTANT: This preserves ALL existing behavior from live_executor.py.
 No features have been removed or modified - only extracted.
 """
 from __future__ import annotations
-from typing import Optional, Any
+from typing import Any
 from dataclasses import dataclass
 from core.models.state import RiskState
 from core.log_setup import get_logger

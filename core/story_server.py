@@ -3,7 +3,6 @@ core/story_server.py - HTTP Story Endpoint for Live Trading Narrative
 
 Extends Prometheus metrics server to serve /story endpoint.
 """
-from http.server import BaseHTTPRequestHandler
 from prometheus_client import MetricsHandler
 from urllib.parse import urlparse, parse_qs
 import os

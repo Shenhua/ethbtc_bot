@@ -7,7 +7,7 @@ Supports multiple approaches:
 - Volatility: Target volatility approach
 - Kelly: Kelly Criterion with optional dynamic stats
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
 from collections import deque
 import logging
@@ -119,7 +119,7 @@ class PositionSizerConfig:
     kelly_fraction: float = 0.5
     """Fraction of full Kelly to use (0.5 = Half-Kelly, safer)."""
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate configuration parameters."""
         if not 0.0 <= self.base_step <= 1.0:
             raise ValueError(f"base_step must be in [0, 1], got {self.base_step}")

@@ -25,7 +25,7 @@ Notes
 from __future__ import annotations
 import sys
 import math
-from typing import List, Optional, Tuple
+from typing import Tuple
 
 # ANSI colors (used only if stdout isatty())
 RESET = "\x1b[0m"
