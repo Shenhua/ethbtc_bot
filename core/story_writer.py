@@ -217,14 +217,24 @@ class StoryWriter:
     def log_daily_summary(self, timestamp: datetime, daily_pnl: float,
                           current_wealth: float, quote_asset: str, current_price: float = 0.0):
         """Log daily summary (call once per day)."""
-        pnl_pct = (daily_pnl / self.period_start_wealth['daily'] * 100) if self.period_start_wealth.get('daily', 0.0) > 0 else 0.0
+        # Compute PnL from our own tracking — do not trust the passed-in daily_pnl,
+        # which can be 0 in live mode because the risk manager resets daily_start_wealth
+        # before this is called.
+        period_start_w = self.period_start_wealth.get('daily', 0.0)
+        if period_start_w > 0:
+            pnl = current_wealth - period_start_w
+            pnl_pct = pnl / period_start_w * 100
+        else:
+            pnl = daily_pnl
+            pnl_pct = 0.0
+
         benchmark = self._format_benchmark('daily', pnl_pct, current_price)
-        icon = "📈" if daily_pnl >= 0 else "📉"
+        icon = "📈" if pnl >= 0 else "📉"
 
         if benchmark:
             details = f"{benchmark} | Wealth: {current_wealth:.6f} {quote_asset}"
         else:
-            details = f"PnL: {daily_pnl:+.6f} {quote_asset} | Wealth: {current_wealth:.6f} {quote_asset}"
+            details = f"PnL: {pnl:+.6f} {quote_asset} | Wealth: {current_wealth:.6f} {quote_asset}"
 
         self._write_line(timestamp, icon, "DAILY SUMMARY", details)
         if self.alerter:
