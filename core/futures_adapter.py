@@ -79,11 +79,22 @@ class BinanceFuturesAdapter(ExchangeAdapter):
             positions = self.client.get_position_risk(symbol=symbol)
             for pos in positions:
                 if pos["symbol"] == symbol:
-                    position_amt = float(pos["positionAmt"])
-                    log.debug(f"[FUTURES] Position: {position_amt} {symbol} @ {pos['entryPrice']}")
+                    try:
+                        position_amt = float(pos["positionAmt"])
+                    except (KeyError, ValueError, TypeError) as parse_err:
+                        log.error(
+                            f"[FUTURES] Malformed position data for {symbol}: "
+                            f"{parse_err} (raw={pos})"
+                        )
+                        raise ValueError(
+                            f"Malformed position response for {symbol}: {parse_err}"
+                        ) from parse_err
+                    log.debug(f"[FUTURES] Position: {position_amt} {symbol} @ {pos.get('entryPrice', '?')}")
                     return position_amt
             log.debug(f"[FUTURES] No position found for {symbol}")
             return 0.0
+        except (ValueError, TypeError):
+            raise  # Re-raise parse errors from the inner block unmodified
         except Exception as e:
             log.error(f"Error fetching position for {symbol}: {e}")
             raise

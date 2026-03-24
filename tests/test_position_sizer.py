@@ -277,3 +277,72 @@ class TestRealWorldScenarios:
         # Sideways: normal volatility ~50%
         step = sizer.calculate_step(0.5)
         assert step == 0.5  # Should stay at base
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 – Position Sizing Danger Tests
+# ---------------------------------------------------------------------------
+
+class TestGetStatsEdgeCases:
+    """Tests for RollingTradeStats.get_stats() diversity requirement."""
+
+    def _make_stats(self, trades):
+        from core.position_sizer import RollingTradeStats
+        s = RollingTradeStats(min_trades=1, lookback=100)
+        for t in trades:
+            s.add_trade(t)
+        return s
+
+    def test_all_wins_returns_none(self):
+        """get_stats() must return None when there are zero losses."""
+        stats = self._make_stats([0.01, 0.02, 0.03, 0.05, 0.01])
+        assert stats.get_stats() is None
+
+    def test_all_losses_returns_none(self):
+        """get_stats() must return None when there are zero wins."""
+        stats = self._make_stats([-0.01, -0.02, -0.03])
+        assert stats.get_stats() is None
+
+    def test_mixed_trades_returns_tuple(self):
+        """get_stats() returns a valid tuple when both wins and losses exist."""
+        stats = self._make_stats([0.02, -0.01, 0.03, -0.02, 0.01])
+        result = stats.get_stats()
+        assert result is not None
+        win_rate, avg_win, avg_loss = result
+        assert 0 < win_rate < 1
+        assert avg_win > 0
+        assert avg_loss > 0
+
+
+class TestVolatilityTargetingEdgeCases:
+    """Tests for NaN/Inf inputs to _volatility_targeting."""
+
+    def _make_sizer(self):
+        from core.position_sizer import PositionSizer, PositionSizerConfig
+        return PositionSizer(PositionSizerConfig(
+            mode="volatility",
+            base_step=0.5,
+            target_vol=0.5,
+            min_step=0.1,
+            max_step=1.0,
+        ))
+
+    def test_nan_volatility_returns_base_step(self):
+        """NaN realized_vol falls back to base_step without crashing."""
+        sizer = self._make_sizer()
+        import math
+        step = sizer.calculate_step(float("nan"))
+        assert step == 0.5
+        assert not math.isnan(step)
+
+    def test_inf_volatility_returns_base_step(self):
+        """Infinite realized_vol falls back to base_step without crashing."""
+        sizer = self._make_sizer()
+        step = sizer.calculate_step(float("inf"))
+        assert step == 0.5
+
+    def test_negative_inf_volatility_returns_base_step(self):
+        """Negative-infinite realized_vol falls back to base_step."""
+        sizer = self._make_sizer()
+        step = sizer.calculate_step(float("-inf"))
+        assert step == 0.5

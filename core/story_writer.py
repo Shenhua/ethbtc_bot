@@ -6,11 +6,12 @@ Tracks and logs key trading events to create a human-readable story file.
 import os
 from datetime import datetime
 from typing import Optional
+from core.log_setup import get_logger
 
 
 class StoryWriter:
     """Writes real-time trading events to a story log file."""
-    
+
     def __init__(self, filepath: str, symbol: str = "ASSET", base_asset: str = "BASE", alerter=None):
         """
         Initialize the story writer.
@@ -25,20 +26,21 @@ class StoryWriter:
         self.symbol = symbol
         self.base_asset = base_asset
         self.alerter = alerter
-        
+        self._log = get_logger("story_writer")
+
         # State tracking
         self.last_regime: Optional[str] = None
         self.last_target_w: float = 0.0
         self.last_wealth: float = 0.0
         self.peak_wealth: float = 0.0
         self.is_halted: bool = False
-        
+
         # Period tracking for summaries
         self.last_daily_report_date: Optional[datetime] = None
         self.last_weekly_report_date: Optional[datetime] = None
         self.last_monthly_report_date: Optional[datetime] = None
         self.last_annual_report_date: Optional[datetime] = None
-        
+
         # Period stats
         self.period_start_wealth = {
             'daily': 0.0,
@@ -67,21 +69,27 @@ class StoryWriter:
             'monthly_trend': 0,
             'monthly_mr': 0
         }
-        
+
         # Ensure directory exists
         os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else ".", exist_ok=True)
-        
+
     def _write_line(self, timestamp: datetime, icon: str, event: str, details: str = ""):
         """Write a formatted line to the story file."""
         ts_str = timestamp.strftime("%Y-%m-%d %H:%M:%S")
         line = f"{ts_str} | {icon} {event:<40} | {details}\n"
-        
+
         try:
             with open(self.filepath, "a", encoding="utf-8") as f:
                 f.write(line)
         except Exception as e:
-            # Silent fail - don't crash the bot if logging fails
-            print(f"[StoryWriter] Warning: Failed to write to {self.filepath}: {e}")
+            # Log via structured logger (visible in Docker logs and log aggregators).
+            # Do NOT crash the bot — story logging must never interrupt trading.
+            self._log.error(
+                "Failed to write story line",
+                filepath=self.filepath,
+                story_event=event,
+                error=str(e),
+            )
     
     def log_startup(self, timestamp: datetime, initial_wealth: float, mode: str, quote_asset: str):
         """Log bot startup."""

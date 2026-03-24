@@ -120,8 +120,12 @@ def start_status_server(port: int = 9110):
 def inc_rejection(instance: str, reason: str = "error") -> None:
     try:
         REJECTIONS.labels(instance=instance, reason=reason).inc()
-    except Exception:
-        REJECTIONS.labels(instance=instance, reason="error").inc()
+    except Exception as e:
+        log.debug("Rejection label fallback (original reason=%s): %s", reason, e)
+        try:
+            REJECTIONS.labels(instance=instance, reason="error").inc()
+        except Exception:
+            pass  # Prometheus itself is unavailable; nothing more we can do
 
 logging.basicConfig(level=os.getenv("LOGLEVEL","INFO"))
 log = logging.getLogger("live_enhanced")
@@ -135,33 +139,38 @@ def last_closed_bar_ts(now_s: int, interval: str) -> int:
     return now_s - (now_s % sec) - 1
 
 def load_state(path: str) -> Dict[str, Any]:
+    p = Path(path)
+    if not p.exists():
+        log.info("No state file found, starting fresh: %s", path)
+        return {}
     try:
         with open(path, "r", encoding="utf-8") as f:
             return dict(json.load(f))
-    except Exception:
-        return {}
+    except json.JSONDecodeError as e:
+        log.critical("State file corrupted (invalid JSON) at %s: %s", path, e)
+        bak = Path(str(path) + ".bak")
+        if bak.exists():
+            log.warning("Falling back to backup state: %s", bak)
+            with open(bak, "r", encoding="utf-8") as f:
+                return dict(json.load(f))
+        raise
+    except Exception as e:
+        log.critical("Failed to load state file at %s: %s", path, e)
+        raise
 
 def save_state(path: str, st: Dict[str, Any]) -> None:
-    import json
-    import os
-    import errno
+    import shutil
     p = Path(path)
-    try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = str(p) + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(st, f, indent=2, sort_keys=True)
-        os.replace(tmp, str(p))
-    except OSError as e:
-        if e.errno in (errno.EROFS,):
-            fallback = Path.cwd() / "run_state" / p.name
-            fallback.parent.mkdir(parents=True, exist_ok=True)
-            tmp = str(fallback) + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(st, f, indent=2, sort_keys=True)
-            os.replace(tmp, str(fallback))
-        else:
-            raise
+    p.parent.mkdir(parents=True, exist_ok=True)
+    # Rotate current → .bak before overwrite
+    if p.exists():
+        bak = Path(str(p) + ".bak")
+        shutil.copy2(str(p), str(bak))
+    tmp = str(p) + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(st, f, indent=2, sort_keys=True)
+    os.replace(tmp, str(p))
+    log.debug("State saved: %s", path)
 
 
 def main():
@@ -496,9 +505,9 @@ def main():
 
                 b_usd = adapter.get_usd_price(f"{base_asset}USDT")
                 mark_asset_price_usd(instance_name, base_asset, b_usd)
-            except Exception:
-                pass
-            
+            except Exception as e:
+                log.warning("USD price fetch failed, metrics will use stale values: %s", e)
+
             if q_usd > 0:
                 WEALTH_USD.labels(instance=instance_name).set(W * q_usd)
             
@@ -792,8 +801,8 @@ def main():
                     # Calculate independently
                     rs_series = get_regime_score(df)
                     current_score = float(rs_series.iloc[-1])
-                except Exception:
-                    pass
+                except Exception as e:
+                    log.warning("Regime score calculation failed, defaulting to 0.0: %s", e)
 
             REGIME_SCORE.labels(instance=instance_name).set(current_score)
 
@@ -964,6 +973,14 @@ def main():
                 if abs(new_w - cur_w) > 1e-12:
                     log.warning("Risk: daily loss limit hit → freezing position at w=%.4f.", cur_w)
                 new_w = cur_w
+            elif acc_state.get("position_unsafe"):
+                log.error("Risk: position data is unsafe (stale >15min) → skipping trade.")
+                inc_rejection(instance_name, "stale_position")
+                bot_state.last_target_w = target_w
+                bot_state.last_bar_close = str(bar_ts)
+                save_state(args.state, bot_state.to_flat_dict())
+                time.sleep(cfg.execution.poll_sec)
+                continue
 
             delta_w = new_w - cur_w
             
@@ -1305,7 +1322,8 @@ def main():
                             symbol=args.symbol,
                             order_id=oid,
                             max_wait_seconds=10.0,
-                            poll_interval=0.5
+                            poll_interval=0.5,
+                            cancel_fn=adapter.cancel,
                         )
                         
                         if is_filled:

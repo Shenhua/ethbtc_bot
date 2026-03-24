@@ -174,7 +174,84 @@ class TestRiskManagerHelpers:
         # But for this unit test, we just care about risk state reset.
         
         rm.reset_phoenix(state, wealth=0.9)
-        
+
         assert state.maxdd_hit == False
         assert state.maxdd_hit_ts == None
         assert state.equity_high == 0.9
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 – Risk Manager Edge Cases
+# ---------------------------------------------------------------------------
+
+class TestRiskManagerEdgeCases:
+    def test_zero_equity_high_resets_to_wealth(self):
+        """equity_high=0 in state is treated as uninitialised and reset to wealth."""
+        config = RiskConfig(risk_mode="dynamic", max_dd_frac=0.2)
+        rm = RiskManager(config)
+
+        state = RiskState(equity_high=0.0)
+        ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
+        rm.update(state, wealth=1.0, ts=ts)
+
+        assert state.equity_high == 1.0
+
+    def test_negative_equity_high_resets_to_wealth(self):
+        """equity_high<0 (corrupted state) is reset to current wealth."""
+        # RiskState validator coerces negatives to 0.0 first,
+        # then update() resets 0.0 to wealth.
+        config = RiskConfig(risk_mode="dynamic", max_dd_frac=0.2)
+        rm = RiskManager(config)
+
+        state = RiskState(equity_high=0.0)  # validator already coerced -5.0 → 0.0
+        ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
+        rm.update(state, wealth=2.0, ts=ts)
+
+        assert state.equity_high == 2.0
+
+    def test_dynamic_mode_zero_equity_still_enforces_dd(self):
+        """With equity_high=0, after reset to wealth=1.0, a 25% drop triggers max DD."""
+        config = RiskConfig(risk_mode="dynamic", max_dd_frac=0.2)
+        rm = RiskManager(config)
+
+        state = RiskState(equity_high=0.0)
+        ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
+
+        # First bar: equity_high resets to 1.0
+        rm.update(state, wealth=1.0, ts=ts)
+        assert state.equity_high == 1.0
+        assert state.maxdd_hit == False
+
+        # Second bar: 25% drop — exceeds 20% threshold
+        rm.update(state, wealth=0.75, ts=ts)
+        assert state.maxdd_hit == True
+
+    def test_ensure_state_negative_wealth(self):
+        """ensure_state with negative wealth uses abs() and logs error."""
+        config = RiskConfig()
+        rm = RiskManager(config)
+
+        state = RiskState()
+        ts = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
+        rm.ensure_state(state, wealth=-1.5, ts=ts)
+
+        assert state.equity_high == 1.5  # abs(-1.5)
+        assert state.daily_start_wealth == 1.5
+
+    def test_daily_reset_logged(self, caplog):
+        """Crossing a day boundary logs an INFO message with old/new dates."""
+        import logging
+        config = RiskConfig(risk_mode="dynamic", max_daily_loss_frac=0.05)
+        rm = RiskManager(config)
+
+        state = RiskState()
+        day1 = pd.Timestamp("2024-01-01 12:00:00", tz="UTC")
+        day2 = pd.Timestamp("2024-01-02 12:00:00", tz="UTC")
+
+        rm.ensure_state(state, wealth=1.0, ts=day1)
+        rm.update(state, wealth=1.0, ts=day1)
+
+        with caplog.at_level(logging.INFO, logger="risk_manager"):
+            rm.update(state, wealth=1.0, ts=day2)
+
+        assert any("Daily risk reset" in r.message for r in caplog.records)

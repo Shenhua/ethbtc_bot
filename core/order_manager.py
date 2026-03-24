@@ -78,38 +78,57 @@ def wait_for_fill(
     symbol: str,
     order_id: str,
     max_wait_seconds: float = 10.0,
-    poll_interval: float = 0.5
+    poll_interval: float = 0.5,
+    cancel_fn: Optional[Callable[[str, str], None]] = None,
 ) -> Tuple[bool, float]:
     """
     Wait for an order to fill with polling.
-    
+
     Args:
         check_fn: Function to check order status (symbol, order_id) -> (is_filled, filled_qty)
         symbol: Trading symbol
         order_id: Order ID to check
         max_wait_seconds: Maximum time to wait
         poll_interval: Time between checks
-    
+        cancel_fn: Optional function to cancel the order on timeout (symbol, order_id) -> None.
+                   If provided, the order is cancelled when the wait times out so it does not
+                   remain live on the exchange.
+
     Returns:
         Tuple of (is_filled, filled_quantity)
     """
     start = time.time()
     last_filled = 0.0
-    
+
     while time.time() - start < max_wait_seconds:
         try:
             is_filled, filled_qty = check_fn(symbol, order_id)
             last_filled = filled_qty
-            
+
             if is_filled:
                 return True, filled_qty
-            
-            # If partial fill and not making progress, stop waiting
+
             time.sleep(poll_interval)
         except Exception as e:
             log.warning("Fill check error: %s", e)
             time.sleep(poll_interval)
-    
+
+    # Timeout: attempt to cancel so the order does not remain open on the exchange.
+    if cancel_fn is not None:
+        try:
+            cancel_fn(symbol, order_id)
+            log.warning(
+                "Order %s timed out after %.1fs and was cancelled", order_id, max_wait_seconds
+            )
+        except Exception as e:
+            log.error(
+                "Failed to cancel timed-out order %s: %s", order_id, e
+            )
+    else:
+        log.warning(
+            "Order %s timed out after %.1fs (no cancel_fn provided)", order_id, max_wait_seconds
+        )
+
     return False, last_filled
 
 

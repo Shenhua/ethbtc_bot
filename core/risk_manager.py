@@ -74,7 +74,10 @@ class RiskManager:
         """
         Ensure all risk state keys exist with proper defaults.
         """
-        if not state.equity_high:
+        if wealth < 0:
+            log.error("Negative wealth passed to ensure_state (wealth=%.6f); using abs()", wealth)
+            wealth = abs(wealth)
+        if state.equity_high <= 0:
             state.equity_high = wealth
         if not state.current_date:
             state.current_date = ts.normalize().date().isoformat()
@@ -92,6 +95,12 @@ class RiskManager:
         
         # 1. Load Current State
         equity_high = state.equity_high or wealth
+        if equity_high <= 0:
+            log.warning(
+                "equity_high is zero/negative (%.6f); resetting to current wealth %.6f",
+                equity_high, wealth
+            )
+            equity_high = wealth
         
         current_date_str = state.current_date
         if current_date_str:
@@ -127,6 +136,12 @@ class RiskManager:
         # 4. Check for Daily Loss Violation
         cur_date = ts.normalize().date()
         if cur_date != current_date:
+            log.info(
+                "Daily risk reset: %s → %s (wealth=%.6f)",
+                current_date.isoformat() if current_date else "None",
+                cur_date.isoformat(),
+                wealth,
+            )
             current_date = cur_date
             daily_start = wealth
             daily_limit_hit = False

@@ -1,4 +1,6 @@
 from __future__ import annotations
+import math
+import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 from typing import Optional, Dict, Any
 
@@ -10,6 +12,27 @@ class RiskState(BaseModel):
     daily_limit_hit: bool = False
     maxdd_hit: bool = False
     maxdd_hit_ts: Optional[str] = None
+
+    @field_validator('equity_high', mode='before')
+    @classmethod
+    def validate_equity_high(cls, v: Any) -> float:
+        """Coerce NaN/Inf/negative equity_high to 0.0 to prevent broken risk math."""
+        val = float(v)
+        if math.isnan(val) or math.isinf(val) or val < 0:
+            return 0.0
+        return val
+
+    @field_validator('maxdd_hit_ts', mode='before')
+    @classmethod
+    def validate_maxdd_hit_ts(cls, v: Any) -> Optional[str]:
+        """Coerce unparseable timestamps to None to prevent Phoenix Protocol crash."""
+        if v is None:
+            return None
+        try:
+            pd.to_datetime(str(v))
+            return str(v)
+        except Exception:
+            return None
 
 class BotState(BaseModel):
     """Root model for application state."""

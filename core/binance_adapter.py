@@ -133,7 +133,13 @@ class BinanceSpotAdapter(ExchangeAdapter):
             self.client.cancel_order(symbol=symbol, orderId=order_id)
             log.debug(f"[SPOT] Order {order_id} cancelled successfully")
         except Exception as e:
-            log.warning(f"[SPOT] Could not cancel order {order_id}: {e}")
+            err_str = str(e)
+            # -2011: Unknown order — already filled or cancelled. Safe to ignore.
+            if "Unknown order" in err_str or "-2011" in err_str:
+                log.debug(f"[SPOT] Order {order_id} already gone (filled/cancelled): {e}")
+            else:
+                log.error(f"[SPOT] Failed to cancel order {order_id}: {e}")
+                raise
 
     def check_order(self, symbol: str, order_id: str) -> Tuple[bool, float]:
         log.debug(f"[SPOT] Checking order {order_id} for {symbol}")

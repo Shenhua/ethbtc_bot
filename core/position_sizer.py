@@ -61,15 +61,20 @@ class RollingTradeStats:
         wins = trades[trades > 0]
         losses = trades[trades < 0]
         
-        # Calculate win rate
-        win_rate = len(wins) / len(trades) if len(trades) > 0 else 0.5
-        
-        # Calculate average win (default to small value if no wins)
-        avg_win = float(np.mean(wins)) if len(wins) > 0 else 0.01
-        
-        # Calculate average loss (absolute value, default to small value if no losses)
-        avg_loss = float(np.abs(np.mean(losses))) if len(losses) > 0 else 0.01
-        
+        # Require both wins and losses to compute meaningful Kelly stats.
+        # All-wins or all-losses history is too one-sided to be reliable.
+        if len(wins) == 0 or len(losses) == 0:
+            log.debug(
+                "[PositionSizer] Insufficient trade diversity for dynamic Kelly "
+                "(wins=%d, losses=%d); falling back to static config.",
+                len(wins), len(losses),
+            )
+            return None
+
+        win_rate = len(wins) / len(trades)
+        avg_win = float(np.mean(wins))
+        avg_loss = float(np.abs(np.mean(losses)))
+
         return (win_rate, avg_win, avg_loss)
     
     def has_sufficient_data(self) -> bool:
@@ -257,8 +262,9 @@ class PositionSizer:
         Returns:
             Position step size in [min_step, max_step]
         """
-        # Handle edge cases
-        if realized_vol <= 0 or not realized_vol == realized_vol:  # NaN check
+        # Handle edge cases (also guards against NaN/Inf from upstream calculations)
+        import math
+        if realized_vol <= 0 or math.isnan(realized_vol) or math.isinf(realized_vol):
             log.warning(
                 "[PositionSizer] Invalid realized_vol=%.4f, using base_step",
                 realized_vol

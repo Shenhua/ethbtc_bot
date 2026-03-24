@@ -8,7 +8,6 @@ Validates:
 """
 
 import pytest
-import numpy as np
 from core.position_sizer import (
     PositionSizer, PositionSizerConfig, RollingTradeStats
 )
@@ -39,12 +38,14 @@ class TestRollingTradeStats:
         """Stats should be available after min_trades reached."""
         stats = RollingTradeStats(lookback=100, min_trades=5)
         
-        # Add 4 trades - not enough
-        for _ in range(4):
-            stats.add_trade(0.01)
+        # Add 4 trades (mix of wins/losses) - not enough
+        stats.add_trade(0.01)
+        stats.add_trade(-0.01)
+        stats.add_trade(0.02)
+        stats.add_trade(-0.02)
         assert stats.get_stats() is None
-        
-        # Add 5th trade - now enough
+
+        # Add 5th trade (a win) - now enough AND we have both wins and losses
         stats.add_trade(0.01)
         assert stats.get_stats() is not None
     
@@ -88,20 +89,27 @@ class TestRollingTradeStats:
     def test_lookback_window(self):
         """Old trades should be dropped after lookback exceeded."""
         stats = RollingTradeStats(lookback=5, min_trades=2)
-        
-        # Add 5 wins
-        for _ in range(5):
-            stats.add_trade(0.01)
-        
+
+        # Fill window with mostly wins: 4 wins + 1 loss → 80% win rate
+        stats.add_trade(0.01)
+        stats.add_trade(0.01)
+        stats.add_trade(0.01)
+        stats.add_trade(0.01)
+        stats.add_trade(-0.01)
+
         assert len(stats) == 5
-        assert stats.get_stats()[0] == 1.0  # 100% win rate
-        
-        # Add 5 losses - old wins should be dropped
-        for _ in range(5):
-            stats.add_trade(-0.01)
-        
+        assert stats.get_stats()[0] == pytest.approx(0.8)  # 80% win rate
+
+        # Push in 5 more trades (4 losses + 1 win) — old window drops off
+        stats.add_trade(-0.01)
+        stats.add_trade(-0.01)
+        stats.add_trade(-0.01)
+        stats.add_trade(-0.01)
+        stats.add_trade(0.01)
+
         assert len(stats) == 5
-        assert stats.get_stats()[0] == 0.0  # 0% win rate now
+        # New window: 4 losses + 1 win → 20% win rate
+        assert stats.get_stats()[0] == pytest.approx(0.2)  # 20% win rate now
 
 
 class TestDynamicKelly:

@@ -4,7 +4,7 @@ Tests for OrderManager helper functions.
 import pytest
 import time
 from core.order_manager import (
-    OrderResult, ExecutionFilters, OrderTracker,
+    ExecutionFilters, OrderTracker,
     round_to_step, calculate_slippage_bps, wait_for_fill, validate_order_params
 )
 
@@ -98,19 +98,66 @@ class TestWaitForFill:
     def test_immediate_fill(self):
         def check_fn(symbol, order_id):
             return True, 1.0
-        
+
         filled, qty = wait_for_fill(check_fn, "TEST", "123", max_wait_seconds=1)
         assert filled == True
         assert qty == 1.0
-    
+
     def test_timeout_partial_fill(self):
         def check_fn(symbol, order_id):
             return False, 0.5  # Partial fill
-        
+
         start = time.time()
         filled, qty = wait_for_fill(check_fn, "TEST", "123", max_wait_seconds=0.3, poll_interval=0.1)
         elapsed = time.time() - start
-        
+
         assert filled == False
         assert qty == 0.5
         assert elapsed >= 0.3
+
+    def test_timeout_calls_cancel_fn(self):
+        """When the wait times out and cancel_fn is provided, it is called once."""
+        cancel_calls = []
+
+        def check_fn(symbol, order_id):
+            return False, 0.0
+
+        def cancel_fn(symbol, order_id):
+            cancel_calls.append((symbol, order_id))
+
+        filled, qty = wait_for_fill(
+            check_fn, "ETHBTC", "ORD-1",
+            max_wait_seconds=0.15, poll_interval=0.1,
+            cancel_fn=cancel_fn,
+        )
+
+        assert filled == False
+        assert cancel_calls == [("ETHBTC", "ORD-1")]
+
+    def test_timeout_without_cancel_fn_does_not_raise(self):
+        """Timeout with no cancel_fn still returns cleanly (no crash)."""
+        def check_fn(symbol, order_id):
+            return False, 0.0
+
+        filled, qty = wait_for_fill(
+            check_fn, "ETHBTC", "ORD-2",
+            max_wait_seconds=0.15, poll_interval=0.1,
+        )
+        assert filled == False
+
+    def test_cancel_failure_logs_error_and_returns(self):
+        """If cancel_fn raises, the error is logged but wait_for_fill still returns."""
+
+        def check_fn(symbol, order_id):
+            return False, 0.0
+
+        def cancel_fn(symbol, order_id):
+            raise RuntimeError("network error")
+
+        # Should not propagate the exception
+        filled, qty = wait_for_fill(
+            check_fn, "ETHBTC", "ORD-3",
+            max_wait_seconds=0.15, poll_interval=0.1,
+            cancel_fn=cancel_fn,
+        )
+        assert filled == False

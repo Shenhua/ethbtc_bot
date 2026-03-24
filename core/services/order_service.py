@@ -104,8 +104,12 @@ class OrderService:
                     if last_fetch_ts:
                         position_age = bar_dt - pd.Timestamp(last_fetch_ts)
                         if position_age > pd.Timedelta("15min"):
-                            log.error("⚠️ Position data too stale (%s ago).", position_age)
+                            log.error(
+                                "⚠️ Position data too stale (%s ago). Trading will be skipped.",
+                                position_age,
+                            )
                             res["position_stale"] = True
+                            res["position_unsafe"] = True
 
                 res["W"] = res["quote_bal"]
                 
