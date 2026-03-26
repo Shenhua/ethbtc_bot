@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 0,
   "links": [],
   "liveNow": true,
   "panels": [
@@ -90,7 +89,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "sum(wealth_usd)",
@@ -155,7 +154,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "sum(delta(wealth_usd[24h])) or vector(0)",
@@ -233,7 +232,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "max(risk_flags{kind=\"maxdd_hit\"}) or vector(0)",
@@ -293,7 +292,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "count(count by (instance) (up{instance=~\"testnet.*\"} == 1))",
@@ -390,7 +389,7 @@
         "cellHeight": "sm",
         "showHeader": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "max(up{instance=~\"testnet.*\"}) by (instance)",
@@ -549,7 +548,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "strategy_mode{instance=\"$instance\"}",
@@ -621,7 +620,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "gate_state{instance=\"$instance\", gate_state=\"open\"}",
@@ -684,7 +683,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "leverage{instance=\"$instance\"}",
@@ -747,7 +746,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "rate(bar_latency_seconds_sum{instance=\"$instance\"}[1h])/rate(bar_latency_seconds_count{instance=\"$instance\"}[1h])",
@@ -819,7 +818,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "max(risk_flags{instance=\"$instance\"})",
@@ -891,7 +890,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "phoenix_active{instance=\"$instance\"}",
@@ -953,7 +952,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "dist_to_buy_bps{instance=\"$instance\"}",
@@ -1025,7 +1024,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "(delta(wealth_usd{instance=\"$instance\"}[7d]) / (wealth_usd{instance=\"$instance\"} - delta(wealth_usd{instance=\"$instance\"}[7d]))) * 100",
@@ -1091,7 +1090,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "(delta(wealth_usd{instance=\"$instance\"}[30d]) / (wealth_usd{instance=\"$instance\"} - delta(wealth_usd{instance=\"$instance\"}[30d]))) * 100",
@@ -1159,7 +1158,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "funding_rate_pct{instance=\"$instance\"}",
@@ -1224,7 +1223,7 @@
         "showThresholdMarkers": true,
         "sizing": "auto"
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "exposure_base_weight{kind=\"current\", instance=\"$instance\"}",
@@ -1317,7 +1316,7 @@
         "textMode": "auto",
         "wideLayout": true
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "floor(increase(fills_total{instance=\"$instance\"}[1h]))",
@@ -1581,7 +1580,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "signal_ratio{instance=\"$instance\"}",
@@ -1700,7 +1699,7 @@
           "sort": "none"
         }
       },
-      "pluginVersion": "12.3.0",
+      "pluginVersion": "12.4.1",
       "targets": [
         {
           "expr": "dist_to_buy_bps{instance=\"$instance\"}",
@@ -2097,6 +2096,105 @@
       ],
       "title": "Assets (Base/Position)",
       "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "ff5v5x80erxfkc" },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "center",
+            "cellOptions": { "type": "color-text" },
+            "inspect": false
+          },
+          "decimals": 2,
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "HODL %" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "light-blue", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Period" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "auto" } },
+              { "id": "custom.width", "value": 80 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 35 },
+      "id": 162,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "reducer": ["sum"], "show": false },
+        "showHeader": true
+      },
+      "pluginVersion": "12.3.0",
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "ff5v5x80erxfkc" },
+          "expr": "alpha_pct{instance=\"$instance\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "ff5v5x80erxfkc" },
+          "expr": "hodl_return_pct{instance=\"$instance\"}",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Performance vs HODL",
+      "transformations": [
+        {
+          "id": "joinByField",
+          "options": { "byField": "period", "mode": "outer" }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "instance": true,
+              "__name__": true
+            },
+            "renameByName": {
+              "period": "Period",
+              "Value #A": "Alpha %",
+              "Value #B": "HODL %"
+            }
+          }
+        },
+        {
+          "id": "calculateField",
+          "options": {
+            "alias": "Bot %",
+            "binary": { "left": "Alpha %", "operator": "+", "right": "HODL %" },
+            "mode": "binary",
+            "reduce": { "reducer": "sum" }
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "indexByName": { "Period": 0, "Bot %": 1, "HODL %": 2, "Alpha %": 3 }
+          }
+        }
+      ],
+      "type": "table"
     }
   ],
   "preload": false,
@@ -2143,6 +2241,7 @@
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
+        "regexApplyTo": "value",
         "type": "query"
       }
     ]
@@ -2152,8 +2251,9 @@
     "to": "now"
   },
   "timepicker": {},
-  "timezone": "",
+  "timezone": "browser",
   "title": "Hybrid Cockpit V5 (Final)",
   "uid": "hybrid_cockpit_v5_final",
-  "version": 5
+  "version": 5,
+  "weekStart": ""
 }

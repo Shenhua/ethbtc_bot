@@ -38,6 +38,8 @@ class BotState(BaseModel):
     """Root model for application state."""
     session_start_wealth: float = Field(0.0, alias="session_start_W")
     session_start_price: float = 0.0
+    period_start_prices: Dict[str, float] = Field(default_factory=dict)
+    period_start_wealths: Dict[str, float] = Field(default_factory=dict)
     last_known_position: float = 0.0
     last_position_fetch_ts: Optional[str] = None
     last_balance_log_ts: int = 0

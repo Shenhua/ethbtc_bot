@@ -471,6 +471,17 @@ def main():
                 bot_state.session_start_price = price
             story.session_start_price = bot_state.session_start_price
 
+            # Restore period anchors from persisted state on first bar after restart.
+            # Falls back to current price/wealth only if nothing was saved.
+            if price > 1e-9 and W > 0:
+                for _p in ("daily", "weekly", "monthly", "annual"):
+                    if story.period_start_price.get(_p, 0.0) == 0.0:
+                        saved = bot_state.period_start_prices.get(_p, 0.0)
+                        story.period_start_price[_p] = saved if saved > 1e-9 else price
+                    if story.period_start_wealth.get(_p, 0.0) == 0.0:
+                        saved = bot_state.period_start_wealths.get(_p, 0.0)
+                        story.period_start_wealth[_p] = saved if saved > 1e-9 else W
+
             # Risk Management (now using RiskManager class)
             risk_mgr.ensure_state(bot_state.risk, W, bar_dt)
             risk_mgr.update(bot_state.risk, W, bar_dt)
@@ -789,7 +800,11 @@ def main():
             story.check_and_log_weekly(bar_dt, W, quote_asset, price)
             story.check_and_log_monthly(bar_dt, W, quote_asset, price)
             story.check_and_log_annual(bar_dt, W, quote_asset, price)
-            
+
+            # Persist period anchors so restarts resume from the exact same point.
+            bot_state.period_start_prices = dict(story.period_start_price)
+            bot_state.period_start_wealths = dict(story.period_start_wealth)
+
             # --- METRICS UPDATE (General) ---
             # --- METRICS UPDATE (General) ---
             # Calculate Regime Score if missing (for observability)
