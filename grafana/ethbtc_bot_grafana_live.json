@@ -2169,7 +2169,9 @@
             "excludeByName": {
               "Time": true,
               "instance": true,
-              "__name__": true
+              "__name__": true,
+              "job": true,
+              "job 1": true
             },
             "renameByName": {
               "period": "Period",
